@@ -29,8 +29,8 @@
     "productName": "NovaTune",
     "publish": {
       "provider": "github",
-      "owner": "novatune",
-      "repo": "player"
+      "owner": "AnonymousV73X",
+      "repo": "WINDOWS-MUSIC-PLAYER"
     },
     "win": {
       "target": "nsis",
