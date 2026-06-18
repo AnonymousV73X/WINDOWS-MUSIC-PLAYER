@@ -20,9 +20,9 @@
 
 ### Download
 
-[![Download the latest release](https://img.shields.io/badge/⬇%20Download-NovaTune%20Setup.exe-1ed760?style=for-the-badge&logo=github&logoColor=white)](https://github.com/novatune/player/releases/latest)
+[![Download the latest release](https://img.shields.io/badge/⬇%20Download-NovaTune%20Setup.exe-1ed760?style=for-the-badge&logo=github&logoColor=white)](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases/latest)
 
-> **Prefer a portable build?** Grab `NovaTune-Portable-1.0.0.exe` from the [Releases page](https://github.com/novatune/player/releases) — no installer, just double-click and play.
+> **Prefer a portable build?** Grab `NovaTune-Portable-1.0.0.exe` from the [Releases page](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases) — no installer, just double-click and play.
 
 </div>
 
@@ -541,7 +541,7 @@ This is what makes your **media keys**, **lock-screen controls**, and **taskbar 
 
 ### OTA updates (electron-updater)
 
-- Provider: GitHub (`github.com/novatune/player`, release type: `release`).
+- Provider: GitHub (`github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER`, release type: `release`).
 - `autoDownload = false` — user consent required.
 - `autoInstallOnAppQuit = true`.
 - Auto-check 60 s after launch, then every 4 hours.
@@ -814,7 +814,7 @@ NovaTune/
 ### Install
 
 ```bash
-git clone https://github.com/novatune/player.git NovaTune
+git clone https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER.git NovaTune
 cd NovaTune
 npm install
 ```
@@ -919,11 +919,9 @@ If you have questions, feedback, feature requests, or run into any issues, the f
 
 [![WhatsApp](https://img.shields.io/badge/Chat%20on-WhatsApp-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://wa.me/254741091123)
 [![Telegram](https://img.shields.io/badge/Chat%20on-Telegram-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/anonymous_V73X_1)
-[![GitHub Issues](https://img.shields.io/badge/Report%20on-GitHub-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/novatune/player/issues)
+[![GitHub Issues](https://img.shields.io/badge/Report%20on-GitHub-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/issues)
 
 </div>
-
-> **⚠️ Developer note:** The Telegram link above is a placeholder — replace `your_telegram_username` in the URL with your actual Telegram handle before publishing this README. The WhatsApp number is `+254 741 091 123` (Kenya).
 
 ---
 
@@ -956,3 +954,4 @@ MIT License — see [LICENSE](./LICENSE) for the full text.
 *If NovaTune brings you joy, star the repo and tell a friend.*
 
 </div>
+
