@@ -541,7 +541,7 @@ This is what makes your **media keys**, **lock-screen controls**, and **taskbar 
 
 ### OTA updates (electron-updater)
 
-- Provider: GitHub (`github.com/novatune/player`, release type: `release`).
+- Provider: GitHub (`github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER`, release type: `release`).
 - `autoDownload = false` — user consent required.
 - `autoInstallOnAppQuit = true`.
 - Auto-check 60 s after launch, then every 4 hours.
@@ -814,7 +814,7 @@ NovaTune/
 ### Install
 
 ```bash
-git clone https://github.com/novatune/player.git NovaTune
+git clone https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER.git NovaTune
 cd NovaTune
 npm install
 ```
