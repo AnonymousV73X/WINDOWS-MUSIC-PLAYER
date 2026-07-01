@@ -3353,6 +3353,23 @@ module.exports.findAlternativeTrackPath = findAlternativeTrackPath;
 // The renderer calls app:check-update which tries autoUpdater first,
 // then falls back to the GitHub API check.
 const CURRENT_VERSION = require("../package.json").version || "1.0.0";
+let _pendingUpdatePath = null;
+
+// Picks the installer .exe asset (never .yml/.blockmap) matching the
+// release version, falling back to the highest-versioned .exe found.
+function _pickInstallerAsset(assets, version) {
+  const exeAssets = (assets || []).filter(
+    (a) => /\.exe$/i.test(a.name) && !/\.blockmap$/i.test(a.name),
+  );
+  if (!exeAssets.length) return null;
+  const versioned = exeAssets.find((a) => a.name.includes(version));
+  if (versioned) return versioned;
+  return exeAssets.sort((a, b) => {
+    const va = (a.name.match(/(\d+\.\d+\.\d+)/) || [, "0.0.0"])[1];
+    const vb = (b.name.match(/(\d+\.\d+\.\d+)/) || [, "0.0.0"])[1];
+    return compareVersions(vb, va);
+  })[0];
+}
 
 ipcMain.handle("app:check-update", async () => {
   // If electron-updater is available and we're packaged, use it
@@ -3395,6 +3412,8 @@ ipcMain.handle("app:check-update", async () => {
     const hasUpdate =
       latestVersion && compareVersions(latestVersion, CURRENT_VERSION) > 0;
 
+    const installerAsset = _pickInstallerAsset(data.assets, latestVersion);
+
     return {
       success: true,
       currentVersion: CURRENT_VERSION,
@@ -3402,10 +3421,7 @@ ipcMain.handle("app:check-update", async () => {
       hasUpdate,
       releaseUrl: data.html_url || "",
       releaseNotes: data.body || "",
-      downloadUrl:
-        data.assets && data.assets.length > 0
-          ? data.assets[0].browser_download_url
-          : "",
+      downloadUrl: installerAsset ? installerAsset.browser_download_url : "",
       source: "github-api",
     };
   } catch (err) {
@@ -3413,22 +3429,89 @@ ipcMain.handle("app:check-update", async () => {
   }
 });
 
-// Download the available update (electron-updater only)
+// Download the available update (electron-updater, else manual GitHub fallback)
 ipcMain.handle("app:download-update", async () => {
   try {
     const { autoUpdater } = require("electron-updater");
-    if (!autoUpdater) {
-      return { success: false, error: "electron-updater not installed" };
+    if (autoUpdater && app.isPackaged) {
+      await autoUpdater.downloadUpdate();
+      return { success: true };
     }
-    await autoUpdater.downloadUpdate();
+  } catch (_) {
+    // Fall through to manual download
+  }
+
+  try {
+    const response = await net.fetch(
+      "https://api.github.com/repos/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases/latest",
+      { headers: { "User-Agent": "NovaTune-Update-Check" } },
+    );
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+    const data = await response.json();
+    const latestVersion = (data.tag_name || "").replace(/^v/, "");
+    const asset = _pickInstallerAsset(data.assets, latestVersion);
+    if (!asset) {
+      return {
+        success: false,
+        error: "No installer (.exe) found in latest release",
+      };
+    }
+
+    const dest = path.join(app.getPath("temp"), asset.name);
+    const dlResponse = await net.fetch(asset.browser_download_url);
+    if (!dlResponse.ok || !dlResponse.body) {
+      return { success: false, error: `HTTP ${dlResponse.status}` };
+    }
+
+    const total = Number(dlResponse.headers.get("content-length")) || 0;
+    let received = 0;
+    const fileStream = fs.createWriteStream(dest);
+    const reader = dlResponse.body.getReader();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.length;
+      fileStream.write(Buffer.from(value));
+      BrowserWindow.getAllWindows()[0]?.webContents.send(
+        "update:download-progress",
+        {
+          percent: total ? (received / total) * 100 : 0,
+          transferred: received,
+          total,
+        },
+      );
+    }
+    await new Promise((resolve, reject) => {
+      fileStream.end((err) => (err ? reject(err) : resolve()));
+    });
+
+    _pendingUpdatePath = dest;
+    BrowserWindow.getAllWindows()[0]?.webContents.send("update:downloaded");
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
   }
 });
 
-// Install the downloaded update (electron-updater only)
+// Install the downloaded update (electron-updater, else run the manually
+// downloaded installer .exe directly)
 ipcMain.handle("app:install-update", async () => {
+  if (_pendingUpdatePath && fs.existsSync(_pendingUpdatePath)) {
+    try {
+      const openErr = await shell.openPath(_pendingUpdatePath);
+      if (openErr) {
+        return { success: false, error: openErr };
+      }
+      setTimeout(() => app.quit(), 500);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
   try {
     const { autoUpdater } = require("electron-updater");
     if (!autoUpdater) {

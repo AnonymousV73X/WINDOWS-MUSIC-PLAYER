@@ -4135,7 +4135,7 @@ textarea {
   display: none;
   position: fixed;
   right: 14px;
-  top: 53%;
+  top: 50%;
   transform: translateY(-50%);
   z-index: 300;
   /* Glass: same recipe as the floating lyrics panel — translucent dark
@@ -4258,7 +4258,7 @@ textarea {
 
 .floating-nav-card .fn-search-input {
   position: absolute;
-  right: calc(100% + 6px);
+  left: calc(100% + 6px);
   top: 50%;
   transform: translateY(-50%);
   width: 0;
@@ -4275,7 +4275,6 @@ textarea {
   transition: width 0.2s ease, opacity 0.15s ease;
   white-space: nowrap;
   font-family: var(--app-font, inherit);
-  text-align: right;
 }
 
 .floating-nav-card .fn-search-input::placeholder {
@@ -5601,7 +5600,7 @@ textarea {
   border: 1.5px solid #333;
   background: var(--surface);
   color: var(--text-secondary);
-  cursor: default;
+  cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease, opacity 0.2s ease, transform 0.2s ease;
 }
 
@@ -5609,10 +5608,42 @@ textarea {
   display: none;
 }
 
+.float-nav-trigger svg {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.float-nav-trigger::before,
+.float-nav-trigger::after {
+  content: "";
+  position: absolute;
+  width: 15px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  transform: rotate(0deg) scale(0.5);
+}
+
+.float-nav-trigger.nav-open svg {
+  opacity: 0;
+  transform: scale(0.5) rotate(90deg);
+}
+
+.float-nav-trigger.nav-open::before {
+  opacity: 1;
+  transform: rotate(45deg) scale(1);
+}
+
+.float-nav-trigger.nav-open::after {
+  opacity: 1;
+  transform: rotate(-45deg) scale(1);
+}
+
 .nav-lyrics-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
   margin-left: auto;
 }
 

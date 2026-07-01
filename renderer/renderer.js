@@ -6240,7 +6240,7 @@ function renderHelp() {
           </div>
           <div class="help-item">
             <div class="help-item-title">Navigation</div>
-            <div class="help-item-body">Use the sidebar on the left to switch between Home, Library, Albums, Artists, Playlists, Queue, Settings, Equalizer, and Help. On smaller screens (tablets), swipe from the left edge or hover near the left side to reveal the compact icon navigation. You can configure whether this menu appears on hover or stays always visible in Settings under "Side menu".</div>
+            <div class="help-item-body">Use the sidebar on the left to switch between Home, Library, Albums, Artists, Playlists, Queue, Settings, Equalizer, and Help. On smaller screens (tablets), swipe from the left edge or hover near the left side to reveal the compact icon navigation — a small trigger icon is pinned to the left edge for quick access. You can configure whether this menu appears on hover or stays always visible in Settings under "Side menu".</div>
           </div>
         </div>
 
@@ -6356,7 +6356,7 @@ function renderHelp() {
       </div>
 
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
-        NovaTune v1.0.3 &bull; Made with love for music lovers
+        NovaTune v1.0.5 &bull; Made with love for music lovers
       </div>
     </div>
   `);
@@ -6378,57 +6378,33 @@ function renderHelp() {
             cancelText: null,
           });
         } else if (result.hasUpdate) {
-          // If electron-updater is the source, offer download-and-install
-          if (result.source === "electron-updater") {
-            const ok = await showAppDialog({
-              title: "Update Available!",
-              message: `NovaTune v${result.latestVersion} is available (you have v${result.currentVersion}). Download and install now?`,
-              confirmText: "Download & Install",
-              cancelText: "Later",
-            });
-            if (ok) {
-              updateBtn.innerHTML =
-                '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 1s linear infinite;"><polyline points="23 4 23 10 17 10"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/></svg> Downloading...';
-              const dlResult = await window.novaAPI.invoke(
-                "app:download-update",
-              );
-              if (dlResult.success) {
-                const install = await showAppDialog({
-                  title: "Update Ready!",
-                  message: `NovaTune v${result.latestVersion} has been downloaded. Restart now to install?`,
-                  confirmText: "Restart & Install",
-                  cancelText: "Later",
-                });
-                if (install) {
-                  await window.novaAPI.invoke("app:install-update");
-                }
-              } else {
-                await showAppDialog({
-                  title: "Download Failed",
-                  message: `Could not download update: ${dlResult.error}`,
-                  confirmText: "OK",
-                  cancelText: null,
-                });
+          const ok = await showAppDialog({
+            title: "Update Available!",
+            message: `NovaTune v${result.latestVersion} is available (you have v${result.currentVersion}). Download and install now?`,
+            confirmText: "Download & Install",
+            cancelText: "Later",
+          });
+          if (ok) {
+            updateBtn.innerHTML =
+              '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 1s linear infinite;"><polyline points="23 4 23 10 17 10"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/></svg> Downloading...';
+            const dlResult = await window.novaAPI.invoke("app:download-update");
+            if (dlResult.success) {
+              const install = await showAppDialog({
+                title: "Update Ready!",
+                message: `NovaTune v${result.latestVersion} has been downloaded. Install now?`,
+                confirmText: "Install",
+                cancelText: "Later",
+              });
+              if (install) {
+                await window.novaAPI.invoke("app:install-update");
               }
-            }
-          } else {
-            // GitHub API fallback — open browser to download
-            const ok = await showAppDialog({
-              title: "Update Available!",
-              message: `NovaTune v${result.latestVersion} is available (you have v${result.currentVersion}). Would you like to download it?`,
-              confirmText: "Download",
-              cancelText: "Later",
-            });
-            if (ok && result.downloadUrl) {
-              await window.novaAPI.invoke(
-                "app:open-external",
-                result.downloadUrl,
-              );
-            } else if (ok && result.releaseUrl) {
-              await window.novaAPI.invoke(
-                "app:open-external",
-                result.releaseUrl,
-              );
+            } else {
+              await showAppDialog({
+                title: "Download Failed",
+                message: `Could not download update: ${dlResult.error}`,
+                confirmText: "OK",
+                cancelText: null,
+              });
             }
           }
         } else {
@@ -10363,10 +10339,10 @@ function initLeftEdgeHover() {
 
     lastX = e.clientX;
 
-    if (e.clientX < EDGE_SHOW) {
+    if (e.clientX > window.innerWidth - EDGE_SHOW) {
       if (!showTimeout) {
         showTimeout = setTimeout(() => {
-          if (lastX < EDGE_SHOW) showCard();
+          if (lastX > window.innerWidth - EDGE_SHOW) showCard();
           showTimeout = null;
         }, 100);
       }
@@ -10379,14 +10355,22 @@ function initLeftEdgeHover() {
         clearTimeout(showTimeout);
         showTimeout = null;
       }
-      if (e.clientX > EDGE_HIDE && card.classList.contains("visible")) {
-        if (!hideTimeout) {
+      if (
+        e.clientX < window.innerWidth - EDGE_HIDE &&
+        card.classList.contains("visible")
+      ) {
+        if (card.contains(e.target)) {
+          if (hideTimeout) {
+            clearTimeout(hideTimeout);
+            hideTimeout = null;
+          }
+        } else if (!hideTimeout) {
           hideTimeout = setTimeout(() => {
             hideCard();
             hideTimeout = null;
           }, 300);
         }
-      } else if (e.clientX <= EDGE_HIDE) {
+      } else if (e.clientX >= window.innerWidth - EDGE_HIDE) {
         if (hideTimeout) {
           clearTimeout(hideTimeout);
           hideTimeout = null;
@@ -10407,10 +10391,10 @@ function initLeftEdgeHover() {
         return;
 
       const touch = e.touches[0];
-      if (touch.clientX < EDGE_SHOW) {
+      if (touch.clientX > window.innerWidth - EDGE_SHOW) {
         if (!showTimeout) {
           showTimeout = setTimeout(() => {
-            if (touch.clientX < EDGE_SHOW) showCard();
+            if (touch.clientX > window.innerWidth - EDGE_SHOW) showCard();
             showTimeout = null;
           }, 100);
         }
@@ -10446,7 +10430,7 @@ function initLeftEdgeHover() {
   });
 
   card.addEventListener("mouseleave", (e) => {
-    if (!pinned && e.clientX > EDGE_HIDE) {
+    if (!pinned && e.clientX < window.innerWidth - EDGE_HIDE) {
       hideTimeout = setTimeout(() => {
         hideCard();
         hideTimeout = null;
