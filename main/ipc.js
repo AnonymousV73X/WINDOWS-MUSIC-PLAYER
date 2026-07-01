@@ -19,9 +19,12 @@ const { ipcMain, dialog, shell, net, BrowserWindow, app } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const Database = require("better-sqlite3");
+// Database is loaded lazily inside registerIPCHandlers() — see the
+// try/catch block there for error handling when the native addon is
+// missing or compiled for the wrong Electron version.
 const FileScanner = require("./fileScanner");
 const MetadataReader = require("./metadataReader");
+const MetadataWorker = require("./metadataWorker");
 
 // ─── Supported Audio Formats ────────────────────────────────────────
 const SUPPORTED_FORMATS = [
@@ -104,6 +107,10 @@ const DB_SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist ON playlist_tracks(playlistId, position);
   CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track ON playlist_tracks(trackId);
+  CREATE TABLE IF NOT EXISTS track_covers (
+    trackId TEXT PRIMARY KEY,
+    coverArt TEXT
+  );
 `;
 
 function readJSON(filePath, fallback = {}) {
@@ -125,6 +132,84 @@ function writeJSON(filePath, data) {
     console.error(`Failed to write ${filePath}:`, err.message);
     return false;
   }
+}
+
+const AUDIO_EXTENSIONS = new Set([
+  ".mp3",
+  ".flac",
+  ".wav",
+  ".ogg",
+  ".m4a",
+  ".aac",
+  ".opus",
+  ".wma",
+  ".aiff",
+  ".ape",
+  ".wv",
+  ".mpc",
+]);
+
+/**
+ * Fast folder fingerprint — async stat walk, no music-metadata parsing.
+ * Returns a string like "1126:1718000000000" (fileCount:newestMtime).
+ * PERF FIX: Converted from sync to async to avoid blocking the main process
+ * event loop. On HDD, the sync version blocked for 50-150ms per call.
+ */
+const _FP_MAX_CONCURRENT_DIRS = 4;
+
+async function _computeFolderFingerprint(folderPaths) {
+  let fileCount = 0;
+  let newestMtime = 0;
+
+  async function walk(dir) {
+    let entries;
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    } catch (_) {
+      return;
+    }
+
+    const dirs = [];
+    const files = [];
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        dirs.push(full);
+      } else if (
+        entry.isFile() &&
+        AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())
+      ) {
+        files.push(full);
+      }
+    }
+
+    if (files.length > 0) {
+      const stats = await Promise.allSettled(
+        files.map((f) => fs.promises.stat(f)),
+      );
+      for (const result of stats) {
+        if (result.status === "fulfilled") {
+          fileCount++;
+          if (result.value.mtimeMs > newestMtime)
+            newestMtime = result.value.mtimeMs;
+        }
+      }
+    }
+
+    for (let i = 0; i < dirs.length; i += _FP_MAX_CONCURRENT_DIRS) {
+      const batch = dirs.slice(i, i + _FP_MAX_CONCURRENT_DIRS);
+      await Promise.all(batch.map((d) => walk(d)));
+    }
+  }
+
+  for (const folder of folderPaths) {
+    try {
+      await fs.promises.access(folder);
+      await walk(folder);
+    } catch (_) {}
+  }
+
+  return `${fileCount}:${Math.floor(newestMtime)}`;
 }
 
 function migrateJsonToDb() {
@@ -157,6 +242,55 @@ function migrateJsonToDb() {
   }
 }
 
+function migrateDbCovers() {
+  try {
+    const rows = db.prepare("SELECT id, data FROM tracks").all();
+    let migratedCount = 0;
+
+    let needsMigration = false;
+    for (let i = 0; i < Math.min(rows.length, 20); i++) {
+      const track = JSON.parse(rows[i].data);
+      if (track.coverArt) {
+        needsMigration = true;
+        break;
+      }
+    }
+
+    if (!needsMigration) return;
+
+    console.log(
+      `[database:migration] Migrating cover art for ${rows.length} tracks...`,
+    );
+
+    const updateTrack = db.prepare("UPDATE tracks SET data = ? WHERE id = ?");
+    const insertCover = db.prepare(
+      "INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)",
+    );
+
+    const tx = db.transaction(() => {
+      for (const row of rows) {
+        try {
+          const track = JSON.parse(row.data);
+          if (track.coverArt) {
+            const coverArt = track.coverArt;
+            const { coverArt: _, ...strippedTrack } = track;
+            strippedTrack._hasCoverArt = true;
+            updateTrack.run(JSON.stringify(strippedTrack), row.id);
+            insertCover.run(row.id, coverArt);
+            migratedCount++;
+          }
+        } catch (_) {}
+      }
+    });
+    tx();
+    console.log(
+      `[database:migration] Successfully migrated ${migratedCount} cover arts to track_covers table.`,
+    );
+  } catch (err) {
+    console.error("[database:migration] Migration failed:", err.message);
+  }
+}
+
 function getLibrary() {
   if (!libraryCache) {
     if (_libraryJsonCache && !_libraryDirty) {
@@ -178,26 +312,36 @@ function getLibrary() {
   return libraryCache;
 }
 
-function refreshTrackDateAdded(track) {
-  // Only set dateAdded if it's missing or zero.
-  // Never override an existing dateAdded with filesystem timestamps,
-  // because birthTime/mtime can be wrong for copied/moved files.
-  if (track.dateAdded && track.dateAdded > 0) return track;
-
+async function refreshTrackDateAdded(track) {
   let changed = false;
   try {
-    if (track.filePath && fs.existsSync(track.filePath)) {
-      const stats = fs.statSync(track.filePath);
-      const mtime = Math.floor(stats.mtimeMs);
-      const birthTime = stats.birthtimeMs ? Math.floor(stats.birthtimeMs) : 0;
-      // Prefer: explicit scan time > birthTime > mtime > Date.now()
-      track.dateAdded = birthTime || mtime || Date.now();
+    if (track.filePath) {
+      try {
+        const stat = await fs.promises.stat(track.filePath);
+        const mtime = Math.floor(stat.mtimeMs);
+        const birthTime = stat.birthtimeMs ? Math.floor(stat.birthtimeMs) : 0;
+
+        const realDate = birthTime || mtime || Date.now();
+        if (track.dateAdded !== realDate) {
+          track.dateAdded = realDate;
+          changed = true;
+        }
+      } catch (_) {
+        // File doesn't exist or can't be stat'd
+        if (!track.dateAdded) {
+          track.dateAdded = Date.now();
+          changed = true;
+        }
+      }
+    } else if (!track.dateAdded) {
+      track.dateAdded = Date.now();
       changed = true;
-    } else {
-      track.dateAdded = track.dateAdded || Date.now();
     }
   } catch (err) {
-    track.dateAdded = track.dateAdded || Date.now();
+    if (!track.dateAdded) {
+      track.dateAdded = Date.now();
+      changed = true;
+    }
   }
 
   // Persist updated dateAdded to database if changed
@@ -225,15 +369,32 @@ function saveLibrary(library) {
   libraryCache = library;
   _libraryJsonCache = library; // Keep JSON parse cache in sync
   libraryById = new Map(library.map((track) => [track.id, track]));
+
   const tx = db.transaction((tracks) => {
     db.prepare("DELETE FROM tracks").run();
-    const insert = db.prepare(`
+    db.prepare("DELETE FROM track_covers").run();
+
+    const insertTrack = db.prepare(`
       INSERT OR REPLACE INTO tracks
       (id, title, artist, album, genre, year, duration, dateAdded, filePath, data)
       VALUES (@id, @title, @artist, @album, @genre, @year, @duration, @dateAdded, @filePath, @data)
     `);
+    const insertCover = db.prepare(`
+      INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)
+    `);
+
     for (const track of tracks) {
-      insert.run({
+      const newCoverArt = track.coverArt;
+
+      // Determine whether this track has cover art:
+      // 1. track.coverArt present → fresh data from a full metadata read
+      // 2. track._hasCoverArt = true → art was in track_covers before (will be restored below)
+      const hasCoverArt = !!(newCoverArt || track._hasCoverArt);
+
+      const { coverArt: _, ...strippedTrack } = track;
+      strippedTrack._hasCoverArt = hasCoverArt;
+
+      insertTrack.run({
         id: track.id,
         title: track.title || "",
         artist: Array.isArray(track.artist)
@@ -245,11 +406,61 @@ function saveLibrary(library) {
         duration: Number(track.duration) || 0,
         dateAdded: Number(track.dateAdded) || Date.now(),
         filePath: track.filePath || "",
-        data: JSON.stringify(track),
+        data: JSON.stringify(strippedTrack),
       });
+
+      if (newCoverArt) {
+        // Fresh cover art from metadata read — save it immediately
+        insertCover.run(track.id, newCoverArt);
+      }
+      // If no fresh coverArt but _hasCoverArt was true, the restore step
+      // outside this tx will copy old art back from preExistingCovers.
     }
   });
+
+  // Snapshot existing cover art BEFORE wiping, so we can restore entries
+  // for tracks that were cached (have _hasCoverArt but no new coverArt in memory).
+  let preExistingCovers;
+  try {
+    preExistingCovers = new Map(
+      db
+        .prepare("SELECT trackId, coverArt FROM track_covers")
+        .all()
+        .map((r) => [r.trackId, r.coverArt]),
+    );
+  } catch (_) {
+    preExistingCovers = new Map();
+  }
+
   tx(library);
+
+  // Restore cover art for cached tracks whose art was in track_covers but
+  // wasn't re-read during this scan (track._hasCoverArt=true, track.coverArt=undefined).
+  if (preExistingCovers.size > 0) {
+    const restoreInsert = db.prepare(
+      "INSERT OR IGNORE INTO track_covers (trackId, coverArt) VALUES (?, ?)",
+    );
+    const restoreTx = db.transaction(() => {
+      for (const track of library) {
+        if (!track.coverArt && track._hasCoverArt) {
+          const oldArt = preExistingCovers.get(track.id);
+          if (oldArt) {
+            restoreInsert.run(track.id, oldArt);
+          }
+        }
+      }
+    });
+    restoreTx();
+  }
+
+  // Clear the cover-art lookup cache so fresh DB data is used on next request
+  if (typeof _coverArtByIdCache !== "undefined") _coverArtByIdCache.clear();
+  try {
+    const mainModule = require("./main");
+    if (mainModule && typeof mainModule.clearProtocolCache === "function") {
+      mainModule.clearProtocolCache();
+    }
+  } catch (_) {}
   return true;
 }
 
@@ -357,11 +568,36 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   metadataReader.setCoverCacheDir(path.join(DATA_DIR, "cached_covers"));
 
   // ── Open SQLite database ─────────────────────────────────────────
+  // Wrapped in try/catch so a native-module mismatch (e.g. better-sqlite3
+  // compiled for Node instead of Electron) is reported clearly instead of
+  // crashing the entire registerIPCHandlers() call, which would silently
+  // leave ALL IPC handlers unregistered and break the whole app.
+  let Database;
+  try {
+    Database = require("better-sqlite3");
+  } catch (err) {
+    console.error(
+      "[FATAL] better-sqlite3 failed to load — the native addon is missing or " +
+        "compiled for the wrong Node/Electron version. Run `npx electron-rebuild` " +
+        "or `npm rebuild better-sqlite3 --runtime=electron --target=28.1.0` to fix.\n" +
+        "Original error:",
+      err.message,
+    );
+    // Return early so the caller knows something went wrong.  Without a
+    // working database the app cannot function, but at least the protocol
+    // handler (registered separately) will still serve audio files.
+    return;
+  }
   db = new Database(DB_FILE);
   db.pragma("journal_mode = WAL");
+  db.pragma("synchronous = NORMAL");
+  db.pragma("cache_size = -20000");
+  db.pragma("temp_store = MEMORY");
+  db.pragma("mmap_size = 268435456");
   db.exec(DB_SCHEMA);
 
   migrateJsonToDb();
+  migrateDbCovers();
   // ═══════════════════════════════════════════════════════════════════
   // LIBRARY IPC
   // ═══════════════════════════════════════════════════════════════════
@@ -424,116 +660,219 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       let skippedCount = 0;
       const startTime = Date.now();
 
+      // PERF FIX: Worker pool — spawn N workers and saturate all of them in
+      // parallel. On HDD, one worker reads ~20 files/s; 4 workers = ~80/s
+      // because each read is mostly waiting on disk seeks, not CPU.
+      const WORKER_POOL_SIZE = 4;
+      const coverCacheDir = path.join(app.getPath("userData"), "cached_covers");
+      let workerPool = [];
+      let useWorker = true;
+      try {
+        for (let w = 0; w < WORKER_POOL_SIZE; w++) {
+          const worker = new MetadataWorker();
+          worker.setCoverCacheDir(coverCacheDir);
+          workerPool.push(worker);
+        }
+      } catch (err) {
+        console.warn(
+          "[library:scan] MetadataWorker pool unavailable, using main thread:",
+          err.message,
+        );
+        useWorker = false;
+        workerPool = [];
+      }
+
+      // Split files into cached (skip) and needing parse
+      const toScan = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-
-        // Cache optimization: Skip metadata parsing if file has not been modified and already has a cover art
         const existing = existingMap.get(file.filePath);
+        const hasGoodMetadata =
+          existing &&
+          existing.artist &&
+          existing.artist !== "Unknown Artist" &&
+          existing.album &&
+          existing.album !== "Unknown Album";
+        const hasCoverArt =
+          existing &&
+          (existing._hasCoverArt === true ||
+            (existing.coverArt && !/base64,\d+/.test(existing.coverArt)));
         if (
           existing &&
+          hasGoodMetadata &&
           existing.dateModified === file.modifiedTime &&
-          existing.coverArt
+          hasCoverArt &&
+          existing.duration > 0
         ) {
           tracks.push(existing);
           skippedCount++;
+        } else {
+          toScan.push({ file, globalIdx: i });
+        }
+      }
 
-          if (totalFiles < 50 || (i + 1) % 10 === 0 || i === totalFiles - 1) {
-            const pct = Math.round(((i + 1) / totalFiles) * 100);
-            sendProgress(mainWindow, {
-              stage: "reading",
-              current: i + 1,
-              total: totalFiles,
-              percent: pct,
-              message: `Reading metadata (${i + 1} / ${totalFiles}) — ${pct}% (cached: ${skippedCount})`,
-            });
+      // Send initial progress for cached files
+      if (skippedCount > 0) {
+        const pct = Math.round((skippedCount / totalFiles) * 100);
+        sendProgress(mainWindow, {
+          stage: "reading",
+          current: skippedCount,
+          total: totalFiles,
+          percent: pct,
+          message: `Reading metadata (${skippedCount} / ${totalFiles}) — ${pct}% (cached: ${skippedCount})`,
+        });
+      }
+
+      // ── Parallel scan with worker pool ──────────────────────────────────
+      // Process toScan in chunks equal to pool size so every worker is busy.
+      let doneCount = skippedCount;
+      const CHUNK = useWorker ? WORKER_POOL_SIZE : 1;
+
+      for (let ci = 0; ci < toScan.length; ci += CHUNK) {
+        const chunk = toScan.slice(ci, ci + CHUNK);
+        const chunkResults = await Promise.allSettled(
+          chunk.map(async ({ file }, wi) => {
+            let metadata;
+            if (useWorker && workerPool.length > 0) {
+              const worker = workerPool[wi % workerPool.length];
+              try {
+                metadata = await worker.readMetadata(file.filePath);
+              } catch (_) {
+                metadata = await metadataReader.readMetadata(file.filePath);
+              }
+            } else {
+              metadata = await metadataReader.readMetadata(file.filePath);
+            }
+            return { file, metadata };
+          }),
+        );
+
+        for (const settled of chunkResults) {
+          doneCount++;
+          if (settled.status === "fulfilled") {
+            const { file, metadata } = settled.value;
+            // QuickInfo fallback for 0-duration
+            if (metadata.duration <= 0) {
+              try {
+                const worker = workerPool[0];
+                const quickInfo =
+                  useWorker && worker
+                    ? await worker
+                        .readQuickInfo(file.filePath)
+                        .catch(() =>
+                          metadataReader.readQuickInfo(file.filePath),
+                        )
+                    : await metadataReader.readQuickInfo(file.filePath);
+                if (quickInfo && quickInfo.duration > 0) {
+                  metadata.duration = quickInfo.duration;
+                  if (!metadata.bitrate)
+                    metadata.bitrate = quickInfo.bitrate || 0;
+                  if (!metadata.sampleRate)
+                    metadata.sampleRate = quickInfo.sampleRate || 0;
+                  if (!metadata.channels)
+                    metadata.channels = quickInfo.channels || 2;
+                }
+              } catch (_) {}
+            }
+            if (metadata.duration <= 0) {
+              console.log(
+                `[library:scan] Skipping 0:00 track: ${file.filePath}`,
+              );
+            } else {
+              tracks.push({
+                id: generateTrackId(file.filePath),
+                filePath: file.filePath,
+                fileName: file.fileName,
+                title:
+                  metadata.title ||
+                  path.basename(file.fileName, path.extname(file.fileName)),
+                artist: metadata.artist || "Unknown Artist",
+                album: metadata.album || "Unknown Album",
+                albumArtist: metadata.albumArtist || "",
+                genre: metadata.genre || "",
+                year: metadata.year || 0,
+                trackNumber: metadata.trackNumber || 0,
+                discNumber: metadata.discNumber || 0,
+                duration: metadata.duration || 0,
+                bitrate: metadata.bitrate || 0,
+                sampleRate: metadata.sampleRate || 0,
+                channels: metadata.channels || 2,
+                format:
+                  metadata.format ||
+                  path.extname(file.fileName).replace(".", "").toUpperCase(),
+                fileSize: file.fileSize || metadata.fileSize || 0,
+                coverArt: metadata.coverArt || null,
+                dateAdded: file.birthTime || file.modifiedTime || Date.now(),
+                dateModified: file.modifiedTime || Date.now(),
+              });
+            }
+          } else {
+            // Promise rejected — try quickInfo fallback
+            const { file } = toScan[ci + chunkResults.indexOf(settled)];
+            try {
+              const quickInfo = await metadataReader.readQuickInfo(
+                file.filePath,
+              );
+              if (quickInfo && quickInfo.duration > 0) {
+                const nameNoExt = path.basename(
+                  file.fileName,
+                  path.extname(file.fileName),
+                );
+                let title = nameNoExt;
+                let artist = "Unknown Artist";
+                const dashIdx = nameNoExt.indexOf(" - ");
+                if (dashIdx > 0) {
+                  artist = nameNoExt.substring(0, dashIdx).trim();
+                  title = nameNoExt.substring(dashIdx + 3).trim();
+                }
+                title = title.replace(/^\d+[._\s]+/, "").trim() || title;
+                tracks.push({
+                  id: generateTrackId(file.filePath),
+                  filePath: file.filePath,
+                  fileName: file.fileName,
+                  title,
+                  artist,
+                  album: "Unknown Album",
+                  albumArtist: "",
+                  genre: "",
+                  year: 0,
+                  trackNumber: 0,
+                  discNumber: 0,
+                  duration: quickInfo.duration,
+                  bitrate: quickInfo.bitrate || 0,
+                  sampleRate: quickInfo.sampleRate || 0,
+                  channels: quickInfo.channels || 2,
+                  format: path
+                    .extname(file.fileName)
+                    .replace(".", "")
+                    .toUpperCase(),
+                  fileSize: file.fileSize || 0,
+                  coverArt: null,
+                  dateAdded: file.birthTime || file.modifiedTime || Date.now(),
+                  dateModified: file.modifiedTime || Date.now(),
+                });
+              } else {
+                failedCount++;
+              }
+            } catch (_) {
+              failedCount++;
+            }
           }
-          continue;
         }
 
-        try {
-          const metadata = await metadataReader.readMetadata(file.filePath);
-          tracks.push({
-            id: generateTrackId(file.filePath),
-            filePath: file.filePath,
-            fileName: file.fileName,
-            title:
-              metadata.title ||
-              path.basename(file.fileName, path.extname(file.fileName)),
-            artist: metadata.artist || "Unknown Artist",
-            album: metadata.album || "Unknown Album",
-            albumArtist: metadata.albumArtist || "",
-            genre: metadata.genre || "",
-            year: metadata.year || 0,
-            trackNumber: metadata.trackNumber || 0,
-            discNumber: metadata.discNumber || 0,
-            duration: metadata.duration || 0,
-            bitrate: metadata.bitrate || 0,
-            sampleRate: metadata.sampleRate || 0,
-            channels: metadata.channels || 2,
-            format:
-              metadata.format ||
-              path.extname(file.fileName).replace(".", "").toUpperCase(),
-            fileSize: file.fileSize || metadata.fileSize || 0,
-            coverArt: metadata.coverArt || null,
-            dateAdded: Date.now(),
-            dateModified: file.modifiedTime || Date.now(),
-          });
-        } catch (err) {
-          failedCount++;
-          console.warn(
-            `[library:scan] Failed to read metadata for ${path.basename(file.filePath)}:`,
-            err.message,
-          );
-          // Add with minimal info from filename
-          const nameNoExt = path.basename(
-            file.fileName,
-            path.extname(file.fileName),
-          );
-          let title = nameNoExt;
-          let artist = "Unknown Artist";
-          const dashIdx = nameNoExt.indexOf(" - ");
-          if (dashIdx > 0) {
-            artist = nameNoExt.substring(0, dashIdx).trim();
-            title = nameNoExt.substring(dashIdx + 3).trim();
-          }
-
-          tracks.push({
-            id: generateTrackId(file.filePath),
-            filePath: file.filePath,
-            fileName: file.fileName,
-            title,
-            artist,
-            album: "Unknown Album",
-            albumArtist: "",
-            genre: "",
-            year: 0,
-            trackNumber: 0,
-            discNumber: 0,
-            duration: 0,
-            bitrate: 0,
-            sampleRate: 0,
-            channels: 2,
-            format: path.extname(file.fileName).replace(".", "").toUpperCase(),
-            fileSize: file.fileSize || 0,
-            coverArt: null,
-            dateAdded: Date.now(),
-            dateModified: file.modifiedTime || Date.now(),
-          });
-        }
-
-        // Send progress every 5 files (or every file if < 50 total)
-        if (totalFiles < 50 || (i + 1) % 5 === 0 || i === totalFiles - 1) {
+        // Progress after each chunk
+        {
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-          const pct = Math.round(((i + 1) / totalFiles) * 100);
+          const pct = Math.round((doneCount / totalFiles) * 100);
           sendProgress(mainWindow, {
             stage: "reading",
-            current: i + 1,
+            current: doneCount,
             total: totalFiles,
             folder: folderPath,
             percent: pct,
-            elapsed: elapsed,
+            elapsed,
             failedCount,
-            message: `Reading metadata (${i + 1} / ${totalFiles}) — ${pct}%`,
+            message: `Reading metadata (${doneCount} / ${totalFiles}) — ${pct}%`,
           });
         }
       }
@@ -549,12 +888,50 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       const existingLibrary2 = getLibrary();
       const existingMap2 = new Map(existingLibrary2.map((t) => [t.id, t]));
 
+      // Clear any tracks from existingMap2 that were in this scan's folder (handles deleted/skipped files)
+      const normalizedFolder = folderPath.replace(/\\/g, "/").toLowerCase();
+      for (const [id, t] of existingMap2.entries()) {
+        if (
+          t.filePath &&
+          t.filePath
+            .replace(/\\/g, "/")
+            .toLowerCase()
+            .startsWith(normalizedFolder)
+        ) {
+          existingMap2.delete(id);
+        }
+      }
+
       for (const track of tracks) {
         existingMap2.set(track.id, track);
       }
 
+      // Clean up any remaining tracks anywhere in the library database that have duration <= 0
+      for (const [id, track] of existingMap2.entries()) {
+        if (track.duration <= 0) {
+          existingMap2.delete(id);
+        }
+      }
+
       const mergedLibrary = Array.from(existingMap2.values());
+      // PERF FIX: Refresh dateAdded during scans (not at startup).
+      // This is the right place: files are already being accessed,
+      // and the scan runs in the background with progress reporting.
+      // Do it asynchronously to avoid blocking the event loop.
+      const dateRefreshBatch = 50;
+      for (let i = 0; i < mergedLibrary.length; i += dateRefreshBatch) {
+        const batch = mergedLibrary.slice(i, i + dateRefreshBatch);
+        await Promise.all(batch.map((track) => refreshTrackDateAdded(track)));
+        // Yield to event loop between batches
+        if (i + dateRefreshBatch < mergedLibrary.length) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+      }
       saveLibrary(mergedLibrary);
+
+      // Clean up worker pool
+      for (const w of workerPool) w.shutdown();
+      workerPool = [];
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       console.log(
@@ -572,6 +949,15 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         message: `Done! Checked ${tracks.length} tracks (${skippedCount} from cache) in ${elapsed}s`,
       });
 
+      // Save fingerprint so next startup can skip the scan if nothing changed
+      try {
+        const fp = await _computeFolderFingerprint([folderPath]);
+        const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+        settings._scanFingerprints = settings._scanFingerprints || {};
+        settings._scanFingerprints[folderPath] = fp;
+        writeJSON(SETTINGS_FILE, settings);
+      } catch (_) {}
+
       return { success: true, tracks: mergedLibrary, newTracks: tracks.length };
     } catch (err) {
       console.error("[library:scan] Error:", err);
@@ -583,42 +969,100 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
     }
   });
 
+  // ─── Quick fingerprint check: does the folder need re-scanning? ──
+  // Walks the directory structure reading only file stat (mtime + size),
+  // NOT music-metadata. Takes ~5-50ms vs ~30-120s for a full scan.
+  // Returns { needsScan: true/false } so the renderer can skip the
+  // deferred background scan on clean startups.
+  ipcMain.handle("library:needs-scan", async (event, folderPaths) => {
+    try {
+      const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+      const saved = settings._scanFingerprints || {};
+      for (const folder of folderPaths) {
+        const current = await _computeFolderFingerprint([folder]);
+        if (saved[folder] !== current) {
+          console.log(`[library:needs-scan] Change detected in: ${folder}`);
+          return { needsScan: true };
+        }
+      }
+      return { needsScan: false };
+    } catch (err) {
+      // On any error, default to scanning to be safe
+      return { needsScan: true };
+    }
+  });
+
   ipcMain.handle("library:get-all", async () => {
     try {
       const library = getLibrary();
-      // Refresh dateAdded values based on actual file modification times for accurate sorting
-      const refreshedLibrary = library.map((track) =>
-        refreshTrackDateAdded(track),
-      );
-      // Revolutionary: Keep coverArt FILE PATHS (they're small ~200 bytes each).
-      // Only strip base64 data: URIs (which can be 50-200MB total).
-      // This lets the renderer know which tracks have art without IPC roundtrips,
-      // fixes resolveMissingCoverArt spamming iTunes/Deezer for tracks that already have art,
-      // and enables the aggressive preloader to work on first launch.
-      const stripped = refreshedLibrary.map((track) => {
-        if (!track.coverArt) return track;
-        if (track.coverArt.startsWith("data:")) {
-          // Base64 data URI — strip it, but mark that art exists
-          const { coverArt, ...rest } = track;
-          // Pre-compute a lightweight color hint from the coverArt hash.
-          // The renderer can use this to skip expensive node-vibrant color
-          // extraction for cards: same hint = same art = same dominant color.
-          // First 4 bytes (8 hex chars) of MD5 of coverArt string.
-          let _artColorHint = null;
-          try {
-            const hash = crypto
-              .createHash("md5")
-              .update(coverArt)
-              .digest("hex");
-            _artColorHint = hash.substring(0, 8);
-          } catch (_) {}
-          return { ...rest, _hasCoverArt: true, _artColorHint };
+      // PERF FIX: Do NOT call refreshTrackDateAdded() on startup.
+      // On HDD, fs.statSync() per track causes 10-20s of blocking I/O.
+      // dateAdded is now cached in SQLite and only refreshed during scans.
+      // See: refreshTrackDateAdded() still used in library:scan for correctness.
+      return { success: true, tracks: library };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ─── Paginated library access (for very large libraries) ──────────
+  // PERF FIX: Returns library in pages so the renderer can start rendering
+  // the first page immediately while loading the rest in the background.
+  // This cuts time-to-first-paint for 5000+ track libraries.
+  ipcMain.handle("library:get-page", async (event, { page, pageSize }) => {
+    try {
+      const p = Math.max(0, page || 0);
+      const ps = Math.max(1, Math.min(pageSize || 500, 2000));
+      const start = p * ps;
+
+      // FAST PATH: library already fully cached in memory (warm) — just slice it.
+      if (libraryCache) {
+        const tracks = libraryCache.slice(start, start + ps);
+        return {
+          success: true,
+          tracks,
+          page: p,
+          pageSize: ps,
+          total: libraryCache.length,
+          hasMore: start + ps < libraryCache.length,
+        };
+      }
+
+      // COLD PATH: nothing cached yet — hit SQLite directly with LIMIT/OFFSET
+      // using the dateAdded index, so we only read+parse the rows this page
+      // needs instead of the entire table. Critical for 10k+ libraries on HDD:
+      // avoids one huge synchronous JSON.parse() of every track just to
+      // return the first 500.
+      const total = db.prepare("SELECT COUNT(*) AS c FROM tracks").get().c;
+      const rows = db
+        .prepare(
+          "SELECT data FROM tracks ORDER BY dateAdded DESC, title COLLATE NOCASE LIMIT ? OFFSET ?",
+        )
+        .all(ps, start);
+      const tracks = rows.map((row) => JSON.parse(row.data));
+
+      // Warm the full in-memory cache in the background (off the response
+      // path) so libraryById is populated for other handlers and later
+      // pages can hit the fast in-memory slice path above.
+      setImmediate(() => {
+        try {
+          getLibrary();
+        } catch (err) {
+          console.warn(
+            "[library:get-page] Background warm failed:",
+            err.message,
+          );
         }
-        // File path — keep it! It's tiny (~200 bytes) and the renderer needs it
-        // for protocol URLs, preloading, and to avoid unnecessary online art lookups.
-        return track;
       });
-      return { success: true, tracks: stripped };
+
+      return {
+        success: true,
+        tracks,
+        page: p,
+        pageSize: ps,
+        total,
+        hasMore: start + ps < total,
+      };
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -627,10 +1071,10 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   // ─── Cover Art: fetch single track's cover art by trackId ──────────
   ipcMain.handle("coverart:get", async (event, trackId) => {
     try {
-      getLibrary();
-      const track = libraryById && libraryById.get(trackId);
-      if (!track) return { success: false, error: "Track not found" };
-      return { success: true, coverArt: track.coverArt || null };
+      const row = db
+        .prepare("SELECT coverArt FROM track_covers WHERE trackId = ?")
+        .get(trackId);
+      return { success: true, coverArt: row ? row.coverArt : null };
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -651,7 +1095,8 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         "cached_covers",
         "thumbs",
       );
-      if (!fs.existsSync(thumbDir)) fs.mkdirSync(thumbDir, { recursive: true });
+      if (!fs.existsSync(thumbDir))
+        await fs.promises.mkdir(thumbDir, { recursive: true });
 
       const thumbs = {};
       const thumbHashes = {};
@@ -674,7 +1119,11 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
               );
 
               // Check if thumbnail already exists on disk
-              if (fs.existsSync(thumbFile)) {
+              const alreadyExists = await fs.promises
+                .access(thumbFile)
+                .then(() => true)
+                .catch(() => false);
+              if (alreadyExists) {
                 // Return protocol URL instead of base64 - browser caches natively
                 thumbs[track.id] =
                   `nova-media://thumb/${track.id}/${targetSize}`;
@@ -687,16 +1136,18 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                 const base64 = track.coverArt.split(",")[1];
                 if (!base64) return;
                 inputBuffer = Buffer.from(base64, "base64");
-              } else if (fs.existsSync(track.coverArt)) {
-                inputBuffer = fs.readFileSync(track.coverArt);
               } else {
-                // Stale coverArt path — file no longer exists. Clear it in SQLite
-                // so it doesn't waste time on every future launch.
-                if (libraryById && libraryById.has(track.id)) {
-                  libraryById.get(track.id).coverArt = null;
-                  _libraryDirty = true;
+                try {
+                  inputBuffer = await fs.promises.readFile(track.coverArt);
+                } catch (_) {
+                  // Stale coverArt path — file no longer exists. Clear it in SQLite
+                  // so it doesn't waste time on every future launch.
+                  if (libraryById && libraryById.has(track.id)) {
+                    libraryById.get(track.id).coverArt = null;
+                    _libraryDirty = true;
+                  }
+                  return;
                 }
-                return;
               }
 
               // Use sharp to generate thumbnail with dark background (eliminates white borders)
@@ -713,7 +1164,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                 .toBuffer();
 
               // Save to disk for future use
-              fs.writeFileSync(thumbFile, thumbBuffer);
+              await fs.promises.writeFile(thumbFile, thumbBuffer);
 
               // Return protocol URL
               thumbs[track.id] = `nova-media://thumb/${track.id}/${targetSize}`;
@@ -742,10 +1193,13 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
           }),
         );
         // Yield to event loop between batches to prevent IPC stalls.
-        // Without this, 8 parallel sharp() calls block the main process
-        // event loop, causing other IPC handlers to queue up and the
-        // renderer to appear frozen during batch thumbnail generation.
         await new Promise((resolve) => setImmediate(resolve));
+
+        // Back off harder while audio is actively streaming so nova-media://
+        // requests never queue up behind background thumbnail I/O.
+        if (Date.now() - (global._lastAudioActivity || 0) < 1500) {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+        }
       }
       // Persist any stale path cleanups to disk
       if (_libraryDirty) {
@@ -2821,12 +3275,18 @@ const _coverArtByIdCache = new Map(); // trackId → coverArt string | null
 function getCoverArtByTrackId(trackId) {
   const cached = _coverArtByIdCache.get(trackId);
   if (cached !== undefined) return cached;
-  if (!libraryById) {
-    _coverArtByIdCache.set(trackId, null);
+  if (!db) {
     return null;
   }
-  const track = libraryById.get(trackId);
-  const result = track ? track.coverArt || null : null;
+  let result = null;
+  try {
+    const row = db
+      .prepare("SELECT coverArt FROM track_covers WHERE trackId = ?")
+      .get(trackId);
+    result = row ? row.coverArt : null;
+  } catch (err) {
+    console.error("Failed to query track_covers:", err.message);
+  }
   _coverArtByIdCache.set(trackId, result);
   return result;
 }
@@ -2922,7 +3382,7 @@ ipcMain.handle("app:check-update", async () => {
   // Fallback: GitHub Releases API check (works in dev mode too)
   try {
     const response = await net.fetch(
-      "https://api.github.com/repos/novatune/player/releases/latest",
+      "https://api.github.com/repos/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases/latest",
       {
         headers: { "User-Agent": "NovaTune-Update-Check" },
       },

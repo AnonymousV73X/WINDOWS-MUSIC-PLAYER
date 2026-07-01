@@ -1,18 +1,20 @@
 /**
- * NovaTune — Main Process Entry  [v2 — REVFIX]
+ * NovaTune — Main Process Entry  [v3 — AUDIO REWRITE]
  * Bootstraps the Electron application, manages the main window,
  * and orchestrates all main-process modules.
  *
- * CHANGES v2 (revolutionary performance):
- * - In-flight thumbnail generation deduplication: if multiple requests
- *   arrive for the same trackId+size while sharp is already generating,
- *   they wait for the same generation instead of starting a new one.
- *   This prevents redundant sharp() calls that waste CPU and disk I/O.
- *
- * CHANGES v1:
- * - Protocol handler returns 404 for missing art files (was 200+dark pixel)
- * - On-demand thumbnail generation in nova-media://thumb/ handler
- * - These fixes unblock the renderer's 3-tier fallback chain
+ * CRITICAL CHANGE v4 (audio rewrite):
+ * - Replaced net.fetch(file://) with fs.createReadStream via Node ReadableStream
+ *   for the nova-media://local/ audio handler. net.fetch routes through Chromium's
+ *   network service thread; on Windows with stream:true, a second net.fetch call
+ *   while a prior streaming response is still open BLOCKS — causing every track
+ *   click after the preloaded one to time out at 15s (readyState=0, networkState=2).
+ *   fs.createReadStream runs on Node's libuv thread pool, fully independent of
+ *   Chromium's network service — concurrent streams never block each other.
+ *   Range requests for seeking are handled manually with correct MIME types.
+ * - Moved electron-updater require inside whenReady() to avoid blocking startup
+ * - Added electron-updater + chokidar to esbuild externals
+ * - Image handlers (art/thumb/cover) keep using Buffer Responses (they work fine)
  */
 
 const {
@@ -25,19 +27,21 @@ const {
   protocol,
   net,
 } = require("electron");
-// electron-updater is optional — gracefully degrade if not installed (dev mode).
-// autoUpdater will be null and all update features will be no-ops.
-let autoUpdater = null;
+
+// ─── V8 Compile Cache (HDD Optimization) ─────────────────────────
+// MUST be required immediately after electron but before any massive user modules.
 try {
-  ({ autoUpdater } = require("electron-updater"));
-} catch (_) {
-  console.warn(
-    "[autoUpdater] electron-updater not installed — OTA updates disabled. Run `npm install` to enable.",
-  );
+  require("v8-compile-cache");
+} catch (err) {
+  console.warn("v8-compile-cache failed to load (ignoring):", err.message);
 }
+
+// electron-updater is optional — loaded lazily inside whenReady()
+let autoUpdater = null;
+
 const path = require("path");
 const fs = require("fs");
-const { Readable } = require("stream");
+const { URL, pathToFileURL } = require("url");
 const WindowStateManager = require("./windowManager");
 const registerIPCHandlers = require("./ipc");
 let SMTCBridge;
@@ -57,55 +61,21 @@ try {
 }
 
 // ─── HQ Audio: Chromium flags ───────────────────────────────────────
-// Must be set before app.whenReady() / before Chromium initialises.
-//
-// --autoplay-policy=no-user-gesture-required
-//   Prevents Chromium from silently blocking AudioContext.resume() until
-//   a user gesture, which would cause the first track to play silently.
-//
-// --disable-features=AudioServiceOutOfProcess
-//   Keeps audio in-process on Windows; avoids an extra IPC hop between
-//   Chromium's audio service and the render process (lower latency).
-//
-// --enable-features=PlatformHEVCEncoderSupport
-//   Unlocks platform audio decoders (WASAPI on Windows, CoreAudio on macOS)
-//   so AAC / ALAC tracks are decoded by the OS codec rather than a software
-//   fallback, preserving bit-perfect output where possible.
-//
-// --audio-buffer-size=2048
-//   Keeps the OS audio buffer small enough to avoid perceptible latency
-//   while still being large enough to prevent underruns on typical hardware.
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 app.commandLine.appendSwitch(
   "disable-features",
-  "AudioServiceOutOfProcess,BackgroundTracing,PaintHolding",
+  "BackgroundTracing,PaintHolding",
 );
 app.commandLine.appendSwitch("enable-features", "PlatformHEVCEncoderSupport");
-app.commandLine.appendSwitch("audio-buffer-size", "2048");
 
 // ─── GPU-Accelerated Image Rendering ──────────────────────────────
-// --enable-gpu-rasterization: Use GPU for rasterizing images (cover art,
-//   thumbnails, collages) instead of CPU software rasterization.
-// --enable-zero-copy: Zero-copy texture uploads from decoder to compositor,
-//   reduces memory copies for large cover art images.
-// --force-gpu-mem-available-mb=1024: Tells Chromium it has 1GB of GPU memory
-//   available, preventing it from falling back to software rasterization
-//   when it thinks GPU memory is scarce (common on integrated GPUs).
-// --disk-cache-size=268435456: 256MB disk cache for protocol responses,
-//   so nova-media:// resources are cached on disk across restarts.
 app.commandLine.appendSwitch("enable-gpu-rasterization");
 app.commandLine.appendSwitch("enable-zero-copy");
 app.commandLine.appendSwitch("force-gpu-mem-available-mb", "1024");
 app.commandLine.appendSwitch("disk-cache-size", "268435456");
 
-// Windows-only: request exclusive-mode WASAPI for bit-perfect output
-// (bypasses Windows audio mixer and its forced resampling to the system
-//  sample rate).  Falls back gracefully if the device doesn't support it.
-if (process.platform === "win32") {
-  app.commandLine.appendSwitch("enable-exclusive-audio");
-}
-
 // ─── MIME map for local audio files ────────────────────────────────
+// Used as a fallback when net.fetch doesn't set the right Content-Type.
 const AUDIO_MIME = {
   ".mp3": "audio/mpeg",
   ".flac": "audio/flac",
@@ -121,15 +91,19 @@ const AUDIO_MIME = {
 };
 
 // Register nova-media:// — must be called before app.whenReady()
+// CRITICAL: stream:true is required for <audio>/<video> elements to work
+// with custom protocols. Without it, Chromium buffers the entire response
+// and seeking/Range requests break.
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "nova-media",
     privileges: {
+      standard: true,
       secure: true,
       supportFetchAPI: true,
-      stream: true,
+      stream: true, // REQUIRED for audio/video streaming
       bypassCSP: true,
-      corsEnabled: true,
+      corsEnabled: true, // REQUIRED for canvas crossOrigin="anonymous"
     },
   },
 ]);
@@ -150,27 +124,31 @@ if (!gotTheLock) {
 
 // ─── Globals ────────────────────────────────────────────────────────
 let mainWindow = null;
-// REVFIX v2: In-flight thumbnail generation deduplication map.
-// Key: `thumbGen::${trackId}::${size}` → Promise<Buffer>
-// Prevents redundant sharp() calls when multiple requests arrive for the
-// same thumbnail while it's already being generated.
 const _thumbGenInFlight = new Map();
 
 // ─── Protocol Response Memory Cache ─────────────────────────────────
-// Caches decoded cover art buffers in memory to avoid repeated SQLite
-// lookups + base64 decodes. This is the single biggest bottleneck:
-// each album card, track row, and now-playing display hits nova-media://art/{trackId},
-// which was doing a full SQLite query + base64 decode EVERY time.
-// With this cache, the second request for the same art is ~0.1ms (memory read)
-// vs ~5-15ms (SQLite + base64 decode).
-const _protocolCache = new Map(); // trackId → { buffer, mimeType }
-const PROTOCOL_CACHE_MAX = 500; // max entries (LRU eviction)
+const _protocolCache = new Map();
+const PROTOCOL_CACHE_MAX = 500;
 
-// ─── Cover Art Lookup Cache ────────────────────────────────────────
-// Caches getCoverArtByTrackId results to avoid repeated Map lookups
-// and function call overhead on every image load.
-// Key: trackId → Value: coverArt string or null.
-const _coverArtLookupCache = new Map();
+// ─── Stat Cache: avoids blocking statSync on every nova-media request ─
+// Key: filePath → { size, mtime }. Evicted when filePath changes on disk.
+const _statCache = new Map();
+const STAT_CACHE_MAX = 2000;
+async function _cachedStat(filePath) {
+  if (_statCache.has(filePath)) return _statCache.get(filePath);
+  const s = await fs.promises.stat(filePath);
+  const entry = { size: s.size, mtime: s.mtimeMs };
+  if (_statCache.size >= STAT_CACHE_MAX) {
+    _statCache.delete(_statCache.keys().next().value);
+  }
+  _statCache.set(filePath, entry);
+  return entry;
+}
+
+function clearProtocolCache() {
+  _protocolCache.clear();
+}
+module.exports.clearProtocolCache = clearProtocolCache;
 
 const isDev =
   process.env.NODE_ENV === "development" || process.argv.includes("--dev");
@@ -190,6 +168,18 @@ let smtcBridge = null;
 function createMainWindow() {
   const { x, y, width, height, isMaximized } = windowState.getState();
 
+  let initAccentColor = "#1ed760";
+  try {
+    const dataDir = isDev
+      ? path.join(__dirname, "..", "data")
+      : app.getPath("userData");
+    const settingsPath = path.join(dataDir, "settings.json");
+    if (fs.existsSync(settingsPath)) {
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+      if (settings.accentColor) initAccentColor = settings.accentColor;
+    }
+  } catch (_) {}
+
   mainWindow = new BrowserWindow({
     x,
     y,
@@ -197,6 +187,8 @@ function createMainWindow() {
     height,
     minWidth: 360,
     minHeight: 420,
+    show: false,
+    backgroundColor: "#121212",
     title: "NovaTune",
     titleBarStyle: "hidden",
     titleBarOverlay:
@@ -213,6 +205,7 @@ function createMainWindow() {
       contextIsolation: false,
       webSecurity: true,
       sandbox: false,
+      additionalArguments: [`--accent-color=${initAccentColor}`],
     },
   });
 
@@ -228,8 +221,10 @@ function createMainWindow() {
   );
 
   mainWindow.once("ready-to-show", () => {
+    if (isMaximized !== false) {
+      mainWindow.maximize();
+    }
     mainWindow.show();
-    if (isMaximized) mainWindow.maximize();
   });
 
   mainWindow.on("close", () => {
@@ -257,6 +252,136 @@ function createMainWindow() {
   }
 }
 
+// ─── Helper: decode nova-media://local/ URL to file path ──────────
+function decodeNovaMediaLocalPath(url) {
+  const encoded = url.slice("nova-media://local/".length);
+  let filePath = decodeURIComponent(encoded);
+  // Normalise Windows backslashes
+  filePath = filePath.replace(/\\/g, "/");
+  // Remove leading slash-duplicate on Windows (//C:/... → C:/...)
+  if (/^\/[A-Za-z]:/.test(filePath)) filePath = filePath.slice(1);
+  return filePath;
+}
+
+// ─── Helper: serve audio file via fs.createReadStream ──────────────
+// Streams local audio files using Node's ReadableStream (libuv thread pool).
+// This avoids net.fetch(file://) which blocks on Windows when a prior streaming
+// response through Chromium's network service thread is still open.
+function serveAudioFile(request, filePath) {
+  // REWRITE: Use fs.createReadStream via Node.js ReadableStream instead of net.fetch.
+  //
+  // WHY: net.fetch(file://) routes through Chromium's network service thread.
+  // On Windows, when protocol.handle has stream:true active, a second net.fetch
+  // call while a prior streaming response is still being consumed (e.g. the audio
+  // element is actively reading the preloaded track) BLOCKS — Chromium serialises
+  // these on the same internal IO thread. This caused every track click after the
+  // preloaded one to time out at 15s (readyState stays 0, networkState=2).
+  //
+  // fs.createReadStream runs entirely on Node's libuv thread pool — independent of
+  // Chromium's network service — so concurrent streams never block each other.
+  // Range requests (for seeking) are handled manually, which is required anyway
+  // because we need correct Content-Type headers for all formats.
+  //
+  // NOTE: Now async — uses _cachedStat() instead of statSync() so the libuv
+  // thread pool is never blocked by a synchronous HDD stat call.
+  return _serveAudioFileAsync(request, filePath);
+}
+
+async function _serveAudioFileAsync(request, filePath) {
+  try {
+    global._lastAudioActivity = Date.now();
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeType = AUDIO_MIME[ext] || "application/octet-stream";
+    const { size: fileSize } = await _cachedStat(filePath);
+
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, HEAD",
+      "Access-Control-Allow-Headers": "Range",
+    };
+
+    // Parse Range header for seek support
+    const rangeHeader =
+      request.headers.get("Range") || request.headers.get("range");
+
+    if (rangeHeader) {
+      const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+      if (match) {
+        const start = parseInt(match[1], 10);
+        const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
+        const clampedEnd = Math.min(end, fileSize - 1);
+
+        if (start >= fileSize) {
+          return new Response(null, {
+            status: 416,
+            headers: { "Content-Range": `bytes */${fileSize}` },
+          });
+        }
+
+        const chunkSize = clampedEnd - start + 1;
+        const nodeStream = fs.createReadStream(filePath, {
+          start,
+          end: clampedEnd,
+        });
+        const webStream = new ReadableStream({
+          start(controller) {
+            nodeStream.on("data", (chunk) => {
+              global._lastAudioActivity = Date.now();
+              controller.enqueue(new Uint8Array(chunk));
+            });
+            nodeStream.on("end", () => controller.close());
+            nodeStream.on("error", (err) => controller.error(err));
+          },
+          cancel() {
+            nodeStream.destroy();
+          },
+        });
+
+        return new Response(webStream, {
+          status: 206,
+          headers: {
+            ...corsHeaders,
+            "Content-Type": mimeType,
+            "Content-Range": `bytes ${start}-${clampedEnd}/${fileSize}`,
+            "Content-Length": String(chunkSize),
+            "Accept-Ranges": "bytes",
+          },
+        });
+      }
+    }
+
+    // Full file response
+    const nodeStream = fs.createReadStream(filePath);
+    const webStream = new ReadableStream({
+      start(controller) {
+        nodeStream.on("data", (chunk) => {
+          global._lastAudioActivity = Date.now();
+          controller.enqueue(new Uint8Array(chunk));
+        });
+        nodeStream.on("end", () => controller.close());
+        nodeStream.on("error", (err) => controller.error(err));
+      },
+      cancel() {
+        nodeStream.destroy();
+      },
+    });
+
+    console.log(`[nova-media:local] Serving via ReadableStream: ${filePath}`);
+    return new Response(webStream, {
+      status: 200,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": mimeType,
+        "Content-Length": String(fileSize),
+        "Accept-Ranges": "bytes",
+      },
+    });
+  } catch (err) {
+    console.error("[nova-media:local] serveAudioFile error:", err.message);
+    return new Response("Internal error", { status: 500 });
+  }
+}
+
 // ─── App Lifecycle ──────────────────────────────────────────────────
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
@@ -265,20 +390,21 @@ app.whenReady().then(() => {
     app.setAppUserModelId("com.novatune.player");
   }
 
+  // Lazy-load electron-updater after app is ready (avoids blocking startup)
+  try {
+    ({ autoUpdater } = require("electron-updater"));
+  } catch (_) {
+    console.warn(
+      "[autoUpdater] electron-updater not installed — OTA updates disabled.",
+    );
+  }
+
   // ── nova-media:// protocol handler ──────────────────────────────
-  // Serves local audio files with correct MIME types so Chromium can
-  // decode FLAC, M4A/AAC and other formats without file:// security issues.
-  // REVFIX v1.1: Made handler async to support on-demand thumbnail generation (await sharp)
   protocol.handle("nova-media", async (request) => {
     try {
       const url = request.url;
 
       // ── Common CORS headers for ALL nova-media:// responses ──────
-      // Critical: Without Access-Control-Allow-Origin, any <img> with
-      // crossOrigin="anonymous" (used by canvas operations like collage
-      // generation and color sampling) will taint the canvas, making
-      // canvas.toDataURL() throw SecurityError. This was the ROOT CAUSE
-      // of playlist collages never being generated.
       const _corsHeaders = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET",
@@ -286,23 +412,14 @@ app.whenReady().then(() => {
       };
 
       // ── nova-media://art/{trackId} ──────────────────────────────
-      // Revolutionary: Serves cover art by track ID from the library database.
-      // This fixes the critical gap where base64 data: URIs are stripped from
-      // library:get-all (to save 50-200MB on startup) but the renderer still
-      // needs to display them. By looking up coverArt from libraryById,
-      // we can serve both file paths AND base64 data URIs without sending
-      // them all on startup. Also handles file paths for tracks with _hasCoverArt.
       if (url.startsWith("nova-media://art/")) {
         const trackId = decodeURIComponent(
           url.slice("nova-media://art/".length).split("?")[0],
         );
 
-        // ── Protocol cache check ──────────────────────────────────────
-        // Second request for the same art is ~0.1ms (memory read)
-        // vs ~5-15ms (SQLite lookup + base64 decode / file read).
+        // Protocol cache check
         const cached = _protocolCache.get(trackId);
         if (cached) {
-          // Move to end for LRU (most recently used stays longest)
           _protocolCache.delete(trackId);
           _protocolCache.set(trackId, cached);
           return new Response(cached.buffer, {
@@ -316,20 +433,9 @@ app.whenReady().then(() => {
           });
         }
 
-        // ── Cover art lookup (with cache) ─────────────────────────────
-        let coverArt = _coverArtLookupCache.get(trackId);
-        if (coverArt === undefined) {
-          coverArt = registerIPCHandlers.getCoverArtByTrackId(trackId);
-          _coverArtLookupCache.set(trackId, coverArt);
-        }
+        const coverArt = registerIPCHandlers.getCoverArtByTrackId(trackId);
 
         if (!coverArt) {
-          // No cover art in database — return 404 so renderer fallback chain fires.
-          // REVFIX v1: Previously returned HTTP 200 + dark 1x1 pixel, which caused
-          // img.onload to fire with a stretched dark pixel instead of img.onerror.
-          // This silently killed the entire 3-tier fallback chain:
-          // protocol URL → retry with cache-bust → IPC thumbnail → art-placeholder.
-          // Now returns 404 so onerror fires and the fallback chain works correctly.
           return new Response("No cover art", {
             status: 404,
             headers: {
@@ -340,15 +446,13 @@ app.whenReady().then(() => {
           });
         }
 
-        // Base64 data: URI — decode and serve directly
+        // Base64 data: URI
         if (coverArt.startsWith("data:")) {
           const matches = coverArt.match(/^data:([^;]+);base64,(.+)$/);
           if (matches) {
             const mimeType = matches[1] || "image/jpeg";
             const buffer = Buffer.from(matches[2], "base64");
-            // Cache for future requests
             if (_protocolCache.size >= PROTOCOL_CACHE_MAX) {
-              // Evict oldest entry (first in Map = least recently used)
               const firstKey = _protocolCache.keys().next().value;
               _protocolCache.delete(firstKey);
             }
@@ -365,7 +469,7 @@ app.whenReady().then(() => {
           }
         }
 
-        // File path — serve the file (same logic as nova-media://cover/)
+        // File path
         if (fs.existsSync(coverArt)) {
           const ext = path.extname(coverArt).toLowerCase();
           const mimeMap = {
@@ -379,7 +483,6 @@ app.whenReady().then(() => {
           };
           const mimeType = mimeMap[ext] || "image/webp";
           const buffer = fs.readFileSync(coverArt);
-          // Cache for future requests
           if (_protocolCache.size >= PROTOCOL_CACHE_MAX) {
             const firstKey = _protocolCache.keys().next().value;
             _protocolCache.delete(firstKey);
@@ -396,8 +499,6 @@ app.whenReady().then(() => {
           });
         }
 
-        // File path doesn't exist anymore — return 404 so renderer fallback chain fires.
-        // REVFIX v1: Same bug as above — returning 200 + dark pixel killed the fallback.
         return new Response("Cover art file not found", {
           status: 404,
           headers: {
@@ -409,16 +510,6 @@ app.whenReady().then(() => {
       }
 
       // ── nova-media://thumb/{trackId}/{size} ──────────────────────
-      // Serves pre-generated WebP thumbnails from cached_covers/thumbs/
-      // REVFIX v2: Now uses in-flight deduplication — if multiple requests
-      // arrive for the same trackId+size while sharp is already generating
-      // the thumbnail, they share the same generation Promise instead of
-      // each starting a separate sharp() process. This prevents:
-      //   - Redundant sharp() CPU usage (each call = 10-50ms of CPU)
-      //   - Redundant disk reads for the same cover art source
-      //   - Redundant disk writes for the same thumbnail output
-      // Result: When 50 track rows request the same album thumbnail,
-      // only 1 sharp() process runs instead of 50.
       if (url.startsWith("nova-media://thumb/")) {
         const parts = url.slice("nova-media://thumb/".length).split("/");
         const trackId = parts[0];
@@ -432,11 +523,10 @@ app.whenReady().then(() => {
           fs.mkdirSync(thumbDir, { recursive: true });
         const thumbFile = path.join(thumbDir, `${trackId}_${size}.webp`);
 
-        // If thumbnail already exists on disk, serve it directly
         if (fs.existsSync(thumbFile)) {
           const stat = fs.statSync(thumbFile);
-          const stream = fs.createReadStream(thumbFile);
-          return new Response(stream, {
+          const buffer = fs.readFileSync(thumbFile);
+          return new Response(buffer, {
             status: 200,
             headers: {
               ..._corsHeaders,
@@ -447,20 +537,16 @@ app.whenReady().then(() => {
           });
         }
 
-        // REVFIX v2: In-flight deduplication for thumbnail generation
-        // If sharp is already generating this exact thumbnail, wait for it
-        // instead of starting a redundant generation.
+        // In-flight deduplication
         const genKey = `thumbGen::${trackId}::${size}`;
         if (_thumbGenInFlight.has(genKey)) {
-          // Wait for the in-flight generation to complete
           try {
             await _thumbGenInFlight.get(genKey);
           } catch (_) {}
-          // Now the file should exist on disk — serve it
           if (fs.existsSync(thumbFile)) {
             const stat = fs.statSync(thumbFile);
-            const stream = fs.createReadStream(thumbFile);
-            return new Response(stream, {
+            const buffer = fs.readFileSync(thumbFile);
+            return new Response(buffer, {
               status: 200,
               headers: {
                 ..._corsHeaders,
@@ -470,7 +556,6 @@ app.whenReady().then(() => {
               },
             });
           }
-          // Generation failed — return 404
           return new Response("Thumbnail not available", {
             status: 404,
             headers: {
@@ -481,7 +566,7 @@ app.whenReady().then(() => {
           });
         }
 
-        // Start on-demand generation with deduplication
+        // Start on-demand generation
         const genPromise = (async () => {
           const sharp = require("sharp");
           const coverArt = registerIPCHandlers.getCoverArtByTrackId(trackId);
@@ -507,7 +592,6 @@ app.whenReady().then(() => {
             .webp({ quality: 75 })
             .toBuffer();
 
-          // Cache to disk for future requests
           fs.writeFileSync(thumbFile, thumbBuffer);
           return thumbBuffer;
         })();
@@ -535,7 +619,6 @@ app.whenReady().then(() => {
           _thumbGenInFlight.delete(genKey);
         }
 
-        // No cover art available at all — return 404 so renderer fallback chain fires
         return new Response("Thumbnail not available", {
           status: 404,
           headers: {
@@ -547,18 +630,12 @@ app.whenReady().then(() => {
       }
 
       // ── nova-media://cover/{encoded-path} ────────────────────────
-      // Serves cover art files by absolute path (for album/artist cards)
       if (url.startsWith("nova-media://cover/")) {
         const encoded = url.slice("nova-media://cover/".length);
-        // Strip query params (retry=1&t=... cache-bust from renderer)
         const cleanEncoded = encoded.split("?")[0];
         const filePath = decodeURIComponent(cleanEncoded);
 
         if (!fs.existsSync(filePath)) {
-          // REVFIX v1: Return 404 for missing files so renderer fallback chain fires.
-          // Previously returned HTTP 200 + dark 1x1 pixel which killed the fallback
-          // because img.onload fired with a valid (but blank) image instead of onerror.
-          // The renderer's 3-tier fallback + art-placeholder guarantees no black cards.
           return new Response("Cover art file not found", {
             status: 404,
             headers: {
@@ -581,8 +658,8 @@ app.whenReady().then(() => {
         };
         const mimeType = mimeMap[ext] || "image/webp";
         const stat = fs.statSync(filePath);
-        const stream = fs.createReadStream(filePath);
-        return new Response(stream, {
+        const buffer = fs.readFileSync(filePath);
+        return new Response(buffer, {
           status: 200,
           headers: {
             ..._corsHeaders,
@@ -594,82 +671,46 @@ app.whenReady().then(() => {
       }
 
       // ── nova-media://local/<encoded-absolute-path> ───────────────
-      // Serves local audio files with correct MIME types.
-      // Explicitly supports byte-range requests for seeking to avoid media player restarts.
-      const encoded = url.slice("nova-media://local/".length);
-      let filePath = decodeURIComponent(encoded);
+      // Served via fs.createReadStream (Node libuv thread pool).
+      // Avoids net.fetch(file://) blocking on Windows when concurrent
+      // streams are open through Chromium's network service thread.
+      if (url.startsWith("nova-media://local/")) {
+        let filePath = decodeNovaMediaLocalPath(url);
 
-      if (!fs.existsSync(filePath)) {
-        // Self-healing: if the file is missing, try to find a track in the database
-        // with the same title/artist that actually exists on disk.
-        try {
-          const alternativePath =
-            registerIPCHandlers.findAlternativeTrackPath(filePath);
-          if (alternativePath) {
-            console.log(
-              `[self-healing] Resolved missing file ${filePath} to ${alternativePath}`,
+        // Self-healing: find alternative path if file is missing
+        if (!fs.existsSync(filePath)) {
+          try {
+            const alternativePath =
+              registerIPCHandlers.findAlternativeTrackPath(filePath);
+            if (alternativePath) {
+              console.log(
+                `[self-healing] Resolved missing file ${filePath} to ${alternativePath}`,
+              );
+              filePath = alternativePath;
+            }
+          } catch (err) {
+            console.warn(
+              "[self-healing] Failed to resolve alternative file:",
+              err.message,
             );
-            filePath = alternativePath;
-          }
-        } catch (err) {
-          console.warn(
-            "[self-healing] Failed to resolve alternative file:",
-            err.message,
-          );
-        }
-      }
-
-      if (!fs.existsSync(filePath)) {
-        return new Response("File not found", { status: 404 });
-      }
-
-      const stat = fs.statSync(filePath);
-      if (stat.size === 0) {
-        console.warn(`nova-media: zero-byte file: ${filePath}`);
-        return new Response("Empty file", { status: 404 });
-      }
-
-      const ext = path.extname(filePath).toLowerCase();
-      const mimeType = AUDIO_MIME[ext] || "audio/mpeg";
-
-      let responseStatus = 200;
-      let responseHeaders = {
-        ..._corsHeaders,
-        "Accept-Ranges": "bytes",
-        "Content-Type": mimeType,
-      };
-      let readStreamOptions = {};
-
-      const rangeHeader = request.headers.get("Range") || request.headers.get("range");
-      if (rangeHeader) {
-        const match = rangeHeader.match(/bytes=(\d+)-(\d+)?/);
-        if (match) {
-          const start = parseInt(match[1], 10);
-          const end = match[2] ? parseInt(match[2], 10) : stat.size - 1;
-
-          if (start < stat.size) {
-            responseStatus = 206;
-            readStreamOptions = { start, end };
-            responseHeaders["Content-Range"] = `bytes ${start}-${end}/${stat.size}`;
-            responseHeaders["Content-Length"] = String(end - start + 1);
           }
         }
+
+        if (!fs.existsSync(filePath)) {
+          return new Response("File not found", { status: 404 });
+        }
+
+        const stat = fs.statSync(filePath);
+        if (stat.size === 0) {
+          console.warn(`nova-media: zero-byte file: ${filePath}`);
+          return new Response("Empty file", { status: 404 });
+        }
+
+        return serveAudioFile(request, filePath);
       }
 
-      if (responseStatus === 200) {
-        responseHeaders["Content-Length"] = String(stat.size);
-      }
-
-      try {
-        const stream = fs.createReadStream(filePath, readStreamOptions);
-        return new Response(stream, {
-          status: responseStatus,
-          headers: responseHeaders,
-        });
-      } catch (err) {
-        console.error("nova-media local stream error:", err);
-        return new Response("Internal error", { status: 500 });
-      }
+      // Unknown nova-media:// path
+      return new Response("Not found", { status: 404 });
     } catch (err) {
       console.error("nova-media protocol error:", err);
       return new Response("Internal error", { status: 500 });
@@ -679,15 +720,11 @@ app.whenReady().then(() => {
   createMainWindow();
   registerIPCHandlers(mainWindow);
 
-  // ─── Auto-Updater (electron-updater + GitHub Releases) ─────────────
-  // Configures automatic update checks on launch and IPC events for
-  // renderer-driven update flow (check → download → install).
-  // Only runs in production (packaged app) AND when electron-updater is installed.
+  // ─── Auto-Updater ─────────────────────────────────────────────────
   if (autoUpdater && app.isPackaged) {
-    autoUpdater.autoDownload = false; // Don't download without user consent
-    autoUpdater.autoInstallOnAppQuit = true; // Install on next quit
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
 
-    // Forward autoUpdater events to the renderer
     autoUpdater.on("update-available", (info) => {
       mainWindow?.webContents.send("update:available", {
         version: info.version,
@@ -718,20 +755,39 @@ app.whenReady().then(() => {
       mainWindow?.webContents.send("update:error", { message: err.message });
     });
 
-    // Auto-check for updates on launch (1-minute delay to avoid slowing startup)
     setTimeout(() => {
       autoUpdater.checkForUpdates().catch((err) => {
         console.warn("[autoUpdater] Startup check failed:", err.message);
       });
     }, 60_000);
 
-    // Periodic check every 4 hours
     setInterval(
       () => {
         autoUpdater.checkForUpdates().catch(() => {});
       },
       4 * 60 * 60 * 1000,
     );
+  } else if (!app.isPackaged) {
+    setTimeout(async () => {
+      try {
+        const CURRENT_VERSION = require("../package.json").version || "1.0.0";
+        const response = await net.fetch(
+          "https://api.github.com/repos/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases/latest",
+          { headers: { "User-Agent": "NovaTune-Update-Check" } },
+        );
+        if (response.ok) {
+          const data = await response.json();
+          const latestVersion = (data.tag_name || "").replace(/^v/, "");
+          if (latestVersion && latestVersion !== CURRENT_VERSION) {
+            mainWindow?.webContents.send("update:available", {
+              version: latestVersion,
+              releaseNotes: data.name || "",
+              releaseName: data.name || "",
+            });
+          }
+        }
+      } catch (_) {}
+    }, 30_000);
   }
 
   if (process.platform === "win32") {

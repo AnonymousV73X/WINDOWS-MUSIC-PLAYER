@@ -1,12 +1,14 @@
 {
   "name": "novatune",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "NovaTune — A premium Windows music player with Spotify-dark aesthetics",
-  "main": "main/main.js",
+  "main": "main/main.bundle.js",
   "scripts": {
-    "start": "electron .",
-    "build": "electron-builder --win --config electron.config.js",
-    "build:portable": "electron-builder --win portable",
+    "build:main": "node esbuild.main.config.js",
+    "start": "npm run build:main && electron .",
+    "dev": "electron .",
+    "build": "npm run build:main && electron-builder --win --config electron.config.js",
+    "build:portable": "npm run build:main && electron-builder --win portable",
     "test": "jest NovaTune.Tests/"
   },
   "author": "NovaTune",
@@ -14,15 +16,17 @@
   "devDependencies": {
     "electron": "^28.1.0",
     "electron-builder": "^24.9.1",
+    "esbuild": "^0.28.1",
     "jest": "^29.7.0"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",
     "chokidar": "^3.5.3",
     "electron-updater": "^6.8.9",
-    "music-metadata": "^8.1.0",
+    "music-metadata": "^11.13.0",
     "node-vibrant": "^4.0.4",
-    "sharp": "^0.34.5"
+    "sharp": "^0.34.5",
+    "v8-compile-cache": "^2.4.0"
   },
   "build": {
     "appId": "com.novatune.player",

@@ -25,7 +25,10 @@
 /* ── Splash Screen ── */
 .splash-screen {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
   z-index: 99999;
   background: var(--bg, #121212);
   display: flex;
@@ -742,29 +745,35 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(18, 18, 18, 0.85);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px) saturate(140%);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  border-radius: 12px;
 }
 
 .scan-progress-card {
-  background: #1e1e1e;
-  border-radius: 16px;
-  padding: 32px 40px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.005);
+  border-radius: 20px;
+  padding: 36px 44px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
-  min-width: 320px;
+  gap: 18px;
+  
+  min-width: 340px;
+  backdrop-filter: blur(4px) saturate(160%);
+  -webkit-backdrop-filter: blur(10px) saturate(160%);
 }
 
 .scan-progress-spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid #333;
+  width: 44px;
+  height: 44px;
+  border: 2.5px solid rgba(255, 255, 255, 0.10);
   border-top-color: var(--green);
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  animation: spin 0.75s linear infinite;
+  filter: drop-shadow(0 0 6px var(--green));
 }
 
 @keyframes spin {
@@ -774,25 +783,27 @@ textarea {
 }
 
 .scan-progress-text {
-  font-size: 14px;
-  color: var(--text-secondary);
+  font-size: 13.5px;
+  color: rgba(255, 255, 255, 0.70);
   text-align: center;
+  letter-spacing: 0.01em;
 }
 
 .scan-progress-bar-wrap {
   width: 100%;
-  height: 4px;
-  background: #333;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
   border-radius: 2px;
   overflow: hidden;
 }
 
 .scan-progress-bar-fill {
   height: 100%;
-  background: var(--green);
+  background: linear-gradient(90deg, var(--green), color-mix(in srgb, var(--green) 70%, #fff));
   border-radius: 2px;
   width: 0%;
-  transition: width 0.3s ease;
+  transition: width 0.25s ease;
+  box-shadow: 0 0 8px var(--green);
 }
 
 /* ── TRACK TABLE ── */
@@ -1662,7 +1673,7 @@ textarea {
 
 .playlist-popover {
   position: fixed;
-  z-index: 3000;
+  z-index: 100100; /* must be above .np-overlay (99999) so overlay controls work */
   width: 220px;
   max-height: 280px;
   overflow-y: auto;
@@ -1987,7 +1998,7 @@ textarea {
   /* BUGFIX: was `cursor: default` — made the bar feel non-interactive
      and users reported "seek isn't working" partly because there was
      no visual affordance hinting they could click it. */
-  cursor: pointer;
+  cursor: default;
   display: block;
   touch-action: none;
   border-radius: 4px;
@@ -2327,14 +2338,11 @@ textarea {
   border: none !important;
   outline: none !important;
   box-shadow: none !important;
-  transition:
-    background 0.15s,
-    transform 0.15s;
+  transition: background 0.2s;
 }
 
 .playlist-card:hover {
-  opacity: 0.9;
-  transform: translateY(-1px);
+  background: #202020;
 }
 
 /* ── playlist top bar with import FAB ── */
@@ -2426,9 +2434,9 @@ textarea {
   justify-content: center;
   cursor: default;
   opacity: 0;
-  transform: scale(0.8);
-  transition: opacity 0.18s ease, transform 0.18s ease, background 0.15s;
-  z-index: 2;
+  transform: scale(0.85);
+  transition: opacity 0.15s ease, transform 0.15s ease, background 0.12s;
+  z-index: 5;
   backdrop-filter: blur(6px);
 }
 
@@ -2437,26 +2445,20 @@ textarea {
   height: 16px;
 }
 
-.playlist-card:hover .playlist-card-menu-btn {
-  opacity: 1;
-  transform: scale(1);
-}
 
-.playlist-card-menu-btn:hover {
-  background: var(--green);
-  color: #000;
-}
+
+
 
 /* ── center play button overlay on cover ── */
 .playlist-cover-play-btn {
   position: absolute;
   left: 50%;
   top: 50%;
-  transform: translate(-50%, -50%) scale(0.9);
-  width: 56px;
-  height: 56px;
+  transform: translate(-50%, -50%) scale(0.88);
+  width: 48px;
+  height: 48px;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.6);
   border: none;
   color: #fff;
   display: flex;
@@ -2464,26 +2466,23 @@ textarea {
   justify-content: center;
   cursor: default;
   opacity: 0;
-  transition: opacity 0.18s ease, transform 0.18s ease, background 0.15s;
-  z-index: 2;
+  transition: opacity 0.15s ease, transform 0.15s ease, background 0.12s;
+  z-index: 4;
   backdrop-filter: blur(6px);
 }
 
+.playlist-cover-play-btn:hover{
+  opacity: 1;
+}
+
 .playlist-cover-play-btn svg {
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   margin-left: 2px;
 }
 
-.playlist-card:hover .playlist-cover-play-btn {
-  opacity: 1;
-  transform: translate(-50%, -50%) scale(1);
-}
 
-.playlist-cover-play-btn:hover {
-  background: var(--green);
-  color: #000;
-}
+
 
 .playlist-cover-1 {
   grid-template-columns: 1fr;
@@ -2541,13 +2540,13 @@ textarea {
   display: block;
 }
 
-/* Collage cells — asymmetric grid mosaic (1 large + 3 small) */
+/* Collage cells — Vinyl Disc layout (4-image bg + circular center disc) */
 .playlist-cover-4 {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  grid-template-rows: repeat(4, 1fr);
-  gap: 3px;
-  padding: 3px;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 0;
+  background: #0a0a0a;
 }
 
 .playlist-cover-cell.playlist-cover-tilt {
@@ -2556,8 +2555,9 @@ textarea {
   border: none !important;
   outline: none !important;
   box-shadow: none !important;
-  border-radius: 4px;
-  transition: transform 0.25s ease;
+  border-radius: 0;
+  transition: filter 0.3s ease;
+  filter: brightness(0.42) saturate(0.55);
 }
 
 .playlist-cover-cell.playlist-cover-tilt img {
@@ -2572,24 +2572,63 @@ textarea {
   box-shadow: none !important;
 }
 
-.playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt:nth-child(1) {
-  grid-area: 1 / 1 / span 3 / span 3;
-}
-
-.playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt:nth-child(2) {
-  grid-area: 1 / 4 / span 2 / span 1;
-}
-
-.playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt:nth-child(3) {
-  grid-area: 3 / 4 / span 2 / span 1;
-}
-
-.playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt:nth-child(4) {
-  grid-area: 4 / 1 / span 1 / span 3;
-}
+.playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt:nth-child(1) { grid-area: 1 / 1 / 2 / 2; }
+.playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt:nth-child(2) { grid-area: 1 / 2 / 2 / 3; }
+.playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt:nth-child(3) { grid-area: 2 / 1 / 3 / 2; }
+.playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt:nth-child(4) { grid-area: 2 / 2 / 3 / 3; }
 
 .playlist-card:hover .playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt {
-  transform: scale(1.03);
+  filter: brightness(0.52) saturate(0.65);
+}
+
+/* Vinyl disc — circular dominant cover floating center */
+.playlist-vinyl-disc {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 58%;
+  height: 58%;
+  border-radius: 50%;
+  overflow: hidden;
+  z-index: 2;
+  box-shadow:
+    0 0 0 1px #0a0a0a,
+    0 0 0 2px rgba(255, 255, 255, 0.07),
+    0 8px 28px rgba(0, 0, 0, 0.85);
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.playlist-vinyl-disc img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border: none !important;
+  outline: none !important;
+}
+
+/* Vinyl centre hole */
+.playlist-vinyl-disc::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #0a0a0a;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1);
+  z-index: 3;
+}
+
+.playlist-card:hover .playlist-vinyl-disc {
+  transform: translate(-50%, -50%) scale(1.02);
+  box-shadow:
+    0 0 0 1px #0a0a0a,
+    0 0 0 5px rgba(255, 255, 255, 0.09),
+    0 10px 30px rgba(0, 0, 0, 0.88);
 }
 
 .playlist-card-title {
@@ -4095,8 +4134,8 @@ textarea {
 .floating-nav-card {
   display: none;
   position: fixed;
-  left: 14px;
-  top: 52%;
+  right: 14px;
+  top: 53%;
   transform: translateY(-50%);
   z-index: 300;
   /* Glass: same recipe as the floating lyrics panel — translucent dark
@@ -4188,7 +4227,7 @@ textarea {
 .floating-nav-card .fn-btn::after {
   content: attr(data-label);
   position: absolute;
-  left: calc(100% + 10px);
+  right: calc(100% + 10px);
   top: 50%;
   transform: translateY(-50%);
   background: rgba(18, 18, 18, 0.88);
@@ -4219,7 +4258,7 @@ textarea {
 
 .floating-nav-card .fn-search-input {
   position: absolute;
-  left: calc(100% + 6px);
+  right: calc(100% + 6px);
   top: 50%;
   transform: translateY(-50%);
   width: 0;
@@ -4236,6 +4275,7 @@ textarea {
   transition: width 0.2s ease, opacity 0.15s ease;
   white-space: nowrap;
   font-family: var(--app-font, inherit);
+  text-align: right;
 }
 
 .floating-nav-card .fn-search-input::placeholder {
@@ -5473,4 +5513,141 @@ textarea {
 .sidebar-refresh-btn svg {
   width: 13px;
   height: 13px;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.sidebar-refresh-btn.spinning svg {
+  animation: spin 1s linear infinite;
+  color: var(--green);
+}
+
+/* ── Album / Artist card hover play button ─────────────────────── */
+.album-cover {
+  position: relative;
+  overflow: hidden;
+}
+.card-play-btn {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--green, #1db954);
+  border: none;
+  cursor: default;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #000;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.18s ease, transform 0.18s ease, background 0.15s;
+  z-index: 10;
+}
+.album-card:hover .card-play-btn {
+  opacity: 1;
+  transform: translateY(0);
+}
+.card-play-btn:hover {
+  background: #1ed760;
+  transform: scale(1.08) translateY(0);
+}
+.card-play-btn:active {
+  transform: scale(0.96) translateY(0);
+}
+
+/* ── Track row loading spinner ─────────────────────────────────── */
+@keyframes nova-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.track-row.track-loading::after,
+.playlist-song-row.track-loading::after {
+  content: '';
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  border: 2px solid rgba(255,255,255,0.15);
+  border-top-color: var(--green, #1db954);
+  border-radius: 50%;
+  animation: nova-spin 0.7s linear infinite;
+  pointer-events: none;
+  flex-shrink: 0;
+}
+.track-row {
+  position: relative;
+}
+.playlist-song-row {
+  position: relative;
+}
+/* ── Floating nav trigger icon (icon mode, ≤950px) ── */
+.float-nav-trigger {
+  position: relative;
+  z-index: 510;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  border: 1.5px solid #333;
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: default;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.2s ease, transform 0.2s ease;
+}
+
+.float-nav-trigger.hidden {
+  display: none;
+}
+
+.nav-lyrics-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.toolbar.toolbar-section-mode {
+  position: relative;
+}
+
+.toolbar.toolbar-section-mode .nav-lyrics-group {
+  position: absolute;
+  right: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-left: 0;
+}
+
+.float-nav-trigger:hover {
+  background: rgba(36, 36, 36, 0.95);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.float-nav-trigger svg {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+}
+
+/* Only show the trigger button in icon nav mode and when the sidebar is hidden */
+@media (min-width: 951px) {
+  .float-nav-trigger {
+    display: none !important;
+  }
+}
+
+/* Active/open state — highlight with accent color */
+.float-nav-trigger.nav-open {
+  border-color: var(--green);
+  color: var(--green);
 }

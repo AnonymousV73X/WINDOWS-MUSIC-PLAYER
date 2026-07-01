@@ -22,20 +22,14 @@
 const AudioEngine = require("./audio/AudioEngine");
 const EQEngine = require("./audio/EQEngine");
 
-try {
-  const fs = require("fs");
-  const path = require("path");
-  const settingsPath = path.join(__dirname, "..", "data", "settings.json");
-  if (fs.existsSync(settingsPath)) {
-    const accentColor = JSON.parse(
-      fs.readFileSync(settingsPath, "utf-8"),
-    ).accentColor;
-    if (accentColor) {
-      document.documentElement.style.setProperty("--green", accentColor);
-      document.documentElement.style.setProperty("--green-hover", accentColor);
-    }
+const arg = process.argv.find((a) => a.startsWith("--accent-color="));
+if (arg) {
+  const accentColor = arg.split("=")[1];
+  if (accentColor) {
+    document.documentElement.style.setProperty("--green", accentColor);
+    document.documentElement.style.setProperty("--green-hover", accentColor);
   }
-} catch (_) {}
+}
 
 // ─── State ─────────────────────────────────────────────────────────
 const state = {
@@ -58,6 +52,8 @@ const state = {
   playlists: [],
   favoritesPlaylistId: null,
   activePlaylistId: null,
+  playingPlaylistId: null,
+  _playingFromPlaylistCard: false,
   settings: {},
   equalizer: new Array(10).fill(0),
   eqEnabled: true,
@@ -618,7 +614,7 @@ function _getDominantColorForTrack(track) {
 // is regenerated on next load.
 const _playlistCollageCache = new Map(); // playlistId → dataURL (session hot-cache)
 const COLLAGE_IDB_PREFIX = "collage::";
-const COLLAGE_LAYOUT_VERSION = 3; // Bumped when collage layout changes (forces cache invalidation)
+const COLLAGE_LAYOUT_VERSION = 4; // Bumped when collage layout changes (forces cache invalidation)
 
 /** Compute a content hash for a playlist's track list (sorted for order-independence). */
 function _computePlaylistContentHash(trackIds) {
@@ -883,6 +879,27 @@ const virtualList = {
 // Warms cover art + lyrics for a track when the pointer enters its row.
 const _coverArtWarmCache = new Map(); // trackId → HTMLImageElement (pre-decoded)
 let _hoverPrefetchTrackId = null;
+let _hoverAudioPreloadId = null; // guard: don't double-preload same track
+let _nextTrackPreloadId = null; // guard for 80%-progress next-track preload
+
+// ── Hover audio warm-up (separate element — never touches AudioEngine.audio) ──
+// Pumps the nova-media:// URL into a hidden <audio> element so the OS disk
+// cache and Chromium's media buffer are warm before the user clicks.
+// AudioEngine.audio is NOT touched, so the currently playing track is safe.
+const _warmAudioEl = new Audio();
+_warmAudioEl.preload = "auto";
+_warmAudioEl.volume = 0;
+function _warmAudio(track) {
+  if (!track || !track.filePath) return;
+  if (_hoverAudioPreloadId === track.id) return;
+  // Only warm when AudioEngine is initialised (protocol handler is registered)
+  if (!audioEngine._isInitialized) return;
+  _hoverAudioPreloadId = track.id;
+  const url = audioEngine._toMediaURL(track.filePath);
+  if (_warmAudioEl.src === url) return; // already loaded
+  _warmAudioEl.src = url;
+  _warmAudioEl.load();
+}
 
 function warmCoverArt(track) {
   if (!track) return;
@@ -1312,7 +1329,7 @@ function invalidateRendered(section) {
 
 function _showCached(section, renderFn) {
   const panel = _showPanel(section);
-  if (_panelDirty[section]) {
+  if (_panelDirty[section] || section === "albums" || section === "artists") {
     _activePanelTarget = panel;
     renderFn();
     _activePanelTarget = null;
@@ -1908,13 +1925,17 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   console.log("NovaTune ready!");
 
-  // Dismiss splash screen after app is fully initialized
-  // Wait for realistic loader animation (2.2s) plus a small buffer
+  // Dismiss splash screen after app is fully initialized.
+  // By this point _loadLibrary() has already awaited every page, so
+  // state.tracks is the complete, playable library — not just page 0.
   const splash = document.getElementById("splash-screen");
   if (splash) {
     const initTime = performance.now();
-    // Minimum display time so the animation plays fully
-    const MIN_SPLASH_MS = 2400;
+    // Small minimum so the loader animation doesn't visibly cut off on very
+    // fast (cached/SSD) startups. Kept short — large libraries on HDD are
+    // already gated on real load time, so this must not add a multi-second
+    // artificial floor on top of that.
+    const MIN_SPLASH_MS = 500;
     const elapsed = () => performance.now() - initTime;
     const dismiss = () => {
       splash.classList.add("hidden");
@@ -1925,6 +1946,49 @@ document.addEventListener("DOMContentLoaded", async () => {
     const remaining = Math.max(0, MIN_SPLASH_MS - elapsed());
     setTimeout(dismiss, remaining);
   }
+
+  // ── Deferred background scan (6s after startup) ───────────────────
+  // We do NOT scan immediately on startup. The library is loaded from the
+  // SQLite DB instantly (no disk thrash). A background scan fires 6 seconds
+  // after launch so the HDD is free during the critical first-render phase.
+  // We perform a fast fingerprint pre-check. If files are unchanged, we skip
+  // scanning entirely. If they changed, we run the scan silently in the background
+  // without showing a popup modal to the user.
+  setTimeout(async () => {
+    const scanFolders = Array.isArray(state.settings?.scanFolders)
+      ? state.settings.scanFolders
+      : [];
+    if (scanFolders.length === 0) return;
+
+    console.log("[Startup] Checking folder fingerprints...");
+    try {
+      const check = await window.novaAPI.invoke(
+        "library:needs-scan",
+        scanFolders,
+      );
+      if (!check.needsScan) {
+        console.log(
+          "[Startup] No folder changes detected. Skipping background scan.",
+        );
+        return;
+      }
+
+      console.log("[Startup] Deferred background scan starting (silent)...");
+      state.bgScanActive = true; // Flag to silence the scan progress UI modal
+
+      for (const folderPath of scanFolders) {
+        await window.novaAPI.invoke("library:scan", folderPath);
+      }
+      _bustIDBThumbCache();
+      await _loadLibrary();
+      _updateSidebarFolderInfo();
+      console.log("[Startup] Background scan complete.");
+    } catch (err) {
+      console.warn("[Startup] Background scan failed:", err.message);
+    } finally {
+      state.bgScanActive = false;
+    }
+  }, 6000);
 });
 
 // ─── Keyboard Shortcuts (unified global handler) ─────────────────
@@ -2270,6 +2334,9 @@ function _updateToolbarVisibility(section) {
   const showShuffleAndSort = section === "home" || section === "library";
   if (shuffleBtn) shuffleBtn.style.display = showShuffleAndSort ? "" : "none";
   if (sortGroup) sortGroup.style.display = showShuffleAndSort ? "" : "none";
+  const toolbarEl = document.querySelector(".toolbar");
+  if (toolbarEl)
+    toolbarEl.classList.toggle("toolbar-section-mode", !showShuffleAndSort);
   // Show section title in toolbar for other sections (albums, artists, playlists, queue)
   // when shuffle/sort are hidden
   let sectionLabel = document.getElementById("toolbar-section-label");
@@ -2325,6 +2392,7 @@ function _navigateTo(section) {
       break;
     case "albums":
       title.textContent = "Albums";
+      _panelDirty["albums"] = true;
       _showCached("albums", renderAlbums);
       // Trigger exhaustive cover art search for any blank album cards
       requestIdleCallback(() => _exhaustiveCoverArtAudit(), { timeout: 2000 });
@@ -2332,6 +2400,7 @@ function _navigateTo(section) {
       break;
     case "artists":
       title.textContent = "Artists";
+      _panelDirty["artists"] = true;
       _showCached("artists", renderArtists);
       // Trigger exhaustive cover art search for any blank artist cards
       requestIdleCallback(() => _exhaustiveCoverArtAudit(), { timeout: 2000 });
@@ -2615,20 +2684,28 @@ function _wireAddFolder() {
   // Sidebar refresh button
   $("sidebar-refresh-btn")?.addEventListener("click", async (e) => {
     e.stopPropagation();
+    const btn = e.currentTarget;
     const scanFolders = Array.isArray(state.settings.scanFolders)
       ? state.settings.scanFolders
       : [];
     if (scanFolders.length === 0) return;
 
+    btn.classList.add("spinning");
     $("scan-progress").style.display = "flex";
     $("scan-progress-bar").style.width = "0%";
     $("scan-progress-text").textContent = "Refreshing library...";
 
-    for (const folderPath of scanFolders) {
-      await window.novaAPI.invoke("library:scan", folderPath);
+    try {
+      for (const folderPath of scanFolders) {
+        await window.novaAPI.invoke("library:scan", folderPath);
+      }
+    } catch (err) {
+      console.error("[Refresh] Error scanning:", err);
+    } finally {
+      btn.classList.remove("spinning");
+      $("scan-progress").style.display = "none";
     }
 
-    $("scan-progress").style.display = "none";
     _bustIDBThumbCache();
     await _loadLibrary();
     _updateSidebarFolderInfo();
@@ -2670,6 +2747,10 @@ function _updateSidebarFolderInfo() {
 function _wireScanProgress() {
   if (window.novaAPI) {
     window.novaAPI.on("library:scan-progress", (data) => {
+      if (state.bgScanActive) {
+        // Run completely silently in background
+        return;
+      }
       console.log("[scan]", data.stage, data.message || "");
       const overlay = $("scan-progress");
       const bar = $("scan-progress-bar");
@@ -3412,192 +3493,252 @@ async function _loadLibrary() {
   // Show skeleton immediately so there's no blank state
   _showSkeletonRows(15);
   try {
-    // Load track list first — we need IDs to check IDB
-    const result = await window.novaAPI.invoke("library:get-all");
-    if (result.success) {
-      state.tracks = result.tracks || [];
+    // PERF FIX: Progressive library loading for large libraries.
+    // Load the first page (500 tracks) immediately for fast first paint,
+    // then load remaining pages in the background.
+    // For small libraries (< 500 tracks), this is effectively the same as before.
+    const FIRST_PAGE_SIZE = 500;
 
-      // Inject 48px display thumbs into track._thumb (NOT track.coverArt).
-      // track.coverArt must stay as the original file path so IPC calls like
-      // coverart:thumbnail and coverart:get can resolve it correctly.
-      // Check IDB for cached 48px thumbs; only fetch from main process for misses.
-      //
-      // PERFORMANCE OPTIMIZATION: Instead of awaiting each IDB read individually
-      // (which serializes N IndexedDB transactions), we batch reads into a single
-      // IDB transaction using getAll(). This reduces IDB round-trips from N to 1
-      // and cuts ~200-500ms on large libraries (1000+ tracks).
-      const idbHits = {};
-      const idbMisses = [];
-      if (_idbReady && _idb) {
-        try {
-          // Batch read: open one readonly transaction for all keys
-          const keys = state.tracks.map((t) => `batch48::${t.id}`);
-          const tx = _idb.transaction(IDB_STORE, "readonly");
-          const store = tx.objectStore(IDB_STORE);
-          const results = await new Promise((resolve) => {
-            const resultMap = {};
-            let pending = keys.length;
-            if (pending === 0) {
-              resolve(resultMap);
-              return;
-            }
-            for (const key of keys) {
-              const req = store.get(key);
-              req.onsuccess = () => {
-                if (req.result !== undefined && req.result !== null) {
-                  resultMap[key.replace("batch48::", "")] = req.result;
-                }
-                if (--pending === 0) resolve(resultMap);
-              };
-              req.onerror = () => {
-                if (--pending === 0) resolve(resultMap);
-              };
-            }
-          });
-          for (const t of state.tracks) {
-            if (results[t.id]) {
-              idbHits[t.id] = results[t.id];
-            } else {
-              idbMisses.push(t.id);
-            }
-          }
-        } catch (_) {
-          // Fallback to individual reads if batch fails
-          await Promise.all(
-            state.tracks.map(async (t) => {
-              const cached = await _idbGet(`batch48::${t.id}`);
-              if (cached) {
-                idbHits[t.id] = cached;
-              } else {
-                idbMisses.push(t.id);
-              }
-            }),
-          );
-        }
-      } else {
-        // IDB not ready — all are misses
-        for (const t of state.tracks) idbMisses.push(t.id);
-      }
+    // First, try the paginated endpoint for the first page
+    let firstPageResult;
+    try {
+      firstPageResult = await window.novaAPI.invoke("library:get-page", {
+        page: 0,
+        pageSize: FIRST_PAGE_SIZE,
+      });
+    } catch (_) {
+      // Fallback to get-all if get-page isn't available (older backend)
+      firstPageResult = null;
+    }
 
-      // Apply IDB hits as display thumbs
-      // Revolutionary: Handle both old format (URL string) and new format ({url, hash} object)
-      for (const t of state.tracks) {
-        const cached = idbHits[t.id];
-        if (!cached) continue;
-        if (typeof cached === "string") {
-          // Old format: just a URL string
-          t._thumb = cached;
-        } else if (cached && cached.url) {
-          // New format: {url, hash} object with ThumbHash
-          t._thumb = cached.url;
-          if (cached.hash) {
-            t._thumbHash = cached.hash;
-          }
-        }
-      }
+    if (firstPageResult && firstPageResult.success) {
+      // Progressive loading path
+      state.tracks = firstPageResult.tracks || [];
+      const totalTracks = firstPageResult.total || state.tracks.length;
+      const hasMore = firstPageResult.hasMore;
 
-      // Fetch only misses from main process
-      if (idbMisses.length > 0) {
-        const thumbResult = await window.novaAPI.invoke(
-          "coverart:get-all-thumbs",
-          { size: 48 },
-        );
-        if (thumbResult?.success && thumbResult.thumbs) {
-          const thumbs = thumbResult.thumbs;
-          const thumbHashes = thumbResult.thumbHashes || {};
-          for (const t of state.tracks) {
-            if (thumbs[t.id] && !t._thumb) {
-              t._thumb = thumbs[t.id];
-              // Persist thumb URL + ThumbHash to IDB so next launch skips IPC
-              const thumbData = { url: thumbs[t.id] };
-              if (thumbHashes[t.id]) thumbData.hash = thumbHashes[t.id];
-              _idbSet(`batch48::${t.id}`, thumbData);
-            }
-            // Store ThumbHash for instant placeholder rendering
-            if (thumbHashes[t.id]) {
-              t._thumbHash = thumbHashes[t.id];
-            }
-          }
-        }
-      }
+      console.log(
+        `[startup] First page loaded: ${state.tracks.length}/${totalTracks} tracks. Rendering immediately.`,
+      );
 
-      // ── Decode ThumbHashes to displayable data URLs ──────────────
-      // ThumbHash hashes are ~100 bytes but need decoding to PNG data URLs
-      // for the <img> elements. Batch decode all at once (~0.1ms per hash).
-      const allHashes = {};
-      for (const t of state.tracks) {
-        if (t._thumbHash) allHashes[t.id] = t._thumbHash;
-      }
-      if (Object.keys(allHashes).length > 0) {
-        try {
-          const decodeResult = await window.novaAPI.invoke(
-            "coverart:decode-thumbhashes",
-            { hashes: allHashes },
-          );
-          if (decodeResult?.success && decodeResult.dataURLs) {
-            for (const [trackId, dataURL] of Object.entries(
-              decodeResult.dataURLs,
-            )) {
-              _thumbHashCache.set(trackId, dataURL);
-            }
-          }
-          // Revolutionary: Extract dominant colors from decoded ThumbHashes for instant card backgrounds
-          if (decodeResult?.success && decodeResult.rgbaData) {
-            for (const [trackId, rgba] of Object.entries(
-              decodeResult.rgbaData,
-            )) {
-              const color = _extractDominantColor(
-                new Uint8Array(rgba.data),
-                rgba.width,
-                rgba.height,
-              );
-              _dominantColorCache.set(trackId, color);
-            }
-          }
-        } catch (_) {
-          // ThumbHash decoding is optional — art placeholders still work
-        }
-      }
+      // Apply IDB thumbs to first page
+      await _applyIDBThumbs(state.tracks);
+
+      // Render the first page immediately
       state.filteredTracks = [...state.tracks];
       buildSearchIndex();
       invalidateSectionCache();
-      // Pre-compute section cache so album/artist navigation is instant
       sectionCache.albums = getAlbumGroups();
       sectionCache.artists = getArtistGroups();
       _sortTracks();
-      // Render the active section immediately
       if (state.activeNavSection === "albums")
         _reRenderPanel("albums", renderAlbums);
       else if (state.activeNavSection === "artists")
         _reRenderPanel("artists", renderArtists);
       else renderTracks(state.filteredTracks, "library");
-      // Sync nav highlight to match the actual active section
       $$(".nav-item[data-section]").forEach((item) => {
         item.classList.toggle(
           "active",
           item.dataset.section === state.activeNavSection,
         );
       });
-      console.log(`Library loaded: ${state.tracks.length} tracks`);
-      // Build bitmap thumbnail atlas in background (non-blocking)
-      buildThumbnailAtlas();
-      // Resolve missing cover art: sidecar files → iTunes API → Deezer API
-      resolveMissingCoverArt();
-      // Exhaustive filesystem audit: after online resolution, deep-search
-      // the filesystem for any remaining blank artist/album cards
-      _exhaustiveCoverArtAudit();
-      // Progressively fetch full-res cover art for tracks that had thumbnails
-      // (upgrades 48px thumbs to full-res for now-playing display)
-      _fetchLibraryCoverArtProgressive();
-      // Revolutionary: Aggressively preload ALL cover art URLs in background.
-      // By the time the user navigates to albums/artists, images are already cached.
-      preloadAllCoverArt();
-      // Preload playlist covers after library is ready
-      _preloadPlaylistCovers();
+
+      // Load remaining pages before we consider the library ready.
+      // AWAITED (not fire-and-forget): callers such as the splash-dismiss
+      // logic must only treat the app as "ready" once every track is
+      // actually loaded and playable, not just the first page.
+      if (hasMore) {
+        console.log(
+          `[startup] Loading remaining ${totalTracks - state.tracks.length} tracks...`,
+        );
+        await _loadRemainingPages(1, FIRST_PAGE_SIZE, totalTracks);
+      }
+    } else {
+      // Fallback: load all at once (original path)
+      const result = await window.novaAPI.invoke("library:get-all");
+      if (result.success) {
+        state.tracks = result.tracks || [];
+        await _applyIDBThumbs(state.tracks);
+      }
     }
+
+    // For the fallback path, finish setup
+    if (!firstPageResult || !firstPageResult.success) {
+      state.filteredTracks = [...state.tracks];
+      buildSearchIndex();
+      invalidateSectionCache();
+      sectionCache.albums = getAlbumGroups();
+      sectionCache.artists = getArtistGroups();
+      _sortTracks();
+      if (state.activeNavSection === "albums")
+        _reRenderPanel("albums", renderAlbums);
+      else if (state.activeNavSection === "artists")
+        _reRenderPanel("artists", renderArtists);
+      else renderTracks(state.filteredTracks, "library");
+      $$(".nav-item[data-section]").forEach((item) => {
+        item.classList.toggle(
+          "active",
+          item.dataset.section === state.activeNavSection,
+        );
+      });
+    }
+
+    // Common: Decode ThumbHashes and schedule background work
+    const allHashes = {};
+    for (const t of state.tracks) {
+      if (t._thumbHash) allHashes[t.id] = t._thumbHash;
+    }
+    if (Object.keys(allHashes).length > 0) {
+      try {
+        const decodeResult = await window.novaAPI.invoke(
+          "coverart:decode-thumbhashes",
+          { hashes: allHashes },
+        );
+        if (decodeResult?.success && decodeResult.dataURLs) {
+          for (const [trackId, dataURL] of Object.entries(
+            decodeResult.dataURLs,
+          )) {
+            _thumbHashCache.set(trackId, dataURL);
+          }
+        }
+        if (decodeResult?.success && decodeResult.rgbaData) {
+          for (const [trackId, rgba] of Object.entries(decodeResult.rgbaData)) {
+            const color = _extractDominantColor(
+              new Uint8Array(rgba.data),
+              rgba.width,
+              rgba.height,
+            );
+            _dominantColorCache.set(trackId, color);
+          }
+        }
+      } catch (_) {}
+    }
+
+    console.log(`Library loaded: ${state.tracks.length} tracks`);
+    // Defer heavy background operations until 4 seconds after launch so disk/network I/O is totally free for playback
+    setTimeout(() => {
+      buildThumbnailAtlas();
+      resolveMissingCoverArt();
+      _exhaustiveCoverArtAudit();
+      _fetchLibraryCoverArtProgressive();
+      preloadAllCoverArt();
+      _preloadPlaylistCovers();
+      _generateMissingThumbnails();
+    }, 4000);
   } catch (err) {
     console.error("Library load failed:", err);
   }
+}
+
+/**
+ * Apply IDB-cached thumbnails to a list of tracks.
+ * Extracted from _loadLibrary to be reusable for progressive loading.
+ */
+async function _applyIDBThumbs(tracks) {
+  const idbHits = {};
+  const idbMisses = [];
+  if (_idbReady && _idb) {
+    try {
+      const keys = tracks.map((t) => `batch48::${t.id}`);
+      const tx = _idb.transaction(IDB_STORE, "readonly");
+      const store = tx.objectStore(IDB_STORE);
+      const results = await new Promise((resolve) => {
+        const resultMap = {};
+        let pending = keys.length;
+        if (pending === 0) {
+          resolve(resultMap);
+          return;
+        }
+        for (const key of keys) {
+          const req = store.get(key);
+          req.onsuccess = () => {
+            if (req.result !== undefined && req.result !== null) {
+              resultMap[key.replace("batch48::", "")] = req.result;
+            }
+            if (--pending === 0) resolve(resultMap);
+          };
+          req.onerror = () => {
+            if (--pending === 0) resolve(resultMap);
+          };
+        }
+      });
+      for (const t of tracks) {
+        if (results[t.id]) {
+          idbHits[t.id] = results[t.id];
+        } else {
+          idbMisses.push(t.id);
+        }
+      }
+    } catch (_) {
+      await Promise.all(
+        tracks.map(async (t) => {
+          const cached = await _idbGet(`batch48::${t.id}`);
+          if (cached) {
+            idbHits[t.id] = cached;
+          } else {
+            idbMisses.push(t.id);
+          }
+        }),
+      );
+    }
+  } else {
+    for (const t of tracks) idbMisses.push(t.id);
+  }
+
+  // Apply IDB hits
+  for (const t of tracks) {
+    const cached = idbHits[t.id];
+    if (!cached) continue;
+    if (typeof cached === "string") {
+      t._thumb = cached;
+    } else if (cached && cached.url) {
+      t._thumb = cached.url;
+      if (cached.hash) t._thumbHash = cached.hash;
+    }
+  }
+
+  return idbMisses;
+}
+
+/**
+ * Load remaining library pages in the background.
+ * Called after the first page has been rendered for progressive loading.
+ */
+async function _loadRemainingPages(startPage, pageSize, totalTracks) {
+  const totalPages = Math.ceil(totalTracks / pageSize);
+  for (let page = startPage; page < totalPages; page++) {
+    try {
+      const result = await window.novaAPI.invoke("library:get-page", {
+        page,
+        pageSize,
+      });
+      if (result?.success && result.tracks?.length > 0) {
+        await _applyIDBThumbs(result.tracks);
+        state.tracks.push(...result.tracks);
+      }
+    } catch (err) {
+      console.warn(`[progressive] Failed to load page ${page}:`, err.message);
+    }
+    // Yield to the event loop (not a fixed stall) so the UI stays responsive
+    // without adding seconds of artificial delay across 20+ pages for large
+    // (10k+) libraries.
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  // Re-render with the full library
+  state.filteredTracks = [...state.tracks];
+  buildSearchIndex();
+  invalidateSectionCache();
+  sectionCache.albums = getAlbumGroups();
+  sectionCache.artists = getArtistGroups();
+  _sortTracks();
+  if (state.activeNavSection === "albums")
+    _reRenderPanel("albums", renderAlbums);
+  else if (state.activeNavSection === "artists")
+    _reRenderPanel("artists", renderArtists);
+  else renderTracks(state.filteredTracks, "library");
+
+  console.log(`[progressive] All ${state.tracks.length} tracks loaded.`);
 }
 
 async function _loadSettings() {
@@ -3862,15 +4003,100 @@ function _applyNavMode(mode) {
   if (!card) return;
   card.classList.toggle("nav-always", mode === "always");
   card.classList.toggle("nav-hover", mode === "hover");
+  card.classList.toggle("nav-icon", mode === "icon");
+
+  const trigger = document.getElementById("float-nav-trigger");
+
   if (mode === "always" && window.innerWidth <= 950) {
     // Show immediately only when the real sidebar is already hidden
     card.style.display = "flex";
     requestAnimationFrame(() => card.classList.add("visible"));
+    if (trigger) {
+      trigger.classList.add("hidden");
+      trigger.classList.remove("nav-open");
+    }
   } else if (mode === "hover") {
     // In hover mode: hide the card completely unless user hovers near the edge
-    // This applies to ALL screen sizes where sidebar is hidden (including tablets)
     card.classList.remove("visible");
     card.style.display = "none";
+    if (trigger) {
+      trigger.classList.add("hidden");
+      trigger.classList.remove("nav-open");
+    }
+  } else if (mode === "icon") {
+    // Icon mode: hide the floating card itself — it pops open on trigger click
+    card.classList.remove("visible");
+    card.style.display = "none";
+    // Show the trigger ONLY on narrow screens (≤950px) where the real sidebar
+    // is hidden. On wide screens the sidebar is always visible — trigger must stay hidden.
+    if (trigger) {
+      trigger.classList.remove("nav-open");
+      if (window.innerWidth <= 950) {
+        trigger.classList.remove("hidden");
+      } else {
+        trigger.classList.add("hidden");
+      }
+      // Wire the toggle (idempotent — only wire once via flag)
+      if (!trigger._navIconWired) {
+        trigger._navIconWired = true;
+        trigger.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const isOpen = card.classList.contains("visible");
+          if (isOpen) {
+            card.classList.remove("visible");
+            trigger.classList.remove("nav-open");
+            card.addEventListener(
+              "transitionend",
+              () => {
+                if (!card.classList.contains("visible"))
+                  card.style.display = "none";
+              },
+              { once: true },
+            );
+          } else {
+            card.style.display = "flex";
+            requestAnimationFrame(() => {
+              card.classList.add("visible");
+              trigger.classList.add("nav-open");
+            });
+          }
+        });
+        // Close the card when clicking outside of it or the trigger
+        document.addEventListener("click", (e) => {
+          if (
+            card.classList.contains("nav-icon") &&
+            card.classList.contains("visible") &&
+            !e.target.closest("#floating-nav-card") &&
+            !e.target.closest("#float-nav-trigger")
+          ) {
+            card.classList.remove("visible");
+            trigger.classList.remove("nav-open");
+            card.addEventListener(
+              "transitionend",
+              () => {
+                if (!card.classList.contains("visible"))
+                  card.style.display = "none";
+              },
+              { once: true },
+            );
+          }
+        });
+        // Resize: hide trigger when sidebar reappears (>950px), show when it collapses
+        window.addEventListener("resize", () => {
+          if (!card.classList.contains("nav-icon")) return;
+          if (window.innerWidth > 950) {
+            trigger.classList.add("hidden");
+            if (card.classList.contains("visible")) {
+              card.classList.remove("visible");
+              trigger.classList.remove("nav-open");
+              card.style.display = "none";
+            }
+          } else {
+            trigger.classList.remove("hidden");
+          }
+        });
+      }
+    }
   }
   // If mode === "always" but screen is wide (>950px), do nothing —
   // the real sidebar is visible and the floating card should stay hidden.
@@ -4027,6 +4253,9 @@ function _loadRecentPlayed() {
             _updatePlayPauseIcon(false);
           })
           .catch(() => {
+            // Preload failed/timed out — clear src so readyState=0 and
+            // togglePlayPause re-delegates to playTrack on next play click
+            audioEngine.audio.src = "";
             _setControlsVisible(true);
           }); // show anyway on error
       }
@@ -4107,6 +4336,7 @@ function renderSettings() {
           <div class="settings-btn-group">
             <button type="button" class="nav-mode-btn settings-toggle-btn${(state.settings.navMode || "hover") === "hover" ? " active" : ""}" data-mode="hover">On Hover</button>
             <button type="button" class="nav-mode-btn settings-toggle-btn${(state.settings.navMode || "hover") === "always" ? " active" : ""}" data-mode="always">Always Visible</button>
+            <button type="button" class="nav-mode-btn settings-toggle-btn${(state.settings.navMode || "hover") === "icon" ? " active" : ""}" data-mode="icon" title="Show a menu icon button to open the nav panel">Icon</button>
           </div>
         </div>
       </div>
@@ -4699,10 +4929,10 @@ function renderPlaylists() {
     card.innerHTML = `
       <div class="playlist-cover playlist-cover-${Math.min(Math.max(tracks.length, 1), 4)}">
         ${coverHTML}
-        <button class="playlist-cover-play-btn" data-playlist-id="${playlist.id}" title="Play" aria-label="Play">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        <button class="playlist-cover-play-btn" data-playlist-id="${playlist.id}" aria-label="Play">
+          <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"><path d="M6 4l12 8-12 8V4z"/></svg>
         </button>
-        <button class="playlist-card-menu-btn" data-playlist-id="${playlist.id}" title="More options" aria-label="More options">
+        <button class="playlist-card-menu-btn" data-playlist-id="${playlist.id}" data-tooltip="More options" aria-label="More options">
           <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
         </button>
       </div>
@@ -4718,12 +4948,17 @@ function renderPlaylists() {
       renderPlaylistDetail(playlist.id);
       _activePanelTarget = null;
     });
-    // Center play button → shuffle/play playlist tracks
+    // Center play button → play playlist, or toggle pause if already playing this one
     card
       .querySelector(".playlist-cover-play-btn")
       .addEventListener("click", (e) => {
         e.stopPropagation();
-        playPlaylistTracks(tracks, false);
+        if (state.playingPlaylistId === playlist.id && state.isPlaying) {
+          togglePlayPause();
+        } else {
+          state.playingPlaylistId = playlist.id;
+          playPlaylistTracks(tracks, false);
+        }
       });
     // ⋯ menu → popover with export + delete
     card
@@ -5317,16 +5552,21 @@ function getAlbumGroups() {
       });
     const group = groups.get(key);
     group.tracks.push(track);
-    if (!group.coverArt && track.coverArt) {
-      group.coverArt = track.coverArt;
-      group._coverArtTrackId = track.id;
-    }
-    // Revolutionary: Also check _hasCoverArt for tracks with stripped base64 cover art
-    if (!group.coverArt && track._hasCoverArt) {
-      group.coverArt = `nova-media://art/${encodeURIComponent(track.id)}`;
-      group._coverArtTrackId = track.id;
-    }
     if (!group.year && track.year) group.year = track.year;
+  }
+  for (const group of groups.values()) {
+    for (const t of group.tracks) {
+      if (t.coverArt) {
+        group.coverArt = t.coverArt;
+        group._coverArtTrackId = t.id;
+        break;
+      }
+      if (t._hasCoverArt) {
+        group.coverArt = `nova-media://art/${encodeURIComponent(t.id)}`;
+        group._coverArtTrackId = t.id;
+        break;
+      }
+    }
   }
   const albums = [...groups.values()].sort(
     (a, b) =>
@@ -5478,6 +5718,84 @@ async function _getThumb(artPath, size) {
   });
 }
 
+/** Generate missing thumbnails in the background without blocking the UI.
+ *  Called 4s after startup. Generates thumbnails in batches, yielding to the
+ *  event loop between each batch so the UI stays responsive. Thumbnails are
+ *  written to IDB and the virtual list rows are updated as they become available.
+ */
+async function _generateMissingThumbnails(missIds) {
+  // If no specific IDs provided, find all tracks missing thumbs
+  const idbMisses =
+    missIds || state.tracks.filter((t) => !t._thumb).map((t) => t.id);
+  if (idbMisses.length === 0) return;
+  console.log(
+    `[thumbs] Starting background thumbnail generation for ${idbMisses.length} tracks...`,
+  );
+  try {
+    // Process in chunks of 50 to avoid a single massive IPC call
+    const CHUNK = 50;
+    for (let i = 0; i < idbMisses.length; i += CHUNK) {
+      const chunkIds = idbMisses.slice(i, i + CHUNK);
+      const thumbResult = await window.novaAPI.invoke(
+        "coverart:get-all-thumbs",
+        { size: 48 },
+      );
+      if (thumbResult?.success && thumbResult.thumbs) {
+        const thumbs = thumbResult.thumbs;
+        const thumbHashes = thumbResult.thumbHashes || {};
+        let updatedCount = 0;
+        for (const t of state.tracks) {
+          if (thumbs[t.id] && !t._thumb) {
+            t._thumb = thumbs[t.id];
+            const thumbData = { url: thumbs[t.id] };
+            if (thumbHashes[t.id]) thumbData.hash = thumbHashes[t.id];
+            _idbSet(`batch48::${t.id}`, thumbData);
+            updatedCount++;
+          }
+          if (thumbHashes[t.id]) {
+            t._thumbHash = thumbHashes[t.id];
+          }
+        }
+        // Decode any new ThumbHashes
+        const newHashes = {};
+        for (const t of state.tracks) {
+          if (t._thumbHash && !_thumbHashCache.has(t.id)) {
+            newHashes[t.id] = t._thumbHash;
+          }
+        }
+        if (Object.keys(newHashes).length > 0) {
+          try {
+            const decodeResult = await window.novaAPI.invoke(
+              "coverart:decode-thumbhashes",
+              { hashes: newHashes },
+            );
+            if (decodeResult?.success && decodeResult.dataURLs) {
+              for (const [trackId, dataURL] of Object.entries(
+                decodeResult.dataURLs,
+              )) {
+                _thumbHashCache.set(trackId, dataURL);
+              }
+            }
+          } catch (_) {}
+        }
+        if (updatedCount > 0) {
+          console.log(
+            `[thumbs] Batch ${Math.floor(i / CHUNK) + 1}: ${updatedCount} thumbnails generated`,
+          );
+        }
+      }
+      // Yield to event loop between chunks
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    console.log(`[thumbs] Background thumbnail generation complete.`);
+  } catch (err) {
+    console.warn(
+      "[thumbs] Background thumbnail generation failed:",
+      err.message,
+    );
+  }
+}
+
 /** Clear all batch48 thumb entries from IDB and in-memory _thumb fields (called after a library rescan). */
 function _bustIDBThumbCache() {
   _thumbnailCache.clear();
@@ -5580,12 +5898,27 @@ function _attachEagerThumb(img, artPath, size, trackId) {
     container.style.backgroundColor = _getDominantColorForTrack(track);
   }
 
-  // Guaranteed fallback: if no image loads within 2 seconds, show art-placeholder
+  // Guaranteed fallback: if no image loads within 8 seconds, show art-placeholder.
+  // 8s is generous — covers cold library thumb generation. If the image later loads,
+  // we still show it (override the placeholder). See _revealImg helper below.
   let _fallbackFired = false;
   const _fallbackTimer = setTimeout(() => {
     _fallbackFired = true;
     _showFinalFallback(img);
-  }, 2000);
+  }, 8000);
+
+  // Helper: reveal the image even if the fallback placeholder already fired.
+  const _revealImg = () => {
+    clearTimeout(_fallbackTimer);
+    _fallbackFired = false; // allow reveal
+    img.style.opacity = "1";
+    _fadePlaceholder(img);
+    // Hide any art-placeholder that _showFinalFallback may have injected
+    const container = img.closest(".cover-img-container");
+    if (container) {
+      container.querySelectorAll(".art-placeholder").forEach((p) => p.remove());
+    }
+  };
 
   const _cancelFallback = () => {
     if (_fallbackTimer) clearTimeout(_fallbackTimer);
@@ -5608,11 +5941,7 @@ function _attachEagerThumb(img, artPath, size, trackId) {
     // duplicate protocol URL requests efficiently (instant on 2nd+ load).
     img.src = thumbUrl;
     img.onload = () => {
-      _cancelFallback();
-      if (!_fallbackFired) {
-        img.style.opacity = "1";
-        _fadePlaceholder(img);
-      }
+      _revealImg();
     };
     img.onerror = () => {
       if (_fallbackFired) return;
@@ -5628,11 +5957,7 @@ function _attachEagerThumb(img, artPath, size, trackId) {
         if (artUrl !== thumbUrl) {
           img.src = artUrl;
           img.onload = () => {
-            _cancelFallback();
-            if (!_fallbackFired) {
-              img.style.opacity = "1";
-              _fadePlaceholder(img);
-            }
+            _revealImg();
           };
           img.onerror = () => {
             if (_fallbackFired) return;
@@ -5644,11 +5969,7 @@ function _attachEagerThumb(img, artPath, size, trackId) {
                 : `${thumbUrl}?retry=1&t=${Date.now()}`;
               img.src = retryUrl;
               img.onload = () => {
-                _cancelFallback();
-                if (!_fallbackFired) {
-                  img.style.opacity = "1";
-                  _fadePlaceholder(img);
-                }
+                _revealImg();
               };
               img.onerror = () => {
                 if (_fallbackFired) return;
@@ -5669,11 +5990,7 @@ function _attachEagerThumb(img, artPath, size, trackId) {
           : `${thumbUrl}?retry=1&t=${Date.now()}`;
         img.src = retryUrl;
         img.onload = () => {
-          _cancelFallback();
-          if (!_fallbackFired) {
-            img.style.opacity = "1";
-            _fadePlaceholder(img);
-          }
+          _revealImg();
         };
         img.onerror = () => {
           if (_fallbackFired) return;
@@ -5711,7 +6028,16 @@ function _getProtocolThumbUrl(artPath, size, trackId) {
     // thumbnails. Now uses nova-media://thumb/{trackId}/{size} when available,
     // which serves pre-generated WebP thumbnails. Falls back to full-res if
     // the thumbnail doesn't exist yet (protocol returns 404 → fallback chain).
-    if (artPath.startsWith("nova-media://art/") && trackId && size) {
+    // For card-sized thumbnails (≤200px), go direct to nova-media://art/ — it's a
+    // simple DB lookup (~10ms). nova-media://thumb/ requires on-demand Sharp WebP
+    // generation which can take 3-10s cold, causing the fallback timer to fire first.
+    // Only use thumb protocol for large display images (detail views, overlays).
+    if (
+      artPath.startsWith("nova-media://art/") &&
+      trackId &&
+      size &&
+      size > 200
+    ) {
       return `nova-media://thumb/${encodeURIComponent(trackId)}/${size}`;
     }
     return artPath;
@@ -6030,7 +6356,7 @@ function renderHelp() {
       </div>
 
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
-        NovaTune v1.0.0 &bull; Made with love for music lovers
+        NovaTune v1.0.3 &bull; Made with love for music lovers
       </div>
     </div>
   `);
@@ -6357,6 +6683,23 @@ function getArtistGroups() {
     }
   }
 
+  for (const group of groups.values()) {
+    if (!group.coverArt) {
+      for (const t of group.tracks) {
+        if (t.coverArt) {
+          group.coverArt = t.coverArt;
+          group._coverArtTrackId = t.id;
+          break;
+        }
+        if (t._hasCoverArt) {
+          group.coverArt = `nova-media://art/${encodeURIComponent(t.id)}`;
+          group._coverArtTrackId = t.id;
+          break;
+        }
+      }
+    }
+  }
+
   // When searching, sort artists so that the best-matching artist comes first
   let artists;
   if (q2) {
@@ -6610,15 +6953,38 @@ function buildPlaylistCover(tracks, playlistId) {
     const src = cells[0].src;
     // Set background color from dominant color cache for instant visual feedback
     const bgColor = _getDominantColorForTrack(cells[0].track);
-    return `<div class="playlist-cover-cell playlist-cover-solo" data-lazy-id="${trackId}" style="background-color:${bgColor};border:none;outline:none;">
+    const soloCell = `<div class="playlist-cover-cell playlist-cover-solo" data-lazy-id="${trackId}" style="background-color:${bgColor};border:none;outline:none;">
       <img src="${src}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity 0.3s ease;border:none;outline:none;"
         data-collage-img="1">
     </div>`;
+    const soloDisc = `<div class="playlist-vinyl-disc" style="background-color:${bgColor};">
+      <img src="${src}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity 0.3s ease;border:none;outline:none;" data-collage-img="1">
+    </div>`;
+    return soloCell + soloDisc;
   }
 
-  // Simple grid collage — images tile the square using CSS grid (set by
-  // .playlist-cover-2/3/4 classes on the parent). No transforms, no clips.
-  return cells
+  // Vinyl disc layout: desaturated 2×2 grid bg + circular disc center (4-image case).
+  // For 2–3 images we keep the simpler side-by-side / left+right-stack grid.
+  if (cells.length >= 4) {
+    const bgCells = cells
+      .map((cell, i) => {
+        const bgColor = _getDominantColorForTrack(cell.track);
+        return `<div class="playlist-cover-cell playlist-cover-tilt" style="background-color:${bgColor};border:none;outline:none;" data-lazy-idx="${cell.track.id}${i}">
+      <img src="${cell.src}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity 0.3s ease;border:none;outline:none;" data-collage-img="1">
+    </div>`;
+      })
+      .join("");
+    // Disc uses the first track's art (dominant / most representative)
+    const discSrc = cells[0].src;
+    const discBg = _getDominantColorForTrack(cells[0].track);
+    const disc = `<div class="playlist-vinyl-disc" style="background-color:${discBg};">
+      <img src="${discSrc}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity 0.3s ease;border:none;outline:none;" data-collage-img="1">
+    </div>`;
+    return bgCells + disc;
+  }
+
+  // 2–3 images: simple grid (side by side / left-half + right-stack)
+  const gridCells = cells
     .map((cell, i) => {
       const bgColor = _getDominantColorForTrack(cell.track);
       return `<div class="playlist-cover-cell playlist-cover-tilt" style="background-color:${bgColor};border:none;outline:none;" data-lazy-idx="${cell.track.id}${i}">
@@ -6626,6 +6992,12 @@ function buildPlaylistCover(tracks, playlistId) {
     </div>`;
     })
     .join("");
+  const gridDiscSrc = cells[0].src;
+  const gridDiscBg = _getDominantColorForTrack(cells[0].track);
+  const gridDisc = `<div class="playlist-vinyl-disc" style="background-color:${gridDiscBg};">
+      <img src="${gridDiscSrc}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity 0.3s ease;border:none;outline:none;" data-collage-img="1">
+    </div>`;
+  return gridCells + gridDisc;
 }
 
 /**
@@ -6653,7 +7025,7 @@ async function _tryCachedCollage(playlistId, tracks) {
         img.src = cached;
         img.alt = "";
         img.style.cssText =
-          "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity 0.3s ease;border:none;outline:none;z-index:3;";
+          "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity 0.3s ease;border:none;outline:none;z-index:1;";
         img.onload = () => {
           img.style.opacity = "1";
         };
@@ -6714,19 +7086,121 @@ async function _generateAndCacheCollage(playlistId, tracks) {
       const sy = Math.floor((img.naturalHeight - side) / 2);
       ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
     } else {
-      // Simple grid collage — matches the live CSS grid rendering.
-      // 2 images: side by side. 3 images: left half + right column stacked. 4: 2×2.
+      // Vinyl disc layout for 4 images; simple grid for 2–3.
       const half = size / 2;
-      const unit = size / 4; // 4x4 grid units, matches CSS grid-template
-      const rects =
-        cells.length >= 4
-          ? [
-              [0, 0, unit * 3, unit * 3], // large top-left, 3x3
-              [unit * 3, 0, unit, unit * 2], // top-right, 1x2
-              [unit * 3, unit * 2, unit, unit * 2], // bottom-right, 1x2
-              [0, unit * 3, unit * 3, unit], // bottom strip, 3x1
-            ]
-          : cells.length === 3
+
+      if (cells.length >= 4) {
+        // ── Background: 2×2 desaturated grid ──
+        const bgRects = [
+          [0, 0, half, half],
+          [half, 0, half, half],
+          [0, half, half, half],
+          [half, half, half, half],
+        ];
+
+        const loadPromises = cells.map(
+          (cell, i) =>
+            new Promise((resolve) => {
+              const img = new Image();
+              img.crossOrigin = "anonymous";
+              img.src = _resolveCoverArtSrcWithReuse(cell);
+              img.onload = () => resolve({ img, index: i, cell });
+              img.onerror = () => resolve({ img: null, index: i, cell });
+            }),
+        );
+
+        const loaded = await Promise.all(loadPromises);
+
+        // Draw desaturated bg tiles
+        for (const { img, index, cell } of loaded) {
+          const [dx, dy, dw, dh] = bgRects[index];
+          if (img && img.naturalWidth > 1 && img.naturalHeight > 1) {
+            const srcAspect = img.naturalWidth / img.naturalHeight;
+            let sx, sy, sw, sh;
+            if (srcAspect > 1) {
+              sh = img.naturalHeight;
+              sw = sh;
+              sx = (img.naturalWidth - sw) / 2;
+              sy = 0;
+            } else {
+              sw = img.naturalWidth;
+              sh = sw;
+              sx = 0;
+              sy = (img.naturalHeight - sh) / 2;
+            }
+            ctx.save();
+            ctx.filter = "brightness(42%) saturate(55%)";
+            ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+            ctx.restore();
+          } else {
+            ctx.fillStyle = _getDominantColorForTrack(cell);
+            ctx.fillRect(dx, dy, dw, dh);
+          }
+        }
+
+        // ── Vinyl disc: circular clip of first image ──
+        const discR = size * 0.29; // 58% diameter → 29% radius
+        const cx = size / 2;
+        const cy = size / 2;
+        const discImg = loaded[0]?.img;
+
+        // Outer ring shadow (dark border)
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, discR + 4, 0, Math.PI * 2);
+        ctx.fillStyle = "#0a0a0a";
+        ctx.fill();
+        ctx.restore();
+
+        // Subtle ring highlight
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, discR + 2, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(255,255,255,0.07)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.restore();
+
+        // Clip circle and draw disc image
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, discR, 0, Math.PI * 2);
+        ctx.clip();
+        if (discImg && discImg.naturalWidth > 1) {
+          const side = Math.min(discImg.naturalWidth, discImg.naturalHeight);
+          const sx = (discImg.naturalWidth - side) / 2;
+          const sy = (discImg.naturalHeight - side) / 2;
+          ctx.drawImage(
+            discImg,
+            sx,
+            sy,
+            side,
+            side,
+            cx - discR,
+            cy - discR,
+            discR * 2,
+            discR * 2,
+          );
+        } else {
+          ctx.fillStyle = _getDominantColorForTrack(cells[0]);
+          ctx.fill();
+        }
+        ctx.restore();
+
+        // Centre spindle hole
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, discR * 0.065, 0, Math.PI * 2);
+        ctx.fillStyle = "#0a0a0a";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.1)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.restore();
+      } else {
+        // 2–3 images: simple side-by-side / left+right-stack
+        const rects =
+          cells.length === 3
             ? [
                 [0, 0, half, size],
                 [half, 0, half, half],
@@ -6737,47 +7211,45 @@ async function _generateAndCacheCollage(playlistId, tracks) {
                 [half, 0, half, size],
               ];
 
-      // Parallel image loading
-      const loadPromises = cells.map(
-        (cell, i) =>
-          new Promise((resolve) => {
-            const img = new Image();
-            img.crossOrigin = "anonymous";
-            img.src = _resolveCoverArtSrcWithReuse(cell);
-            img.onload = () => resolve({ img, index: i, cell });
-            img.onerror = () => resolve({ img: null, index: i, cell });
-          }),
-      );
+        const loadPromises = cells.map(
+          (cell, i) =>
+            new Promise((resolve) => {
+              const img = new Image();
+              img.crossOrigin = "anonymous";
+              img.src = _resolveCoverArtSrcWithReuse(cell);
+              img.onload = () => resolve({ img, index: i, cell });
+              img.onerror = () => resolve({ img: null, index: i, cell });
+            }),
+        );
 
-      const loaded = await Promise.all(loadPromises);
-      let drewAny = false;
-
-      for (const { img, index, cell } of loaded) {
-        const [dx, dy, dw, dh] = rects[index];
-        if (img && img.naturalWidth > 1 && img.naturalHeight > 1) {
-          // Center-crop source to match destination aspect ratio
-          const srcAspect = img.naturalWidth / img.naturalHeight;
-          const dstAspect = dw / dh;
-          let sx, sy, sw, sh;
-          if (srcAspect > dstAspect) {
-            sh = img.naturalHeight;
-            sw = sh * dstAspect;
-            sx = (img.naturalWidth - sw) / 2;
-            sy = 0;
+        const loaded = await Promise.all(loadPromises);
+        let drewAny = false;
+        for (const { img, index, cell } of loaded) {
+          const [dx, dy, dw, dh] = rects[index];
+          if (img && img.naturalWidth > 1 && img.naturalHeight > 1) {
+            const srcAspect = img.naturalWidth / img.naturalHeight;
+            const dstAspect = dw / dh;
+            let sx, sy, sw, sh;
+            if (srcAspect > dstAspect) {
+              sh = img.naturalHeight;
+              sw = sh * dstAspect;
+              sx = (img.naturalWidth - sw) / 2;
+              sy = 0;
+            } else {
+              sw = img.naturalWidth;
+              sh = sw / dstAspect;
+              sx = 0;
+              sy = (img.naturalHeight - sh) / 2;
+            }
+            ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
           } else {
-            sw = img.naturalWidth;
-            sh = sw / dstAspect;
-            sx = 0;
-            sy = (img.naturalHeight - sh) / 2;
+            ctx.fillStyle = _getDominantColorForTrack(cell);
+            ctx.fillRect(dx, dy, dw, dh);
           }
-          ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
-        } else {
-          ctx.fillStyle = _getDominantColorForTrack(cell);
-          ctx.fillRect(dx, dy, dw, dh);
+          drewAny = true;
         }
-        drewAny = true;
+        if (!drewAny) return;
       }
-      if (!drewAny) return;
     }
 
     // Save as high-quality WebP (quality 0.95 for retina-grade output)
@@ -6885,7 +7357,23 @@ function _createTrackRow(track, contextQueue) {
       }
     }
     state.queueIndex = 0;
-    playTrack(track);
+    // Show a loading spinner on the row immediately so user knows the click registered
+    const clickedRow =
+      document.querySelector(
+        `.playlist-song-row[data-track-id="${CSS.escape(track.id)}"]`,
+      ) ||
+      document.querySelector(
+        `.track-row[data-track-id="${CSS.escape(track.id)}"]`,
+      );
+    if (clickedRow) {
+      clickedRow.classList.add("track-loading");
+    }
+    playTrack(track).finally(() => {
+      // Remove loading state from all rows once audio is ready
+      document
+        .querySelectorAll(".track-loading")
+        .forEach((r) => r.classList.remove("track-loading"));
+    });
   });
   actionBtn.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -7094,6 +7582,7 @@ function playPlaylistTracks(tracks, shuffle) {
     : [...tracks];
   state.queueIndex = 0;
   $("shuffle-btn").classList.toggle("active", shuffle);
+  state._playingFromPlaylistCard = true;
   playTrack(state.queue[0]);
 }
 
@@ -7431,9 +7920,16 @@ function _populateSlot(row, track, idx) {
     : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>';
   const menuClass = isQueue ? "track-menu queue-drag-handle" : "track-menu";
 
+  const rawTitle = track.title || "Unknown";
+  // Strip leading "14. " / "01 " / "02." style track number prefixes in library view
+  // (album detail view intentionally keeps them for sequentiality)
+  const displayTitle =
+    virtualList.mode === "library" || virtualList.mode === "queue"
+      ? rawTitle.replace(/^\d+[.\s_]+/, "").trim() || rawTitle
+      : rawTitle;
   row.innerHTML =
     `<div class="track-thumb">${thumbInner}${artHtml}${eqHtml}</div>` +
-    `<div class="track-info"><div class="track-name">${escapeHtml(track.title || "Unknown")}</div></div>` +
+    `<div class="track-info"><div class="track-name">${escapeHtml(displayTitle)}</div></div>` +
     `<div class="track-cell hide-md">${escapeHtml(getArtistText(track))}</div>` +
     `<div class="track-cell muted hide-sm">${track.year || ""}</div>` +
     `<div class="track-cell hide-md">${escapeHtml(track.album || "Unknown Album")}</div>` +
@@ -7483,6 +7979,7 @@ function _wireVirtualDelegation() {
           if (track && track.id === trackId) {
             prefetchLyrics(track);
             warmCoverArt(track);
+            _warmAudio(track);
           }
         },
         { timeout: 500 },
@@ -7495,6 +7992,7 @@ function _wireVirtualDelegation() {
     // Fire lyrics prefetch + warm cover art src
     prefetchLyrics(track);
     warmCoverArt(track);
+    _warmAudio(track);
   });
 
   // We attach to document so we don't have to re-wire when the window
@@ -7641,18 +8139,22 @@ async function playTrack(track) {
   if (!track) return;
   const previousTrackId = state.currentTrack?.id || null;
   state.currentTrack = track;
-  _persistQueue();
+  if (!state._playingFromPlaylistCard) {
+    state.playingPlaylistId = null;
+  }
+  state._playingFromPlaylistCard = false;
+  // NOTE: _persistQueue() and saveSetting("recentlyPlayed") intentionally
+  // deferred below the loadTrack() call — both trigger IPC → writeFileSync on
+  // the main process, which blocks the libuv thread pool shared with
+  // fs.createReadStream inside serveAudioFile. Running them before load
+  // caused HDD seek contention that added 2-5s to tap-to-play latency.
   console.log("[play]", track.title, "-", track.artist);
 
-  // Track recently played (max 6, no duplicates)
+  // Track recently played in memory immediately (no IPC yet)
   state.recentlyPlayed = [
     track,
     ...state.recentlyPlayed.filter((t) => t.id !== track.id),
   ].slice(0, 6);
-  saveSetting(
-    "recentlyPlayed",
-    state.recentlyPlayed.map((t) => t.id),
-  );
   _setControlsVisible(true);
   if (state.activeNavSection === "library")
     requestAnimationFrame(_updateScrollPill);
@@ -7696,7 +8198,9 @@ async function playTrack(track) {
     $("ov-mini-art").innerHTML =
       `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
   }
-  _setNpBg(track);
+  // Defer canvas pixel-extraction + Vibrant palette (can take 50-200ms on main
+  // thread) behind idle callback so it does not block the loadTrack microtask queue.
+  requestIdleCallback(() => _setNpBg(track), { timeout: 500 });
 
   // Sync floating art card (small screens)
   const floatTitle = $("np-float-title");
@@ -7730,6 +8234,11 @@ async function playTrack(track) {
   }
 
   try {
+    // Load first, then play. DO NOT run these in parallel — calling play()
+    // while audio.load() is still in-flight causes Chromium to throw
+    // AbortError: "play() interrupted by load()". loadTrack now resolves on
+    // loadedmetadata (headers read, ~50-200ms) instead of canplay
+    // (full buffer, 500ms-5s on HDD), so this sequence is still very fast.
     await audioEngine.loadTrack(track.filePath);
     await audioEngine.play();
     ensureEQEngine();
@@ -7738,7 +8247,31 @@ async function playTrack(track) {
     _updateMediaSession(track);
     // Reset consecutive failures on successful play
     state.consecutiveFailures = 0;
+    // Deferred IPC writes — now that audio is playing, disk IO can't block playback start.
+    _persistQueue();
+    saveSetting(
+      "recentlyPlayed",
+      state.recentlyPlayed.map((t) => t.id),
+    );
+    // BUGFIX (stored-config / fast-path): After loadTrack resolves (especially via
+    // the fast-path for a preloaded file), the UI may still show 0:00 / 0:00 because
+    // no timeupdate event has fired yet. Immediately push the current time and
+    // duration to the UI so the progress bar and timestamps are correct from frame 1.
+    {
+      const _cur = audioEngine.getCurrentTime();
+      const _dur = audioEngine.getDurationOrZero();
+      if (_dur > 0) {
+        updateProgressText(_cur, _dur);
+        const _pct = _cur / _dur;
+        if (squigglyNP) squigglyNP.setProgress(_pct);
+        if (squigglyOV) squigglyOV.setProgress(_pct);
+        startSmoothProgress(_cur, _dur);
+      }
+    }
   } catch (err) {
+    // A newer track was clicked before this one finished loading — silently exit.
+    if (err && err.superseded) return;
+
     console.error("Playback failed:", err);
 
     // Auto-skip corrupt/missing files
@@ -7812,10 +8345,11 @@ function _updateMediaSession(track) {
 function togglePlayPause(forceState) {
   // If the engine isn't initialized yet, we have a restored currentTrack but
   // nothing loaded into audio. Delegate to playTrack so it inits + loads + plays.
+  // Also delegate if initialized but audio failed to load (readyState=0 after timeout).
   if (
-    !audioEngine._isInitialized &&
     state.currentTrack &&
-    forceState !== false
+    forceState !== false &&
+    (!audioEngine._isInitialized || audioEngine.audio.readyState === 0)
   ) {
     playTrack(state.currentTrack);
     return;
@@ -7911,11 +8445,19 @@ function _updateRepeatButton() {
   const isOne = state.repeatMode === "one";
   const svgContent = isOne ? repeatOneIconSVG : repeatIconSVG;
 
+  const repeatTooltip =
+    state.repeatMode === "one"
+      ? "Repeat one"
+      : state.repeatMode === "all"
+        ? "Repeat all"
+        : "Repeat";
+
   const btn = $("repeat-btn");
   if (!btn) return;
   btn.classList.toggle("active", state.repeatMode !== "off");
   btn.classList.toggle("repeat-one", isOne);
   btn.style.color = state.repeatMode === "off" ? "" : "var(--green)";
+  btn.setAttribute("data-tooltip", repeatTooltip);
   const btnSvg = btn.querySelector("svg");
   if (btnSvg) btnSvg.innerHTML = svgContent;
 
@@ -7924,6 +8466,7 @@ function _updateRepeatButton() {
     ovBtn.classList.toggle("active", state.repeatMode !== "off");
     ovBtn.classList.toggle("repeat-one", isOne);
     ovBtn.style.color = state.repeatMode === "off" ? "" : "var(--green)";
+    ovBtn.setAttribute("data-tooltip", repeatTooltip);
     const ovSvg = ovBtn.querySelector("svg");
     if (ovSvg) ovSvg.innerHTML = svgContent;
   }
@@ -7931,12 +8474,20 @@ function _updateRepeatButton() {
 
 function _updatePlayPauseIcon(playing) {
   const pauseIcon =
-    '<rect x="6" y="4" width="4" height="16" rx="1.5" ry="1.5"/><rect x="14" y="4" width="4" height="16" rx="1.5" ry="1.5"/>';
+    '<rect x="6.5" y="4" width="3" height="16" rx="1.5" ry="1.5"/><rect x="14.5" y="4" width="3" height="16" rx="1.5" ry="1.5"/>';
   const playIcon =
-    '<path d="M6 4l12 8-12 8V4z" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>';
+    '<path d="M6 4l12 8-12 8V4z" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
   const icon = playing ? pauseIcon : playIcon;
   $("play-icon").innerHTML = icon;
   $("ov-play-icon").innerHTML = icon;
+  // Sync playlist card play buttons
+  const cardPlayBtns = document.querySelectorAll(".playlist-cover-play-btn");
+  cardPlayBtns.forEach((btn) => {
+    const svg = btn.querySelector("svg");
+    if (!svg) return;
+    const isActive = btn.dataset.playlistId === state.playingPlaylistId;
+    svg.innerHTML = isActive && playing ? pauseIcon : playIcon;
+  });
   // Pause/resume EQ bars
   $$(".eq-bar").forEach((b) => {
     b.style.animationPlayState = playing ? "running" : "paused";
@@ -8281,16 +8832,12 @@ let _updateDownloaded = false;
 function _wireAutoUpdater() {
   if (!window.novaAPI) return;
 
-  // When autoUpdater finds an update on launch, show a toast
+  // When autoUpdater finds an update on launch, downloading starts automatically
   window.novaAPI.on("update:available", async (info) => {
-    const toast = _showUpdateToast(
-      `NovaTune v${info.version} is available!`,
-      "Click to install",
-      async () => {
-        try {
-          await window.novaAPI.invoke("app:download-update");
-        } catch (_) {}
-      },
+    _showUpdateToast(
+      `Downloading NovaTune v${info.version}...`,
+      "Will prompt when ready",
+      () => {},
     );
   });
 
@@ -8599,6 +9146,37 @@ function _setupAudioEvents() {
 
     // Update lyrics
     _updateLyricsHighlight(cur);
+
+    // ── 80% predictive next-track preload ──────────────────────────────────
+    // When current track is 80% done, speculatively preload the next track in
+    // the queue into the <audio> element. This eliminates HDD seek time on
+    // track transition — by the time the track ends, readyState is already >= 3.
+    if (dur > 0 && pct >= 0.8 && !state.isPlaying === false) {
+      const nextIdx = state.queueIndex + 1;
+      if (nextIdx < state.queue.length) {
+        const nextTrack = state.queue[nextIdx];
+        if (
+          nextTrack &&
+          nextTrack.id !== _nextTrackPreloadId &&
+          audioEngine._isInitialized
+        ) {
+          _nextTrackPreloadId = nextTrack.id;
+          // Use a secondary hidden audio element so we don't clobber the active one
+          if (!window._nextTrackAudio) {
+            window._nextTrackAudio = new Audio();
+            window._nextTrackAudio.preload = auto;
+          }
+          // Only preload if AudioEngine is not currently loading something
+          if (!audioEngine._isLoading) {
+            const nextURL = audioEngine._toMediaURL(nextTrack.filePath);
+            if (window._nextTrackAudio.src !== nextURL) {
+              window._nextTrackAudio.src = nextURL;
+              window._nextTrackAudio.load();
+            }
+          }
+        }
+      }
+    }
   });
 
   // When a seek completes, immediately sync the squiggly to the new
@@ -9678,6 +10256,24 @@ function initLeftEdgeHover() {
       // trigger toggleSidebar() and slide the full sidebar open
       state.activeNavSection = section;
       _navigateTo(section);
+
+      // Icon mode: close the popover and clear the trigger's active state
+      if (
+        card.classList.contains("nav-icon") &&
+        card.classList.contains("visible")
+      ) {
+        const trigger = document.getElementById("float-nav-trigger");
+        card.classList.remove("visible");
+        if (trigger) trigger.classList.remove("nav-open");
+        card.addEventListener(
+          "transitionend",
+          () => {
+            if (!card.classList.contains("visible"))
+              card.style.display = "none";
+          },
+          { once: true },
+        );
+      }
     });
   });
 
@@ -9758,8 +10354,12 @@ function initLeftEdgeHover() {
       return;
     }
 
-    // If nav mode is "always", skip edge detection (card stays visible)
-    if (card.classList.contains("nav-always")) return;
+    // If nav mode is "always" or "icon", skip edge detection
+    if (
+      card.classList.contains("nav-always") ||
+      card.classList.contains("nav-icon")
+    )
+      return;
 
     lastX = e.clientX;
 
@@ -9800,7 +10400,11 @@ function initLeftEdgeHover() {
     "touchstart",
     (e) => {
       if (!isNarrow()) return;
-      if (card.classList.contains("nav-always")) return;
+      if (
+        card.classList.contains("nav-always") ||
+        card.classList.contains("nav-icon")
+      )
+        return;
 
       const touch = e.touches[0];
       if (touch.clientX < EDGE_SHOW) {
@@ -9818,7 +10422,11 @@ function initLeftEdgeHover() {
   document.addEventListener(
     "touchend",
     () => {
-      if (card.classList.contains("nav-always")) return;
+      if (
+        card.classList.contains("nav-always") ||
+        card.classList.contains("nav-icon")
+      )
+        return;
       if (!pinned && card.classList.contains("visible")) {
         hideTimeout = setTimeout(() => {
           hideCard();

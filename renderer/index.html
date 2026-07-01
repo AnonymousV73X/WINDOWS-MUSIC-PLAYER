@@ -222,7 +222,7 @@
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
           <span id="sidebar-folder-name" class="sidebar-folder-name">—</span>
-          <button class="sidebar-refresh-btn" id="sidebar-refresh-btn" title="Refresh library">
+          <button class="sidebar-refresh-btn" id="sidebar-refresh-btn" data-tooltip="Refresh library">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
               stroke-linejoin="round">
               <polyline points="23 4 23 10 17 10" />
@@ -264,16 +264,59 @@
           </svg>
           Shuffle &amp; Play
         </button>
-        <button class="lyrics-toggle-btn" id="lyrics-toggle-btn" aria-label="Lyrics" style="display:none;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-            stroke-linejoin="round">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="16" y1="13" x2="8" y2="13" />
-            <line x1="16" y1="17" x2="8" y2="17" />
-          </svg>
-          <span>Lyrics</span>
-        </button>
+        <div class="nav-lyrics-group">
+          <button id="float-nav-trigger" class="float-nav-trigger" aria-label="Open navigation menu"
+            style="opacity:1;pointer-events:auto;">
+
+
+
+            <svg viewBox="0 0 62 62" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+              aria-hidden="true" role="img" class="iconify iconify--emojione-monotone"
+              preserveAspectRatio="xMidYMid meet" fill="currentColor">
+              <g id="SVGRepo_bgCarrier" stroke-width="1"></g>
+              <g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g>
+              <g id="SVGRepo_iconCarrier">
+                <path
+                  d="M60.925 36.374c0-.938-.229-1.95-.753-2.972c.128-.425.22-.854.29-1.284c.23-.137.455-.305.656-.528c1.34-1.493.86-4.398.455-5.997a1.826 1.826 0 0 0-.188-.455c.123-.452.188-.924.188-1.417C61.574 11.743 48.308 2 32 2S2.426 11.743 2.426 23.721c0 .492.066.965.188 1.417a1.84 1.84 0 0 0-.187.452c-.405 1.598-.885 4.498.449 5.989c.132.799.354 1.602.692 2.397a6.354 6.354 0 0 0-.491 2.397c0 .764.072 1.505.203 2.229a9.554 9.554 0 0 0-.77 3.73C2.511 51.305 7.627 62 32 62s29.489-10.695 29.489-19.667a9.56 9.56 0 0 0-.769-3.729c.132-.724.205-1.466.205-2.23m-1.351-12.653c0 5.049-11.081 8.441-27.574 8.441c-16.493 0-27.574-3.393-27.574-8.441c0-10.91 12.37-19.785 27.574-19.785s27.574 8.875 27.574 19.785M32 60.064c-18.241 0-27.49-5.965-27.49-17.731c0-.108.002-.217.007-.325c3.716 7.437 12.94 11.202 27.484 11.202c14.543 0 23.765-3.764 27.482-11.199c.004.107.006.215.006.322c0 11.767-9.248 17.731-27.489 17.731m27.451-24.258l-.011-.021l-.049.181c-2.404 5.942-9.953 10.055-24.678 10.5l-4.866 4.771c-.144-.003-.295-.003-.438-.007l-5.357-5.109C12.775 44.951 6.738 41.18 4.621 36.01l-.061-.224l-.018.038c-.022-.057-.05-.111-.071-.168c1.586 2.484 4.331 4.82 8.634 6.652c3.376 1.438 6.37 1.998 8.967 1.924l-4.148-3.956a26.287 26.287 0 0 1-3.83-1.306a24.864 24.864 0 0 1-4.219-2.274c.326.116.667.195 1.04.195c.796 0 1.566-.271 2.245-.511c.206-.072.5-.176.734-.242c.104.183.22.409.308.583c.498.976 1.178 2.31 2.609 2.722c.259.073.53.111.807.111c1.043 0 1.942-.521 2.735-.98c.188-.11.438-.254.643-.357c.133.163.283.368.398.525c.641.87 1.519 2.062 2.968 2.251c.125.017.248.024.372.024c1.238 0 2.217-.775 3.004-1.399c.166-.132.383-.305.566-.435c.155.146.334.33.472.472c.79.813 1.774 1.827 3.225 1.827s2.434-1.013 3.225-1.827c.138-.142.316-.326.472-.472c.184.13.4.303.566.434c.786.624 1.766 1.4 3.004 1.4c.123 0 .248-.008.37-.023a3.02 3.02 0 0 0 .951-.291l-2.366 2.321c2.572.599 5.693.626 9.406-.185c7.357-1.606 11.107-5.196 12.425-9.092a11.478 11.478 0 0 1-.603 2.059M5.64 32.614l.134.001c.23 0 .47-.009.712-.016c.2-.008.401-.016.598-.016c.101 0 .183.003.25.006c.06.201.122.458.169.654c.18.743.414 1.669.971 2.415c-1.177-.967-2.118-1.989-2.834-3.044m35.603 7.661c.556-.448.988-1.024 1.365-1.535c.117-.157.268-.362.4-.525c.204.104.452.247.641.357c.792.46 1.689.98 2.733.98c.276 0 .548-.038.807-.111c1.431-.412 2.112-1.747 2.609-2.723c.089-.174.204-.399.308-.581c.234.065.529.17.734.242c.68.239 1.449.511 2.246.511c.221 0 .43-.031.636-.072c-1.884 1.209-4.286 2.203-7.302 2.861a25.008 25.008 0 0 1-5.177.596m14.589-5.095c.343-.639.52-1.343.663-1.933c.047-.195.109-.453.168-.653c.066-.004.147-.006.245-.006c.198 0 .401.008.603.014c.133.005.261.006.392.01a11.811 11.811 0 0 1-2.071 2.568m3.843-4.883c-.289.321-.83.387-1.445.387c-.424 0-.885-.031-1.32-.031c-.591 0-1.14.057-1.504.323c-.925.677-.693 3.281-1.812 3.869c-.149.077-.319.11-.507.11c-.941 0-2.295-.817-3.292-.818a1.3 1.3 0 0 0-.481.082c-1.086.426-1.467 3.019-2.662 3.362a.96.96 0 0 1-.269.036c-1.052 0-2.495-1.462-3.595-1.462c-.075 0-.148.007-.221.021c-1.156.234-1.957 2.735-3.18 2.896c-.039.004-.08.007-.119.007c-1.133 0-2.482-1.984-3.654-1.984l-.063.002c-1.188.075-2.322 2.447-3.549 2.447c-1.228 0-2.36-2.372-3.548-2.447a1.368 1.368 0 0 0-.064-.002c-1.172 0-2.522 1.984-3.654 1.984a.939.939 0 0 1-.119-.007c-1.223-.161-2.021-2.662-3.18-2.896a1.069 1.069 0 0 0-.221-.021c-1.1 0-2.544 1.462-3.597 1.462a.96.96 0 0 1-.269-.036c-1.196-.344-1.577-2.938-2.664-3.362a1.304 1.304 0 0 0-.481-.082c-.996 0-2.348.817-3.289.817c-.188 0-.36-.033-.51-.111c-1.118-.59-.889-3.194-1.811-3.869c-.367-.269-.918-.325-1.51-.325c-.434 0-.89.031-1.311.031c-.618 0-1.161-.065-1.45-.389c-.456-.508-.425-1.689-.299-2.674c4.272 4.704 16.441 6.48 27.976 6.48c11.536 0 23.704-1.776 27.975-6.48c.126.987.156 2.17-.301 2.68"
+                  fill="currentColor"></path>
+                <path d="M14.977 15.57l-1.514-1.452l-1.514 1.452l1.514 1.451z" fill="currentColor"></path>
+                <path d="M20.927 14.636l1.513-1.452l-1.513-1.452l-1.514 1.452z" fill="currentColor"></path>
+                <path d="M26.676 19.813l-1.513-1.452l-1.514 1.452l1.514 1.451z" fill="currentColor"></path>
+                <path d="M31.909 14.603l-1.008-.968l-1.01.968l1.01.967z" fill="currentColor"></path>
+                <path d="M48.647 18.361l1.01.967l1.01-.967l-1.01-.967z" fill="currentColor"></path>
+                <path d="M56.795 19.328l-1.009-.967l-1.01.967l1.01.968z" fill="currentColor"></path>
+                <path d="M45.136 12.216l-1.008-.968l-1.01.968l1.01.968z" fill="currentColor"></path>
+                <path d="M14.608 11.007l-1.008-.968l-1.01.968l1.01.968z" fill="currentColor"></path>
+                <path d="M9.224 15.57l-1.009-.967l-1.009.967l1.009.968z" fill="currentColor"></path>
+                <path d="M13.463 21.96l1.01.968l1.008-.968l-1.008-.968z" fill="currentColor"></path>
+                <path d="M27.18 7.136l-1.008-.968l-1.009.968l1.009.968z" fill="currentColor"></path>
+                <path d="M36.706 6.168L35.698 5.2l-1.01.968l1.01.968z" fill="currentColor"></path>
+                <path d="M20.926 8.104l-1.008-.968l-1.009.968l1.009.967z" fill="currentColor"></path>
+                <path d="M49.591 10.401l-1.008-.967l-1.01.967l1.01.968z" fill="currentColor"></path>
+                <path d="M37.212 24.013l1.513-1.452l-1.513-1.452l-1.515 1.452z" fill="currentColor"></path>
+                <path d="M36.354 15.119l-1.513-1.451l-1.514 1.451l1.514 1.452z" fill="currentColor"></path>
+                <path d="M41.931 9.555l-1.513-1.451l-1.515 1.451l1.515 1.452z" fill="currentColor"></path>
+                <path d="M43.267 15.766l1.513 1.452l1.514-1.452l-1.514-1.452z" fill="currentColor"></path>
+                <path d="M52.685 13.668l-1.514-1.452l-1.514 1.452l1.514 1.451z" fill="currentColor"></path>
+                <path d="M46.294 23.62l1.514-1.451l-1.514-1.452l-1.514 1.452z" fill="currentColor"></path>
+                <path d="M8.214 19.657l1.515 1.452l1.513-1.452l-1.513-1.451z" fill="currentColor"></path>
+              </g>
+            </svg>
+
+
+          </button>
+          <button class="lyrics-toggle-btn" id="lyrics-toggle-btn" aria-label="Lyrics" style="display:none;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+            </svg>
+            <span>Lyrics</span>
+          </button>
+        </div>
+
         <div class="sort-group">
           <span class="sort-label">Sort by:</span>
           <div class="custom-dropdown" id="sort-dropdown">
@@ -424,8 +467,8 @@
         </button>
         <div class="np-play" id="play-btn">
           <svg id="play-icon" viewBox="0 0 24 24">
-            <path d="M8 5l11 7-11 7V5z" fill="currentColor" stroke="currentColor" stroke-width="2"
-              stroke-linejoin="round" />
+            <path d="M6 4l12 8-12 8V4z" fill="currentColor" stroke="currentColor" stroke-width="2"
+              stroke-linejoin="round" stroke-linecap="round" />
           </svg>
 
         </div>
@@ -435,7 +478,7 @@
             <rect x="16" y="4" width="3" height="16" rx="1.5" />
           </svg>
         </button>
-        <button class="np-btn" aria-label="Repeat" id="repeat-btn">
+        <button class="np-btn" aria-label="Repeat" id="repeat-btn" data-tooltip="Repeat">
           <svg id="repeat-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path fill-rule="evenodd" clip-rule="evenodd"
               d="M8.46967 2.46967C8.76256 2.17678 9.23744 2.17678 9.53033 2.46967L11.5303 4.46967C11.7448 4.68417 11.809 5.00676 11.6929 5.28701C11.5768 5.56727 11.3033 5.75 11 5.75H9C5.54822 5.75 2.75 8.54822 2.75 12C2.75 15.4517 5.54846 18.25 9.00028 18.25H9.5C9.91421 18.25 10.25 18.5858 10.25 19C10.25 19.4142 9.91421 19.75 9.5 19.75H9.00028C4.72011 19.75 1.25 16.2802 1.25 12C1.25 7.71979 4.71979 4.25 9 4.25H9.18934L8.46967 3.53033C8.17678 3.23744 8.17678 2.76256 8.46967 2.46967ZM13.75 5C13.75 4.58579 14.0858 4.25 14.5 4.25H15C19.2802 4.25 22.75 7.71979 22.75 12C22.75 16.2802 19.2802 19.75 15 19.75H14.8107L15.5303 20.4697C15.8232 20.7626 15.8232 21.2374 15.5303 21.5303C15.2374 21.8232 14.7626 21.8232 14.4697 21.5303L12.4697 19.5303C12.2552 19.3158 12.191 18.9932 12.3071 18.713C12.4232 18.4327 12.6967 18.25 13 18.25H15C18.4518 18.25 21.25 15.4518 21.25 12C21.25 8.54822 18.4518 5.75 15 5.75H14.5C14.0858 5.75 13.75 5.41421 13.75 5Z"
@@ -564,7 +607,7 @@
             <button class="ov-play" id="ov-play-btn">
               <svg id="ov-play-icon" viewBox="0 0 24 24">
                 <path d="M6 4l12 8-12 8V4z" fill="currentColor" stroke="currentColor" stroke-width="2"
-                  stroke-linejoin="round" />
+                  stroke-linejoin="round" stroke-linecap="round" />
               </svg>
             </button>
             <button class="ov-btn" aria-label="Next" id="ov-next-btn">
@@ -574,7 +617,7 @@
                 <rect x="16" y="4" width="3" height="16" rx="1.5" />
               </svg>
             </button>
-            <button class="ov-btn" aria-label="Repeat" id="ov-repeat-btn">
+            <button class="ov-btn" aria-label="Repeat" id="ov-repeat-btn" data-tooltip="Repeat">
               <svg id="ov-repeat-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path fill-rule="evenodd" clip-rule="evenodd"
                   d="M8.46967 2.46967C8.76256 2.17678 9.23744 2.17678 9.53033 2.46967L11.5303 4.46967C11.7448 4.68417 11.809 5.00676 11.6929 5.28701C11.5768 5.56727 11.3033 5.75 11 5.75H9C5.54822 5.75 2.75 8.54822 2.75 12C2.75 15.4517 5.54846 18.25 9.00028 18.25H9.5C9.91421 18.25 10.25 18.5858 10.25 19C10.25 19.4142 9.91421 19.75 9.5 19.75H9.00028C4.72011 19.75 1.25 16.2802 1.25 12C1.25 7.71979 4.71979 4.25 9 4.25H9.18934L8.46967 3.53033C8.17678 3.23744 8.17678 2.76256 8.46967 2.46967ZM13.75 5C13.75 4.58579 14.0858 4.25 14.5 4.25H15C19.2802 4.25 22.75 7.71979 22.75 12C22.75 16.2802 19.2802 19.75 15 19.75H14.8107L15.5303 20.4697C15.8232 20.7626 15.8232 21.2374 15.5303 21.5303C15.2374 21.8232 14.7626 21.8232 14.4697 21.5303L12.4697 19.5303C12.2552 19.3158 12.191 18.9932 12.3071 18.713C12.4232 18.4327 12.6967 18.25 13 18.25H15C18.4518 18.25 21.25 15.4518 21.25 12C21.25 8.54822 18.4518 5.75 15 5.75H14.5C14.0858 5.75 13.75 5.41421 13.75 5Z"
@@ -708,18 +751,21 @@
     </div>
   </div>
 
-  <!-- SCROLL TO PLAYING PILL -->
-  <div id="scroll-to-track-pill" class="hidden" aria-label="Scroll to playing track">
-    <div id="scroll-pill-art" style="position:relative;">
-      <div class="pill-eq">
-        <span></span><span></span><span></span><span></span>
+  <!-- PILL ROW: scroll-to-track pill -->
+  <div id="pill-row">
+    <!-- SCROLL TO PLAYING PILL -->
+    <div id="scroll-to-track-pill" class="hidden" aria-label="Scroll to playing track">
+      <div id="scroll-pill-art" style="position:relative;">
+        <div class="pill-eq">
+          <span></span><span></span><span></span><span></span>
+        </div>
+      </div>
+      <div id="scroll-pill-meta">
+        <span id="scroll-pill-title">Now Playing</span>
+        <span id="scroll-pill-artist"></span>
       </div>
     </div>
-    <div id="scroll-pill-meta">
-      <span id="scroll-pill-title">Now Playing</span>
-      <span id="scroll-pill-artist"></span>
-    </div>
-  </div>
+  </div><!-- /#pill-row -->
 
   <script src="renderer.js"></script>
 </body>

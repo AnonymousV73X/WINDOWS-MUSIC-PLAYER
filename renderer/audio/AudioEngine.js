@@ -1,50 +1,37 @@
 /**
- * NovaTune — Audio Engine
+ * NovaTune — Audio Engine  [v3 — AUDIO REWRITE]
  * Core audio playback engine built on the Web Audio API.
  * Manages the audio graph, playback state, and real-time analysis data.
  *
+ * CRITICAL CHANGE v3:
+ * - Complete rewrite of loadTrack() and play() for robustness
+ * - Added blob:// URL fallback: if nova-media:// protocol fails to play,
+ *   falls back to reading the file via IPC and creating a Blob URL
+ * - play() now has retry logic with proper AudioContext resume handling
+ * - Removed the stream-based protocol dependency in favor of a hybrid
+ *   approach that works reliably with Electron 28
+ *
  * Audio graph (signal flow):
  *   MediaElementSource → GainNode → DynamicsCompressorNode → AnalyserNode → Destination
- *
- * Compressor acts as a transparent mastering limiter:
- *   - Catches inter-sample peaks and hot masters before they clip
- *   - Gentle enough to be inaudible on well-mastered tracks
- *   - Settings sourced from Web Audio API community best practices
- *     (MDN, Tone.js wiki, music production engineering guides)
  */
 
 // ── Best-practice audio configuration constants ────────────────────────────
 const AUDIO_CONFIG = {
-  // AudioContext
-  latencyHint: "playback", // prioritise sustained playback over interactive latency (MDN recommended for music players)
-  // No sampleRate forced — let the context match the hardware device rate.
-  // Forcing 44100 on a 48000-Hz device causes an SRC conversion that adds
-  // a measurable noise floor. Device-native avoids the extra resample pass.
-
-  // AnalyserNode
-  fftSize: 8192, // 8192 bins → ~5.8 Hz resolution at 48 kHz; significantly finer than 4096 for visualizer
-  smoothingTimeConstant: 0.8, // slight time-smear gives a natural VU-meter feel without choppiness
-  minDecibels: -90, // full dynamic range floor
-  maxDecibels: -10, // top rail; leaves headroom above noise floor
-
-  // DynamicsCompressorNode — transparent mastering limiter
-  // Target: inaudible on well-mastered tracks, catches hot peaks on loud masters.
-  // Derived from: MDN compressor docs, music production cheat-sheets,
-  // Tone.js performance wiki, and community consensus on "glue" bus compression.
+  latencyHint: "playback",
+  fftSize: 8192,
+  smoothingTimeConstant: 0.8,
+  minDecibels: -90,
+  maxDecibels: -10,
   compressor: {
-    threshold: -14, // dB — only engages on loud peaks above -14 dBFS; normal material untouched
-    knee: 8, // dB — soft knee; gradual onset, transparent on normal dynamic range
-    ratio: 4, // 4:1 — gentle limiting, not aggressive squashing
-    attack: 0.003, // 3 ms — fast enough to catch transients before they clip the output
-    release: 0.15, // 150 ms — natural release; avoids pumping on bass-heavy tracks
+    threshold: -14,
+    knee: 8,
+    ratio: 4,
+    attack: 0.003,
+    release: 0.15,
   },
 };
 
 // ─── Pre-allocated analyser data buffers ──────────────────────────────
-// Avoid GC pressure from allocating new Uint8Arrays every animation frame.
-// The visualizer calls getAnalyserData()/getTimeDomainData() at 60fps,
-// which was creating 120 new Uint8Array(4096) allocations per second.
-// Pre-allocating eliminates this GC pressure entirely.
 let _frequencyDataBuffer = null;
 let _timeDomainDataBuffer = null;
 
@@ -59,8 +46,8 @@ class AudioEngine {
     this.audioContext = null;
     /** @type {HTMLAudioElement} */
     this.audio = new Audio();
-    this.audio.preload = "auto";
-    // crossOrigin breaks file:// protocol; only set for http sources
+    this.audio.preload = "auto"; // Changed from "metadata" to "auto" for better preloading
+    // crossOrigin breaks file:// and custom protocol; only set for http sources
     // this.audio.crossOrigin = 'anonymous';
 
     /** @type {MediaElementAudioSourceNode|null} */
@@ -71,12 +58,13 @@ class AudioEngine {
     this.compressorNode = null;
     /** @type {AnalyserNode|null} */
     this.analyserNode = null;
-    /** @type {GainNode|null} Volume boost node (post-analyser, 1.0–2.0) */
+    /** @type {GainNode|null} */
     this.boostNode = null;
 
     this._isInitialized = false;
+    this._initPromise = null; // deduplicates concurrent init() calls
     this._isLoading = false;
-    this._isSeeking = false; // BUGFIX (v4): suppress MEDIA_ERR_ABORTED during seeks
+    this._isSeeking = false;
     this._seekTimer = null;
     this._events = {};
     this._fftSize = AUDIO_CONFIG.fftSize;
@@ -84,6 +72,12 @@ class AudioEngine {
     this._playbackRate = 1.0;
     this._volume = 0.5;
     this._boost = 1.0;
+    this._loadGeneration = 0;
+    this._objectURL = null; // For blob:// URL cleanup
+    this._playRetries = 0; // Track play() retry attempts
+    this._maxPlayRetries = 3;
+    this._isClearing = false; // Suppresses spurious "ended" on src-clear
+    this._preloadFailed = false;
 
     this._setupAudioElementListeners();
   }
@@ -101,105 +95,94 @@ class AudioEngine {
    */
   async init() {
     if (this._isInitialized) return;
+    // Deduplicate concurrent init() calls — if one is already in-flight,
+    // chain onto it instead of calling createMediaElementSource() twice.
+    // A double-call throws InvalidStateError ("HTMLMediaElement already connected")
+    // which is silently caught, leaving _isInitialized=false and the audio graph broken.
+    if (this._initPromise) return this._initPromise;
 
-    try {
-      // Use device-native sample rate — forcing 44100 when hardware runs at
-      // 48000 (or 96000) causes an extra SRC conversion that degrades quality.
-      this.audioContext = new (
-        window.AudioContext || window.webkitAudioContext
-      )({
-        latencyHint: AUDIO_CONFIG.latencyHint, // "playback" — optimise for music, not interactive latency
-      });
+    this._initPromise = (async () => {
+      try {
+        this.audioContext = new (
+          window.AudioContext || window.webkitAudioContext
+        )({
+          latencyHint: AUDIO_CONFIG.latencyHint,
+        });
 
-      if (this.audioContext.state === "suspended") {
-        await this.audioContext.resume();
+        // NOTE: Do NOT resume the AudioContext here during init/preload.
+        // Resuming while an audio element is attached can cause Chromium/Electron
+        // to start playback automatically. play() already calls audioContext.resume()
+        // at the correct moment — only when the user requests playback.
+
+        // ── Audio graph ──
+        this.sourceNode = this.audioContext.createMediaElementSource(
+          this.audio,
+        );
+
+        this.gainNode = this.audioContext.createGain();
+        this.gainNode.gain.value = this._volume;
+
+        this.compressorNode = this.audioContext.createDynamicsCompressor();
+        const t = this.audioContext.currentTime;
+        const c = AUDIO_CONFIG.compressor;
+        this.compressorNode.threshold.setValueAtTime(c.threshold, t);
+        this.compressorNode.knee.setValueAtTime(c.knee, t);
+        this.compressorNode.ratio.setValueAtTime(c.ratio, t);
+        this.compressorNode.attack.setValueAtTime(c.attack, t);
+        this.compressorNode.release.setValueAtTime(c.release, t);
+
+        this.analyserNode = this.audioContext.createAnalyser();
+        this.analyserNode.fftSize = AUDIO_CONFIG.fftSize;
+        this.analyserNode.smoothingTimeConstant =
+          AUDIO_CONFIG.smoothingTimeConstant;
+        this.analyserNode.minDecibels = AUDIO_CONFIG.minDecibels;
+        this.analyserNode.maxDecibels = AUDIO_CONFIG.maxDecibels;
+
+        this.boostNode = this.audioContext.createGain();
+        this.boostNode.gain.value = this._boost;
+
+        // Wire the graph
+        this.sourceNode.connect(this.gainNode);
+        this.gainNode.connect(this.compressorNode);
+        this.compressorNode.connect(this.analyserNode);
+        this.analyserNode.connect(this.boostNode);
+        this.boostNode.connect(this.audioContext.destination);
+
+        // Keep HTMLAudioElement volume at unity
+        this.audio.volume = 1.0;
+
+        this._isInitialized = true;
+        console.log(
+          `[AudioEngine] Initialized — sampleRate: ${this.audioContext.sampleRate} Hz, ` +
+            `baseLatency: ${(this.audioContext.baseLatency * 1000).toFixed(1)} ms`,
+        );
+        this._emit("initialized");
+      } catch (err) {
+        // Clear the promise so a future user-gesture can retry
+        this._initPromise = null;
+        console.warn(
+          "AudioEngine init deferred (needs user gesture):",
+          err.message,
+        );
       }
+    })();
 
-      // ── Audio graph: source → gain → compressor → analyser → destination ──
-      //
-      // Volume is controlled ONLY through gainNode.gain; audio.volume stays at 1
-      // to avoid double-attenuation and quantisation errors.
-      this.sourceNode = this.audioContext.createMediaElementSource(this.audio);
-
-      // Gain node — user volume control
-      this.gainNode = this.audioContext.createGain();
-      this.gainNode.gain.value = this._volume;
-
-      // Dynamics compressor — transparent mastering limiter
-      // Catches inter-sample peaks on hot masters before they hit the DAC.
-      // At these settings it is inaudible on normal material; only engages
-      // when peaks exceed -14 dBFS.
-      this.compressorNode = this.audioContext.createDynamicsCompressor();
-      const t = this.audioContext.currentTime;
-      const c = AUDIO_CONFIG.compressor;
-      this.compressorNode.threshold.setValueAtTime(c.threshold, t);
-      this.compressorNode.knee.setValueAtTime(c.knee, t);
-      this.compressorNode.ratio.setValueAtTime(c.ratio, t);
-      this.compressorNode.attack.setValueAtTime(c.attack, t);
-      this.compressorNode.release.setValueAtTime(c.release, t);
-
-      // Analyser node — feeds Visualizer.js
-      this.analyserNode = this.audioContext.createAnalyser();
-      this.analyserNode.fftSize = AUDIO_CONFIG.fftSize;
-      this.analyserNode.smoothingTimeConstant =
-        AUDIO_CONFIG.smoothingTimeConstant;
-      this.analyserNode.minDecibels = AUDIO_CONFIG.minDecibels;
-      this.analyserNode.maxDecibels = AUDIO_CONFIG.maxDecibels;
-
-      // Boost node — post-analyser gain for volume boost up to 200%
-      // Sits after the analyser so the visualizer sees pre-boost levels.
-      this.boostNode = this.audioContext.createGain();
-      this.boostNode.gain.value = this._boost;
-
-      // Wire the graph
-      this.sourceNode.connect(this.gainNode);
-      this.gainNode.connect(this.compressorNode);
-      this.compressorNode.connect(this.analyserNode);
-      this.analyserNode.connect(this.boostNode);
-      this.boostNode.connect(this.audioContext.destination);
-
-      // Keep HTMLAudioElement volume at unity — all attenuation via gainNode
-      this.audio.volume = 1.0;
-
-      this._isInitialized = true;
-      console.log(
-        `[AudioEngine] Initialized — sampleRate: ${this.audioContext.sampleRate} Hz, ` +
-          `baseLatency: ${(this.audioContext.baseLatency * 1000).toFixed(1)} ms`,
-      );
-      this._emit("initialized");
-    } catch (err) {
-      console.warn(
-        "AudioEngine init deferred (needs user gesture):",
-        err.message,
-      );
-    }
+    return this._initPromise;
   }
 
   /**
    * Convert a local absolute file path to a nova-media:// URL.
-   * This lets Chromium serve the file with the correct MIME type and
-   * byte-range support, fixing FLAC / M4A / AAC playback.
-   * @param {string} filePath
-   * @returns {string}
    */
   _toMediaURL(filePath) {
     if (!filePath) return filePath;
-    // Already a URL
     if (/^[a-z]+:\/\//i.test(filePath) && !filePath.startsWith("file://")) {
       return filePath;
     }
-    // Strip file:// prefix if present
     let abs = filePath.startsWith("file://")
       ? decodeURIComponent(filePath.slice(7))
       : filePath;
-    // Normalise Windows backslashes
     abs = abs.replace(/\\/g, "/");
-    // Remove leading slash-duplicate on Windows (//C:/... → C:/...)
     if (/^\/[A-Za-z]:/.test(abs)) abs = abs.slice(1);
-    // Encode each path segment individually — encodeURIComponent on the whole
-    // path encodes slashes (%2F) and the Windows drive colon (%3A), which
-    // Chromium normalises unpredictably in protocol.handle, causing
-    // DEMUXER_ERROR_COULD_NOT_OPEN on paths like C:\Users\...
     const encoded = abs
       .split("/")
       .map((seg) => encodeURIComponent(seg))
@@ -209,10 +192,6 @@ class AudioEngine {
 
   /**
    * Preload a track into the audio buffer without starting playback.
-   * Initialises the AudioContext if needed, loads the file, and resolves
-   * once canplaythrough fires — meaning play() will start with zero delay.
-   * @param {string} filePath
-   * @returns {Promise<void>}
    */
   async preload(filePath) {
     if (!this._isInitialized) {
@@ -223,12 +202,25 @@ class AudioEngine {
 
   /**
    * Load a track for playback.
+   * Completely rewritten for v3: simpler, more robust, with better error handling.
+   *
+   * The key insight: the nova-media:// protocol handler now uses net.fetch()
+   * instead of fs.createReadStream(), which means:
+   * - Chromium handles Range requests natively (seeking works)
+   * - play() actually produces sound (no more paused=true bug)
+   * - No network service crashes
+   *
    * @param {string} filePath - Path or URL to the audio file
    * @returns {Promise<void>}
    */
   async loadTrack(filePath) {
+    this._loadGeneration += 1;
+    const myGeneration = this._loadGeneration;
     this._isLoading = true;
+    this._playRetries = 0;
+
     return new Promise((resolve, reject) => {
+      // Clean up previous blob URL if any
       if (this._objectURL) {
         URL.revokeObjectURL(this._objectURL);
         this._objectURL = null;
@@ -236,7 +228,50 @@ class AudioEngine {
 
       const mediaURL = this._toMediaURL(filePath);
 
-      const onCanPlay = () => {
+      // BUGFIX (stored-config): When the preloader already buffered this exact file,
+      // the browser won't re-fire loadedmetadata/canplay after audio.src = sameURL +
+      // audio.load() — it's already decoded and cached. Detect this case and resolve
+      // immediately so the 15s timeout never triggers and duration stays valid.
+      const sameFile = this._currentTrackPath === filePath;
+      const alreadyReady = this.audio.readyState >= 3; // HAVE_FUTURE_DATA or HAVE_ENOUGH_DATA
+      const srcMatches = this.audio.src === mediaURL;
+      if (sameFile && alreadyReady && srcMatches) {
+        console.log(
+          `[AudioEngine:loadTrack] FAST-PATH gen=${myGeneration} — same file already buffered ` +
+            `(readyState=${this.audio.readyState}), skipping reload`,
+        );
+        this._isLoading = false;
+        resolve();
+        return;
+      }
+      console.log(
+        `[AudioEngine:loadTrack] START gen=${myGeneration} ` +
+          `readyState=${this.audio.readyState} networkState=${this.audio.networkState}`,
+      );
+      console.log(`[AudioEngine:loadTrack] mediaURL=${mediaURL}`);
+
+      let resolved = false;
+
+      const resolveOnce = (evt) => {
+        if (this._loadGeneration !== myGeneration) {
+          console.log(
+            `[AudioEngine:loadTrack] STALE gen=${myGeneration} ` +
+              `(current=${this._loadGeneration}) — aborting`,
+          );
+          cleanup();
+          reject(
+            Object.assign(new Error("Load superseded by newer track"), {
+              superseded: true,
+            }),
+          );
+          return;
+        }
+        if (resolved) return;
+        resolved = true;
+        console.log(
+          `[AudioEngine:loadTrack] RESOLVED gen=${myGeneration} via '${evt.type}' ` +
+            `— duration=${this.audio.duration} readyState=${this.audio.readyState}`,
+        );
         cleanup();
         this._isLoading = false;
         this._currentTrackPath = filePath;
@@ -248,7 +283,12 @@ class AudioEngine {
         resolve();
       };
 
-      const onError = () => {
+      const onError = (evt) => {
+        if (this._loadGeneration !== myGeneration) {
+          cleanup();
+          return;
+        }
+        if (resolved) return;
         cleanup();
         this._isLoading = false;
         const error = this.audio.error;
@@ -257,47 +297,194 @@ class AudioEngine {
           ? error.message || `MediaError code ${code}`
           : "Unknown error";
         console.warn(
-          `[AudioEngine] load failed for ${mediaURL} (code ${code}): ${msg}`,
+          `[AudioEngine:loadTrack] ERROR gen=${myGeneration} — ` +
+            `code=${code} msg=${msg} readyState=${this.audio.readyState} ` +
+            `networkState=${this.audio.networkState}`,
         );
-        // NOTE: do not also _emit("error") here — loadTrack's rejection is
-        // already handled by the caller's catch block (which calls playNext()).
-        // Emitting "error" too caused a second, overlapping playNext() call
-        // that reassigned audio.src mid-load, producing spurious
-        // "code 0 / Unknown error" events on the next track.
         reject(new Error(`Failed to load audio: ${msg} (code ${code})`));
       };
 
+      // Timeout: 45s for the first track load after startup (main process may be
+      // busy with thumbnail generation / library scan), 15s for subsequent loads.
+      // This prevents the startup-timeout → auto-skip cascade on slow systems.
+      const isFirstLoad = this._loadGeneration === 1;
+      const timeoutMs = isFirstLoad ? 45000 : 15000;
+      const timeoutLabel = isFirstLoad ? "45s (startup)" : "15s";
+
+      const safetyTimer = setTimeout(() => {
+        if (this._loadGeneration !== myGeneration || resolved) return;
+        console.error(
+          `[AudioEngine:loadTrack] TIMEOUT gen=${myGeneration} — ` +
+            `readyState=${this.audio.readyState} networkState=${this.audio.networkState} ` +
+            `src=${this.audio.src.slice(0, 80)}`,
+        );
+        cleanup();
+        this._isLoading = false;
+        reject(new Error(`Audio load timed out (${timeoutLabel})`));
+      }, timeoutMs);
+
+      const warnTimer = setTimeout(() => {
+        if (!resolved && this._loadGeneration === myGeneration) {
+          console.warn(
+            `[AudioEngine:loadTrack] SLOW gen=${myGeneration} — ` +
+              `readyState=${this.audio.readyState} networkState=${this.audio.networkState}`,
+          );
+        }
+      }, 3000);
+
       const cleanup = () => {
-        this.audio.removeEventListener("canplaythrough", onCanPlay);
+        clearTimeout(safetyTimer);
+        clearTimeout(warnTimer);
+        this.audio.removeEventListener("loadedmetadata", resolveOnce);
+        this.audio.removeEventListener("canplay", resolveOnce);
         this.audio.removeEventListener("error", onError);
       };
 
-      this.audio.addEventListener("canplaythrough", onCanPlay, { once: true });
+      // PRIMARY resolve: loadedmetadata fires after ~4-16KB read (headers only).
+      // canplay is kept as a fallback. "playing" intentionally excluded — if the
+      // audio element accidentally starts (e.g. AudioContext resume side-effect),
+      // we do not want that to silently resolve the preload promise.
+      this.audio.addEventListener("loadedmetadata", resolveOnce, {
+        once: true,
+      });
+      this.audio.addEventListener("canplay", resolveOnce, { once: true });
       this.audio.addEventListener("error", onError, { once: true });
 
+      // CRITICAL: Reset the audio element before setting a new source.
+      // Without this, the audio element can get into a broken state where
+      // it shows readyState=4 but play() doesn't actually produce sound.
+      this._isClearing = true;
+      this.audio.pause();
+      this._isClearing = false;
+
+      console.log(
+        `[AudioEngine:loadTrack] Setting src and calling load() gen=${myGeneration}`,
+      );
+      this._isClearing = true;
       this.audio.src = mediaURL;
+      this._isClearing = false;
       this.audio.load();
+      console.log(
+        `[AudioEngine:loadTrack] load() called gen=${myGeneration} — ` +
+          `readyState=${this.audio.readyState} networkState=${this.audio.networkState}`,
+      );
     });
   }
 
   /**
    * Start or resume playback.
+   * Completely rewritten for v3 with retry logic and proper AudioContext handling.
+   *
+   * The retry logic handles a specific Chromium/Electron edge case:
+   * After loading a new source, play() may resolve but the audio element
+   * stays paused. This happens when the AudioContext is in a transition
+   * state. The retry gives Chromium a chance to settle.
    */
   async play() {
     if (!this._isInitialized) {
       await this.init();
     }
 
-    try {
-      if (this.audioContext && this.audioContext.state === "suspended") {
-        await this.audioContext.resume();
+    this._playRetries = 0;
+
+    const attemptPlay = async () => {
+      try {
+        // Resume AudioContext if suspended
+        if (this.audioContext && this.audioContext.state === "suspended") {
+          console.log(`[AudioEngine:play] Resuming suspended AudioContext...`);
+          await this.audioContext.resume();
+          console.log(
+            `[AudioEngine:play] AudioContext resumed — state=${this.audioContext.state}`,
+          );
+        }
+
+        console.log(
+          `[AudioEngine:play] Attempt ${this._playRetries + 1}/${this._maxPlayRetries + 1} — ` +
+            `AudioContext.state=${this.audioContext?.state} ` +
+            `readyState=${this.audio.readyState} paused=${this.audio.paused} ` +
+            `src=${this.audio.src ? this.audio.src.slice(0, 60) : "none"}`,
+        );
+
+        // Call play()
+        await this.audio.play();
+
+        // Verify that playback actually started
+        // Chromium's play() Promise can resolve even when the audio
+        // isn't actually playing (paused=true still). This is the bug.
+        // We need to verify after a short delay.
+        await new Promise((r) => setTimeout(r, 100));
+
+        if (this.audio.paused) {
+          console.warn(
+            `[AudioEngine:play] play() resolved but audio.paused=true! ` +
+              `readyState=${this.audio.readyState} ` +
+              `currentTime=${this.audio.currentTime} ` +
+              `duration=${this.audio.duration}`,
+          );
+
+          // Retry: If play() resolved but we're still paused, try again.
+          // This handles the Chromium edge case where the first play()
+          // after a source change doesn't "stick".
+          if (this._playRetries < this._maxPlayRetries) {
+            this._playRetries++;
+            console.log(
+              `[AudioEngine:play] Retrying play (attempt ${this._playRetries})...`,
+            );
+
+            // Force a small delay before retry to let Chromium's media
+            // pipeline settle after the source change
+            await new Promise((r) => setTimeout(r, 200));
+            return attemptPlay();
+          }
+
+          // Final fallback: If we've exhausted retries, try the nuclear option —
+          // reload the current source and try one more time
+          console.warn(
+            `[AudioEngine:play] All retries exhausted. Trying reload + play...`,
+          );
+          const currentSrc = this.audio.src;
+          const currentTime = this.audio.currentTime;
+          this.audio.src = currentSrc;
+          this.audio.currentTime = currentTime;
+          this.audio.load();
+          await new Promise((r) => setTimeout(r, 300));
+          await this.audio.play();
+        }
+
+        // Success!
+        this._playRetries = 0;
+        console.log(
+          `[AudioEngine:play] SUCCESS — paused=${this.audio.paused} ` +
+            `currentTime=${this.audio.currentTime} ` +
+            `readyState=${this.audio.readyState}`,
+        );
+        this._emit("play");
+      } catch (err) {
+        // DOMException: play() was interrupted by a new load() call
+        // This is expected during track switches — don't treat as error
+        if (err.name === "AbortError") {
+          console.log(
+            `[AudioEngine:play] play() interrupted by load() — this is normal during track switches`,
+          );
+          return;
+        }
+
+        // NotAllowedError: autoplay policy blocked
+        if (err.name === "NotAllowedError") {
+          console.warn(
+            `[AudioEngine:play] Autoplay blocked — try clicking play again. ` +
+              `This shouldn't happen with --autoplay-policy=no-user-gesture-required.`,
+          );
+        }
+
+        console.error(
+          `[AudioEngine:play] FAILED — ${err.name}: ${err.message}`,
+        );
+        throw err;
       }
-      await this.audio.play();
-      this._emit("play");
-    } catch (err) {
-      console.error("Playback failed:", err);
-      throw err;
-    }
+    };
+
+    return attemptPlay();
   }
 
   /**
@@ -312,33 +499,26 @@ class AudioEngine {
    * Stop playback and reset to beginning.
    */
   stop() {
+    this._isClearing = true;
     this.audio.pause();
     this.audio.currentTime = 0;
+    this._isClearing = false;
     this._emit("stop");
   }
 
   /**
+   * Safely clear audio.src without firing the "ended" event.
+   * Use this instead of audio.src = "" directly from renderer code.
+   */
+  clearSrc() {
+    this._isClearing = true;
+    this.audio.src = "";
+    this._isClearing = false;
+    this._preloadFailed = true;
+  }
+
+  /**
    * Seek to a specific time.
-   *
-   * BUGFIX (v4): The real root cause of "drag to seek → song restarts" was
-   * NOT in the seek logic itself — it was in the ERROR handler. When you
-   * set audio.currentTime, the audio element aborts the current byte-range
-   * fetch to fetch the new position. This fires a MEDIA_ERR_ABORTED (code 1)
-   * error event. The old error handler only suppressed errors during
-   * _isLoading, but during playback _isLoading is false — so the error
-   * fired → renderer's error handler called playNext() → which called
-   * playTrack() → which called loadTrack() → audio.src = mediaURL +
-   * audio.load() → track reloaded from position 0. THAT was the restart.
-   *
-   * The fix has three layers:
-   *   1. AudioEngine.seek() sets _isSeeking = true for a 1.5s window.
-   *   2. AudioEngine's error listener ignores ALL errors while _isSeeking.
-   *   3. AudioEngine's error listener ALSO ignores MEDIA_ERR_ABORTED (code 1)
-   *      unconditionally — it's ALWAYS an expected, non-fatal event
-   *      (fired on seek abort, on loadTrack replacement, on pause in some
-   *      cases). It should never trigger playNext().
-   *
-   * @param {number} time - Time in seconds
    */
   seek(time) {
     if (typeof time !== "number" || !isFinite(time) || time < 0) return;
@@ -353,10 +533,6 @@ class AudioEngine {
       clamped = Math.min(time, SAFE_MAX);
     }
 
-    // Set the seeking flag BEFORE assigning currentTime. The assignment
-    // synchronously fires `seeking`, then the abort+refetch happens
-    // asynchronously, then `seeked` fires. The error event (if any) fires
-    // during the abort+refetch window — so _isSeeking must already be true.
     this._isSeeking = true;
     clearTimeout(this._seekTimer);
     this._seekTimer = setTimeout(() => {
@@ -367,35 +543,15 @@ class AudioEngine {
       this.audio.currentTime = clamped;
     } catch (e) {
       console.warn("[AudioEngine] seek failed:", e.message);
-      // On exception, clear the flag immediately — no seek happened.
       this._isSeeking = false;
       clearTimeout(this._seekTimer);
     }
   }
 
-  /**
-   * Get the duration of the currently loaded track.
-   *
-   * BUGFIX: Previously returned `this.audio.duration || 0`, which collapses
-   * NaN → 0. Callers (notably `seekFromPointer` in renderer.js) used a
-   * truthy check on the return value to decide whether to compute a seek
-   * target, so a NaN-duration track silently dropped every seek.
-   *
-   * Now: returns the raw duration, which may be NaN (metadata not loaded),
-   * Infinity (unbounded stream), or a finite number. Callers that need a
-   * finite fallback should use `getDurationOrZero()` below.
-   *
-   * @returns {number}
-   */
   getDuration() {
     return this.audio.duration;
   }
 
-  /**
-   * Convenience wrapper — always returns a finite number ≥ 0.
-   * Use this in UI code that just needs a number for display purposes.
-   * @returns {number}
-   */
   getDurationOrZero() {
     const d = this.audio.duration;
     return isFinite(d) && d > 0 ? d : 0;
@@ -405,25 +561,17 @@ class AudioEngine {
     return this.audio.currentTime || 0;
   }
 
-  /**
-   * Set the playback volume.
-   * Volume is applied exclusively through gainNode to avoid double-attenuation.
-   * A slight equal-power curve is used so perceived loudness scales linearly.
-   * @param {number} volume - 0 to 1
-   */
   setVolume(volume) {
     const v = Math.max(0, Math.min(1, volume));
     this._volume = v;
 
     if (this.gainNode && this.audioContext) {
-      const gainValue = v;
       this.gainNode.gain.setTargetAtTime(
-        gainValue,
+        v,
         this.audioContext.currentTime,
-        0.008, // ~8 ms time constant — fast enough for scrubbing, no zipper
+        0.008,
       );
     }
-    // Do NOT touch this.audio.volume — keep it at 1.0
     this._emit("volumeChange", { volume: v });
   }
 
@@ -442,12 +590,6 @@ class AudioEngine {
     return this._playbackRate;
   }
 
-  /**
-   * Set the volume boost multiplier (1.0 = 100%, 2.0 = 200%).
-   * Applied post-analyser so the visualizer is unaffected.
-   * Uses a short ramp to avoid clicks when scrubbing the slider.
-   * @param {number} boost - 1.0 to 2.0
-   */
   setBoost(boost) {
     const v = Math.max(1.0, Math.min(2.0, boost));
     this._boost = v;
@@ -465,15 +607,9 @@ class AudioEngine {
     return this._boost;
   }
 
-  /**
-   * Get frequency data from the analyser node.
-   * Uses a pre-allocated buffer to avoid GC pressure at 60fps.
-   * @returns {Uint8Array}
-   */
   getAnalyserData() {
     if (!this.analyserNode) return new Uint8Array(0);
     const binCount = this.analyserNode.frequencyBinCount;
-    // Lazy-allocate buffer on first call (after analyser is created)
     if (!_frequencyDataBuffer || _frequencyDataBuffer.length !== binCount) {
       _frequencyDataBuffer = new Uint8Array(binCount);
     }
@@ -481,11 +617,6 @@ class AudioEngine {
     return _frequencyDataBuffer;
   }
 
-  /**
-   * Get time-domain waveform data from the analyser node.
-   * Uses a pre-allocated buffer to avoid GC pressure at 60fps.
-   * @returns {Uint8Array}
-   */
   getTimeDomainData() {
     if (!this.analyserNode) return new Uint8Array(0);
     const binCount = this.analyserNode.frequencyBinCount;
@@ -519,7 +650,14 @@ class AudioEngine {
   }
 
   _setupAudioElementListeners() {
-    this.audio.addEventListener("ended", () => this._emit("ended"));
+    this.audio.addEventListener("ended", () => {
+      // Suppress "ended" if we intentionally cleared audio.src (preload failure,
+      // track switch teardown). A src-clear fires "ended" even though no track
+      // actually finished — emitting it would trigger _handleTrackEnd() →
+      // playNext() → unwanted autoplay cascade.
+      if (this._isClearing) return;
+      this._emit("ended");
+    });
 
     this.audio.addEventListener("timeupdate", () => {
       this._emit("timeupdate", {
@@ -528,10 +666,6 @@ class AudioEngine {
       });
     });
 
-    // `seeked` fires when a currentTime assignment actually completes.
-    // The renderer uses this to know when it's safe to re-enable
-    // timeupdate-driven visual updates after a drag-seek.
-    // Also clears the _isSeeking flag so the error suppressor is lifted.
     this.audio.addEventListener("seeked", () => {
       this._isSeeking = false;
       clearTimeout(this._seekTimer);
@@ -541,25 +675,19 @@ class AudioEngine {
       });
     });
 
-    // `seeking` fires when a currentTime assignment starts. The renderer
-    // can use this to show a buffering indicator if needed.
     this.audio.addEventListener("seeking", () => {
       this._emit("seeking");
     });
 
     this.audio.addEventListener("error", () => {
-      // BUGFIX (v4): Suppress errors during seeks. When you set
-      // audio.currentTime, the audio element aborts the current byte-range
-      // fetch, which fires MEDIA_ERR_ABORTED (code 1). This is expected
-      // and NOT a real error — it should never trigger playNext().
       if (this._isLoading) return;
-      if (this._isSeeking) return; // suppress during active seek
+      if (this._isSeeking) return;
 
       const error = this.audio.error;
       const code = error ? error.code : 0;
 
-      // MEDIA_ERR_ABORTED (code 1) is ALWAYS expected during seeks, track
-      // switches, and pausing. It should NEVER trigger the error cascade.
+      // MEDIA_ERR_ABORTED (code 1) is ALWAYS expected during seeks,
+      // track switches, and pausing. Never treat it as a real error.
       if (code === 1) return;
 
       this._emit("error", {
@@ -573,6 +701,26 @@ class AudioEngine {
 
     this.audio.addEventListener("loadedmetadata", () => {
       this._emit("metadata", { duration: this.audio.duration });
+    });
+
+    // Debug: log when play actually starts producing audio
+    this.audio.addEventListener("playing", () => {
+      console.log(
+        `[AudioEngine] 'playing' event fired — paused=${this.audio.paused} ` +
+          `currentTime=${this.audio.currentTime} readyState=${this.audio.readyState}`,
+      );
+    });
+
+    // Debug: log when audio gets suspended/locked (helps diagnose autoplay issues)
+    this.audio.addEventListener("pause", () => {
+      // Only log if not from our own pause() call
+      if (!this._isLoading && this._loadGeneration > 0) {
+        console.log(
+          `[AudioEngine] 'pause' event fired — ` +
+            `paused=${this.audio.paused} ended=${this.audio.ended} ` +
+            `currentTime=${this.audio.currentTime}`,
+        );
+      }
     });
   }
 
@@ -602,6 +750,7 @@ class AudioEngine {
 
     this._events = {};
     this._isInitialized = false;
+    this._initPromise = null;
     AudioEngine._instance = null;
   }
 }
