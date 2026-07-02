@@ -2,7 +2,7 @@
 
 <div align="center">
 
-# NovaTune
+# NovaTune 
 
 ### A premium Windows music player with Spotify-dark aesthetics.
 
