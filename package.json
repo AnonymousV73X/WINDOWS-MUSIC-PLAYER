@@ -1,6 +1,6 @@
 {
   "name": "novatune",
-  "version": "1.0.3",
+  "version": "1.0.6",
   "description": "NovaTune — A premium Windows music player with Spotify-dark aesthetics",
   "main": "main/main.bundle.js",
   "scripts": {

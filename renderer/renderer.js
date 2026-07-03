@@ -1854,6 +1854,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ── Critical path: load data as fast as possible ──
   // Fire settings + library + playlists in parallel
+  // NOTE: _loadLibrary resolves once the first page is fetched and rendered
+  // (so state.tracks has the first 500 tracks immediately).
+  // It then triggers the progressive loader to fetch the remaining pages in the background.
   const [settingsResult, libraryResult, playlistsResult] = await Promise.all([
     _loadSettings(),
     _loadLibrary(),
@@ -1861,7 +1864,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   ]);
 
   // Post-load: restore session state (depends on settings + library)
-  _loadRecentPlayed();
+  // Since _loadLibrary returned instantly, the restored track might not be in state.tracks yet.
+  // _loadRecentPlayed handles this by fetching the specific track if needed.
+  const initTime = performance.now();
+  const preloadPromise = _loadRecentPlayed();
   if (!state.currentTrack) _setControlsVisible(false);
 
   // ── Deferred: UI wiring (non-critical, can wait) ──
@@ -1907,43 +1913,33 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
   });
 
-  // Lazy-init audio on first user interaction
-  document.addEventListener(
-    "click",
-    async () => {
-      if (!audioEngine._isInitialized) {
-        try {
-          await audioEngine.init();
-          console.log("AudioEngine ready");
-        } catch (e) {
-          /* retry on play */
-        }
-      }
-    },
-    { once: true },
-  );
+  // Note: audioEngine.init() is called inside playTrack() on demand.
+  // We do NOT add a document-click lazy-init here because the splash screen
+  // absorbs the first click before the user can interact with controls,
+  // which would init the AudioContext without the source node connected.
 
   console.log("NovaTune ready!");
 
-  // Dismiss splash screen after app is fully initialized.
-  // By this point _loadLibrary() has already awaited every page, so
-  // state.tracks is the complete, playable library — not just page 0.
+  // Dismiss splash screen only after the audio engine has finished buffering
+  // the restored track (or after a hard 8-second cap on HDD). This ensures
+  // the play button is functional the instant the user sees the main UI.
   const splash = document.getElementById("splash-screen");
   if (splash) {
-    const initTime = performance.now();
-    // Small minimum so the loader animation doesn't visibly cut off on very
-    // fast (cached/SSD) startups. Kept short — large libraries on HDD are
-    // already gated on real load time, so this must not add a multi-second
-    // artificial floor on top of that.
-    const MIN_SPLASH_MS = 500;
-    const elapsed = () => performance.now() - initTime;
+    const MIN_SPLASH_MS = 600;
+    // Hard cap: even on the slowest HDD, don't keep the splash up more than 8s.
+    // Promise.race resolves as soon as the preload finishes OR the cap fires.
+    const MAX_WAIT_MS = 8000;
+    const capPromise = new Promise((r) => setTimeout(r, MAX_WAIT_MS));
+    await Promise.race([preloadPromise, capPromise]);
+
     const dismiss = () => {
       splash.classList.add("hidden");
       // Remove from DOM after fade-out transition completes
       setTimeout(() => splash.remove(), 600);
     };
-    // If app loaded faster than the animation, wait for it to finish
-    const remaining = Math.max(0, MIN_SPLASH_MS - elapsed());
+    // If app loaded faster than the minimum animation time, wait for it.
+    const elapsed = performance.now() - initTime;
+    const remaining = Math.max(0, MIN_SPLASH_MS - elapsed);
     setTimeout(dismiss, remaining);
   }
 
@@ -3543,15 +3539,18 @@ async function _loadLibrary() {
         );
       });
 
-      // Load remaining pages before we consider the library ready.
-      // AWAITED (not fire-and-forget): callers such as the splash-dismiss
-      // logic must only treat the app as "ready" once every track is
-      // actually loaded and playable, not just the first page.
+      // Load remaining pages in the background.
+      // NOT AWAITED: let the app UI become fully responsive and ready instantly.
+      // _loadRecentPlayed will handle fetching the saved track if it's not on this page.
       if (hasMore) {
         console.log(
           `[startup] Loading remaining ${totalTracks - state.tracks.length} tracks...`,
         );
-        await _loadRemainingPages(1, FIRST_PAGE_SIZE, totalTracks);
+        _loadRemainingPages(1, FIRST_PAGE_SIZE, totalTracks).then(() => {
+          // Once the full library is loaded, fully restore the queue
+          // so that the Next/Previous buttons work for the whole saved list.
+          _restoreFullQueue();
+        });
       }
     } else {
       // Fallback: load all at once (original path)
@@ -3649,17 +3648,36 @@ async function _applyIDBThumbs(tracks) {
           resolve(resultMap);
           return;
         }
+        // Safety timeout to prevent startup hangs if IndexedDB operations block or fail to fire callbacks
+        const safetyTimeout = setTimeout(() => {
+          console.warn("[_applyIDBThumbs] IndexedDB read timed out, returning partial results.");
+          resolve(resultMap);
+        }, 1000);
+
         for (const key of keys) {
-          const req = store.get(key);
-          req.onsuccess = () => {
-            if (req.result !== undefined && req.result !== null) {
-              resultMap[key.replace("batch48::", "")] = req.result;
+          try {
+            const req = store.get(key);
+            req.onsuccess = () => {
+              if (req.result !== undefined && req.result !== null) {
+                resultMap[key.replace("batch48::", "")] = req.result;
+              }
+              if (--pending === 0) {
+                clearTimeout(safetyTimeout);
+                resolve(resultMap);
+              }
+            };
+            req.onerror = () => {
+              if (--pending === 0) {
+                clearTimeout(safetyTimeout);
+                resolve(resultMap);
+              }
+            };
+          } catch (err) {
+            if (--pending === 0) {
+              clearTimeout(safetyTimeout);
+              resolve(resultMap);
             }
-            if (--pending === 0) resolve(resultMap);
-          };
-          req.onerror = () => {
-            if (--pending === 0) resolve(resultMap);
-          };
+          }
         }
       });
       for (const t of tracks) {
@@ -4146,7 +4164,7 @@ function _updateNpTitle(text) {
   }
 }
 
-function _loadRecentPlayed() {
+async function _loadRecentPlayed() {
   const ids = Array.isArray(state.settings.recentlyPlayed)
     ? state.settings.recentlyPlayed
     : [];
@@ -4155,27 +4173,45 @@ function _loadRecentPlayed() {
 
   const saved = state.settings._queue;
   if (saved && Array.isArray(saved.ids) && saved.ids.length > 0) {
-    const restored = saved.ids.map((id) => byId.get(id)).filter(Boolean);
-    if (restored.length > 0) {
-      state.queue = restored;
-      state.queueIndex = Math.max(
-        0,
-        Math.min(saved.index || 0, restored.length - 1),
-      );
-      const track = restored[state.queueIndex];
-      if (track) {
-        state.currentTrack = track;
-        // Do NOT show controls yet — preload the track first so play is instant
-        _updateNpTitle(track.title || "Unknown");
-        const npArtist = $("np-artist");
-        if (npArtist) npArtist.textContent = getArtistText(track);
+    state.queueIndex = Math.max(
+      0,
+      Math.min(saved.index || 0, saved.ids.length - 1),
+    );
+    const trackIdToPlay = saved.ids[state.queueIndex];
+    let trackToPlay = byId.get(trackIdToPlay);
 
-        const artIdx = getArtIndex(track);
+    if (!trackToPlay) {
+      // The track isn't in page 0. Fetch it instantly so we can preload!
+      try {
+        const res = await window.novaAPI.invoke(
+          "library:get-by-id",
+          trackIdToPlay,
+        );
+        if (res && res.success && res.track) {
+          trackToPlay = res.track;
+        }
+      } catch (err) {
+        console.warn("Failed to fetch restored track:", err);
+      }
+    }
+
+    if (trackToPlay) {
+      // Temporarily set the queue to just this track until full library loads
+      state.queue = [trackToPlay];
+      state.queueIndex = 0;
+      state.currentTrack = trackToPlay;
+
+      // Do NOT show controls yet — preload the track first so play is instant
+      _updateNpTitle(trackToPlay.title || "Unknown");
+      const npArtist = $("np-artist");
+        if (npArtist) npArtist.textContent = getArtistText(trackToPlay);
+
+        const artIdx = getArtIndex(trackToPlay);
 
         // Update np-art (bottom bar)
         const npArt = $("np-art");
         if (npArt) {
-          const npArtSrc = _resolveCoverArtSrc(track);
+          const npArtSrc = _resolveCoverArtSrc(trackToPlay);
           npArt.innerHTML = npArtSrc
             ? `<img src="${npArtSrc}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;">`
             : `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
@@ -4185,15 +4221,15 @@ function _loadRecentPlayed() {
         // Previously, when restoring a saved queue, only the bottom bar was updated.
         // The overlay showed stale/empty content, no dynamics, and no lyrics.
         const ovTitle = $("ov-title");
-        if (ovTitle) ovTitle.textContent = track.title || "Unknown";
+        if (ovTitle) ovTitle.textContent = trackToPlay.title || "Unknown";
         const ovArtist = $("ov-artist");
-        if (ovArtist) ovArtist.textContent = getArtistText(track);
+        if (ovArtist) ovArtist.textContent = getArtistText(trackToPlay);
         const ovMiniTitle = $("ov-mini-title");
-        if (ovMiniTitle) ovMiniTitle.textContent = track.title || "Unknown";
+        if (ovMiniTitle) ovMiniTitle.textContent = trackToPlay.title || "Unknown";
         const ovMiniArtist = $("ov-mini-artist");
-        if (ovMiniArtist) ovMiniArtist.textContent = getArtistText(track);
+        if (ovMiniArtist) ovMiniArtist.textContent = getArtistText(trackToPlay);
 
-        const ovArtSrc = _resolveCoverArtSrc(track);
+        const ovArtSrc = _resolveCoverArtSrc(trackToPlay);
         const ovArt = $("ov-art");
         const ovMiniArt = $("ov-mini-art");
         if (ovArt) {
@@ -4211,20 +4247,20 @@ function _loadRecentPlayed() {
         const floatTitle = $("np-float-title");
         const floatArtist = $("np-float-artist");
         const floatArt = $("np-float-art");
-        if (floatTitle) floatTitle.textContent = track.title || "Unknown";
-        if (floatArtist) floatArtist.textContent = getArtistText(track);
+        if (floatTitle) floatTitle.textContent = trackToPlay.title || "Unknown";
+        if (floatArtist) floatArtist.textContent = getArtistText(trackToPlay);
         if (floatArt) {
-          const floatSrc = _resolveCoverArtSrc(track);
+          const floatSrc = _resolveCoverArtSrc(trackToPlay);
           floatArt.innerHTML = floatSrc
             ? `<img src="${floatSrc}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:10px;border:none;outline:none;">`
             : `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
         }
 
-        _setNpBg(track);
+        _setNpBg(trackToPlay);
 
         // BUGFIX: Fetch lyrics for the restored track so they appear in overlay
         lastActiveIdx = -1;
-        _fetchLyrics(track);
+        _fetchLyrics(trackToPlay);
 
         // BUGFIX: Show lyrics toggle button
         const lyricsToggle = $("lyrics-toggle-btn");
@@ -4233,34 +4269,77 @@ function _loadRecentPlayed() {
         // BUGFIX: Sync heart/favorite button state
         _syncHeartButton();
 
-        // BUGFIX: Update OS media session so taskbar/lockscreen shows the right track
-        _updateMediaSession(track);
+        // Update OS media session so taskbar/lockscreen shows the restored track
+        // but marks playback as PAUSED — the track hasn't started yet.
+        // Do NOT call _updateMediaSession(trackToPlay) here because that function sets
+        // playbackState="playing", which confuses SMTC/Windows into thinking
+        // music is actively playing before the user clicks anything.
+        if ("mediaSession" in navigator) {
+          const artSrc = _resolveCoverArtSrc(trackToPlay);
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: trackToPlay.title || "Unknown",
+            artist:
+              typeof trackToPlay.artist === "string"
+                ? trackToPlay.artist
+                : Array.isArray(trackToPlay.artist)
+                  ? trackToPlay.artist.join(", ")
+                  : "Unknown Artist",
+            album: trackToPlay.album || "",
+            artwork: artSrc ? [{ src: artSrc }] : [],
+          });
+          navigator.mediaSession.playbackState = "paused";
+        }
 
         // BUGFIX: Highlight the active track in the virtual list
-        updateActiveTrackRows(null, track.id);
+        updateActiveTrackRows(null, trackToPlay.id);
 
-        // Silently preload into AudioEngine; show controls only once buffered
-        audioEngine
-          .preload(track.filePath)
+        // Silently preload into AudioEngine; show controls only once buffered.
+        // Returns the promise so DOMContentLoaded can await it before dismissing
+        // the splash screen (the user should see "ready" not "loading").
+        // consecutiveFailures is reset to 0 here so that a preload error on
+        // startup doesn't count against the playNext() skip budget.
+        state.consecutiveFailures = 0;
+        return audioEngine
+          .preload(trackToPlay.filePath)
           .then(() => {
             _setControlsVisible(true);
-            // BUGFIX: Since preload() calls init()+loadTrack(), _isInitialized
-            // will be true. When user clicks play, togglePlayPause() won't
-            // delegate to playTrack() (which would re-update all UI). Instead
-            // it just calls audioEngine.play(). So we must mark the state
-            // correctly here so the play/pause button and dynamics work.
-            state.isPlaying = false; // not playing yet, just loaded
+            // preload() no longer calls init(), so _isInitialized stays false
+            // until the user's first play click. togglePlayPause() will detect
+            // readyState > 0 (buffered) + _isInitialized=false and call
+            // playTrack() which initialises the AudioContext with a user gesture.
+            state.isPlaying = false; // not playing yet, just buffered
             _updatePlayPauseIcon(false);
           })
           .catch(() => {
             // Preload failed/timed out — clear src so readyState=0 and
-            // togglePlayPause re-delegates to playTrack on next play click
-            audioEngine.audio.src = "";
+            // togglePlayPause re-delegates to playTrack on next play click.
+            audioEngine.clearSrc();
             _setControlsVisible(true);
-          }); // show anyway on error
+          });
       }
       console.log(
-        `[queue] Restored ${restored.length} tracks, index ${state.queueIndex}`,
+        `[queue] Restored track ID ${saved.ids[saved.index || 0]} for preload.`,
+      );
+    }
+  return Promise.resolve();
+}
+
+/**
+ * Fully map the saved queue once the progressive background load completes.
+ */
+function _restoreFullQueue() {
+  const saved = state.settings._queue;
+  if (saved && Array.isArray(saved.ids) && saved.ids.length > 0) {
+    const byId = new Map(state.tracks.map((track) => [track.id, track]));
+    const restored = saved.ids.map((id) => byId.get(id)).filter(Boolean);
+    if (restored.length > 0) {
+      state.queue = restored;
+      state.queueIndex = Math.max(
+        0,
+        Math.min(saved.index || 0, restored.length - 1),
+      );
+      console.log(
+        `[queue] Fully restored ${restored.length} queue tracks, index ${state.queueIndex}.`,
       );
     }
   }
@@ -6356,7 +6435,7 @@ function renderHelp() {
       </div>
 
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
-        NovaTune v1.0.5 &bull; Made with love for music lovers
+        NovaTune v1.0.6 &bull; Made with love for music lovers
       </div>
     </div>
   `);
@@ -8319,9 +8398,10 @@ function _updateMediaSession(track) {
 }
 
 function togglePlayPause(forceState) {
-  // If the engine isn't initialized yet, we have a restored currentTrack but
-  // nothing loaded into audio. Delegate to playTrack so it inits + loads + plays.
-  // Also delegate if initialized but audio failed to load (readyState=0 after timeout).
+  // If the engine isn't initialized yet, always delegate to playTrack so it
+  // inits AudioContext within the same user-gesture call stack (required by
+  // Chromium's autoplay policy), connects the source node, loads and plays.
+  // Also delegate if audio failed to load (readyState=0 after timeout).
   if (
     state.currentTrack &&
     forceState !== false &&
@@ -10181,8 +10261,8 @@ function initLeftEdgeHover() {
   if (!card) return;
 
   const BREAKPOINT = 950;
-  const EDGE_SHOW = 20; // px from left edge to show card
-  const EDGE_HIDE = 80; // px from left edge beyond which card hides
+  const EDGE_SHOW = 20; // px from right edge to show card
+  const EDGE_HIDE = 80; // px from right edge beyond which card hides
   let showTimeout = null;
   let hideTimeout = null;
   let lastX = 0;

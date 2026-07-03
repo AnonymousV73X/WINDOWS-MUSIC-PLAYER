@@ -78,6 +78,7 @@ class AudioEngine {
     this._maxPlayRetries = 3;
     this._isClearing = false; // Suppresses spurious "ended" on src-clear
     this._preloadFailed = false;
+    this._suppressNextError = false; // Suppresses one trailing error event after clearSrc/failure
 
     this._setupAudioElementListeners();
   }
@@ -192,11 +193,15 @@ class AudioEngine {
 
   /**
    * Preload a track into the audio buffer without starting playback.
+   *
+   * CRITICAL: Do NOT call init() here. init() creates the AudioContext, which
+   * with --autoplay-policy=no-user-gesture-required starts in "running" state.
+   * A running AudioContext attached to the media element via createMediaElementSource
+   * causes Chromium to auto-play the audio when data is buffered, even without
+   * an explicit play() call. AudioContext init is deferred to the first user-
+   * requested playTrack() call where a user gesture is guaranteed.
    */
   async preload(filePath) {
-    if (!this._isInitialized) {
-      await this.init();
-    }
     return this.loadTrack(filePath);
   }
 
@@ -291,6 +296,10 @@ class AudioEngine {
         if (resolved) return;
         cleanup();
         this._isLoading = false;
+        // Suppress the next error event that may fire from the global listener
+        // after _isLoading is cleared. This prevents stale errors from triggering
+        // the playNext() cascade in the renderer error handler.
+        this._suppressNextError = true;
         const error = this.audio.error;
         const code = error ? error.code : 0;
         const msg = error
@@ -320,6 +329,11 @@ class AudioEngine {
         );
         cleanup();
         this._isLoading = false;
+        // Suppress the next error event. After a timeout, the audio element may
+        // still be trying to load. When it eventually fails, the global error
+        // listener would see _isLoading=false and emit the error, triggering
+        // an unwanted playNext() cascade. _suppressNextError prevents this.
+        this._suppressNextError = true;
         reject(new Error(`Audio load timed out (${timeoutLabel})`));
       }, timeoutMs);
 
@@ -507,13 +521,23 @@ class AudioEngine {
   }
 
   /**
-   * Safely clear audio.src without firing the "ended" event.
+   * Safely clear audio.src without firing the "ended" or "error" events.
    * Use this instead of audio.src = "" directly from renderer code.
+   * Also calls audio.load() to abort any pending network requests so that
+   * stale error events do not slip through after _isLoading is cleared.
    */
   clearSrc() {
     this._isClearing = true;
-    this.audio.src = "";
-    this._isClearing = false;
+    this._suppressNextError = true; // suppress any trailing error event
+    try {
+      this.audio.pause();
+      this.audio.src = "";
+      this.audio.load(); // abort pending network request
+      this._currentTrackPath = null;
+      this._isLoading = false;
+    } finally {
+      this._isClearing = false;
+    }
     this._preloadFailed = true;
   }
 
@@ -680,8 +704,16 @@ class AudioEngine {
     });
 
     this.audio.addEventListener("error", () => {
+      if (this._isClearing) return;
       if (this._isLoading) return;
       if (this._isSeeking) return;
+      // Suppress one trailing error that may fire after clearSrc() or a
+      // load-phase failure where _isLoading was already cleared. Prevents
+      // stale errors from triggering the renderer's playNext() cascade.
+      if (this._suppressNextError) {
+        this._suppressNextError = false;
+        return;
+      }
 
       const error = this.audio.error;
       const code = error ? error.code : 0;

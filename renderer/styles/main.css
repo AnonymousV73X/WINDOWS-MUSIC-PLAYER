@@ -4137,14 +4137,14 @@ textarea {
   right: 14px;
   top: 50%;
   transform: translateY(-50%);
-  z-index: 300;
+  z-index: 10000;
   /* Glass: same recipe as the floating lyrics panel — translucent dark
      base + heavy blur + saturation boost lets whatever sits behind the
      card (album art, blurred backdrop) bleed through softly. */
   background: rgba(18, 18, 18, 0.72);
   backdrop-filter: blur(24px) saturate(1.6);
   -webkit-backdrop-filter: blur(24px) saturate(1.6);
-  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 14px;
@@ -4258,7 +4258,7 @@ textarea {
 
 .floating-nav-card .fn-search-input {
   position: absolute;
-  left: calc(100% + 6px);
+  right: calc(100% + 6px);
   top: 50%;
   transform: translateY(-50%);
   width: 0;
