@@ -68,6 +68,17 @@
         <div class="splash-icon-glow"></div>
       </div>
       <div class="splash-title">NovaTune</div>
+      <!--
+        Subsystem status panel (v2.6 redesign) — populated by
+        _renderSplashStatus() in renderer.js.
+        Modern minimal design: CSS-drawn dots (no Unicode glyphs that
+        wobble), subtle pulse animation for loading state, progress
+        bar at the bottom showing overall completion %.
+      -->
+      <div id="splash-status" class="splash-status" aria-live="polite"></div>
+      <div class="splash-progress-track">
+        <div id="splash-progress-fill" class="splash-progress-fill"></div>
+      </div>
     </div>
   </div>
 
@@ -576,14 +587,14 @@
             </div>
           </div>
           <div class="ov-buttons">
-            <button class="ov-btn ov-heart" aria-label="Like" id="ov-heart-btn" data-tooltip="Like">
+            <button class="ov-btn ov-heart" aria-label="Like" id="ov-heart-btn" >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                 stroke-linejoin="round">
                 <path
                   d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
               </svg>
             </button>
-            <button class="ov-btn" aria-label="Shuffle" id="ov-shuffle-btn" data-tooltip="Shuffle">
+            <button class="ov-btn" aria-label="Shuffle" id="ov-shuffle-btn" >
               <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M16 3H21V8" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                   stroke-linejoin="round" />
@@ -624,7 +635,7 @@
                   fill="currentColor" />
               </svg>
             </button>
-            <button class="ov-btn" aria-label="Add to playlist" id="ov-add-btn" data-tooltip="Add to playlist">
+            <button class="ov-btn" aria-label="Add to playlist" id="ov-add-btn" >
               <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor"
                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M6 10H18"></path>
