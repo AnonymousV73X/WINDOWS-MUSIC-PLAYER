@@ -48,48 +48,172 @@
   gap: 18px;
 }
 
-/* Music note icon with floating animation */
+/* Music note icon — subtle glow pulse, no float (v2.6: was wobbly) */
 .splash-icon-wrap {
   position: relative;
-  width: 56px;
-  height: 56px;
+  width: 48px;
+  height: 48px;
 }
 .splash-music-icon {
   width: 100%;
   height: 100%;
   color: var(--green, #1ed760);
-  animation: splash-float 2.4s ease-in-out infinite;
-  filter: drop-shadow(0 0 0px transparent);
+  filter: drop-shadow(0 2px 8px rgba(0,0,0,0.3));
+  opacity: 0;
+  animation: splash-fade-up 0.6s ease 0.1s forwards;
 }
 .splash-icon-glow {
   position: absolute;
-  inset: -12px;
+  inset: -16px;
   border-radius: 50%;
-  background: radial-gradient(circle, var(--green, #1ed760) 0%, transparent 70%);
+  background: radial-gradient(circle, var(--green, #1ed760) 0%, transparent 65%);
   opacity: 0;
-  animation: splash-glow 2.4s ease-in-out infinite;
+  animation: splash-glow 3s ease-in-out infinite;
   pointer-events: none;
 }
 
 /* Title */
 .splash-title {
   font-family: "Outfit", sans-serif;
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 20px;
+  font-weight: 600;
   color: var(--text-primary, #fff);
-  letter-spacing: -0.5px;
+  letter-spacing: -0.3px;
   opacity: 0;
-  animation: splash-fade-up 0.5s ease 0.2s forwards;
+  animation: splash-fade-up 0.6s ease 0.2s forwards;
+}
+
+/* ── Subsystem status panel (v2.6 redesign) ────────────────────────
+   Modern minimal design:
+   - CSS-drawn dots (no Unicode glyphs that wobble across fonts)
+   - Loading: pulsing ring animation
+   - Done: solid filled circle with subtle glow
+   - Error: solid red circle
+   - Skipped: hollow dim circle
+   - Smooth transitions between states */
+.splash-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 24px;
+  min-width: 260px;
+  max-width: 320px;
+  opacity: 0;
+  animation: splash-fade-up 0.6s ease 0.4s forwards;
+}
+.splash-status-row {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  font-family: "Outfit", sans-serif;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-secondary, #b3b3b3);
+  opacity: 0.35;
+  transition: opacity 0.3s ease, color 0.3s ease;
+}
+.splash-status-row.is-loading {
+  opacity: 1;
+  color: var(--text-primary, #fff);
+}
+.splash-status-row.is-done {
+  opacity: 0.65;
+  color: var(--text-secondary, #b3b3b3);
+}
+.splash-status-row.is-error {
+  opacity: 1;
+  color: #ff6b6b;
+}
+.splash-status-row.is-skipped {
+  opacity: 0.3;
+  color: var(--text-secondary, #b3b3b3);
+}
+
+/* CSS-drawn dot — perfect circle, no glyph rendering issues */
+.splash-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  transition: background 0.3s ease, box-shadow 0.3s ease;
+  position: relative;
+}
+
+/* Loading state: pulsing ring */
+.splash-status-row.is-loading .splash-status-dot {
+  background: transparent;
+  border: 1.5px solid var(--green, #1ed760);
+  animation: splash-pulse 1.4s ease-in-out infinite;
+}
+@keyframes splash-pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(30, 215, 96, 0.4);
+  }
+  50% {
+    transform: scale(1.15);
+    box-shadow: 0 0 0 4px rgba(30, 215, 96, 0);
+  }
+}
+
+/* Done state: solid green circle with subtle glow */
+.splash-status-row.is-done .splash-status-dot {
+  background: var(--green, #1ed760);
+  box-shadow: 0 0 6px rgba(30, 215, 96, 0.5);
+}
+
+/* Error state: solid red circle */
+.splash-status-row.is-error .splash-status-dot {
+  background: #ff6b6b;
+  box-shadow: 0 0 6px rgba(255, 107, 107, 0.4);
+}
+
+/* Skipped state: hollow dim circle */
+.splash-status-row.is-skipped .splash-status-dot {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.splash-status-label {
+  white-space: nowrap;
+  font-weight: 400;
+}
+.splash-status-msg {
+  font-size: 10px;
+  opacity: 0.6;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 130px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Progress bar (v2.6) ─────────────────────────────────────────── */
+.splash-progress-track {
+  width: 260px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 1px;
+  overflow: hidden;
+  margin-top: 20px;
+  opacity: 0;
+  animation: splash-fade-up 0.6s ease 0.5s forwards;
+}
+.splash-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--green, #1ed760);
+  border-radius: 1px;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 8px rgba(30, 215, 96, 0.4);
 }
 
 /* ── Splash Keyframes ── */
-@keyframes splash-float {
-  0%, 100% { transform: translateY(0); filter: drop-shadow(0 2px 8px rgba(0,0,0,0.3)); }
-  50% { transform: translateY(-5px); filter: drop-shadow(0 6px 14px rgba(0,0,0,0.35)); }
-}
 @keyframes splash-glow {
-  0%, 100% { opacity: 0.08; transform: scale(1); }
-  50% { opacity: 0.18; transform: scale(1.1); }
+  0%, 100% { opacity: 0.06; transform: scale(1); }
+  50% { opacity: 0.14; transform: scale(1.08); }
 }
 @keyframes splash-fade-up {
   from { opacity: 0; transform: translateY(6px); }

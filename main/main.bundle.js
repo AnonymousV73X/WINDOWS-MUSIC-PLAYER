@@ -307,13 +307,47 @@ var require_v8_compile_cache = __commonJS({
 var require_windowManager = __commonJS({
   "main/windowManager.js"(exports2, module2) {
     var fs = require("fs");
+    var os = require("os");
     var path = require("path");
     var { screen, app } = require("electron");
-    var DATA_DIR = process.defaultApp || process.env.NODE_ENV === "development" || process.argv.includes("--dev") ? path.join(__dirname, "..", "data") : app.getPath("userData");
-    var STATE_FILE = path.join(DATA_DIR, "window-state.json");
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
+    function _sleep(ms) {
+      try {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+      } catch (_) {
+      }
     }
+    function ensureDirSync(dir, attempts = 5) {
+      for (let i = 0; i < attempts; i++) {
+        try {
+          fs.mkdirSync(dir, { recursive: true });
+          return dir;
+        } catch (err) {
+          if (i === attempts - 1) throw err;
+          _sleep(100 * (i + 1));
+        }
+      }
+      return dir;
+    }
+    function resolveDataDir() {
+      const preferred = process.defaultApp || process.env.NODE_ENV === "development" || process.argv.includes("--dev") ? path.join(__dirname, "..", "data") : app.getPath("userData");
+      try {
+        return ensureDirSync(preferred);
+      } catch (err) {
+        console.warn(
+          "Primary data directory unavailable, falling back to temp dir:",
+          err.message
+        );
+        const fallback = path.join(os.tmpdir(), "NovaTune");
+        try {
+          return ensureDirSync(fallback);
+        } catch (err2) {
+          console.warn("Fallback data directory also failed:", err2.message);
+          return preferred;
+        }
+      }
+    }
+    var DATA_DIR = resolveDataDir();
+    var STATE_FILE = path.join(DATA_DIR, "window-state.json");
     var WindowStateManager = class {
       /**
        * @param {string} windowName - Unique name for this window state
@@ -414,6 +448,8 @@ var require_windowManager = __commonJS({
       }
     };
     module2.exports = WindowStateManager;
+    module2.exports.DATA_DIR = DATA_DIR;
+    module2.exports.ensureDirSync = ensureDirSync;
   }
 });
 
@@ -1413,12 +1449,918 @@ var require_metadataWorker = __commonJS({
   }
 });
 
+// main/manifestReader.js
+var require_manifestReader = __commonJS({
+  "main/manifestReader.js"(exports2, module2) {
+    "use strict";
+    var MAGIC = "NOVA-MFT";
+    var VERSION = 1;
+    var HEADER_SIZE = 64;
+    var RECORD_SIZE = 128;
+    var HASH_EMPTY = 4294967295;
+    var FLAG_HAS_THUMBHASHES = 1;
+    var FLAG_HAS_SORT_ORDERS = 2;
+    var FLAG_SEALED = 4;
+    var FORMAT_ENUM = {
+      UNKNOWN: 0,
+      MP3: 1,
+      FLAC: 2,
+      WAV: 3,
+      OGG: 4,
+      M4A: 5,
+      AAC: 6,
+      OPUS: 7,
+      WMA: 8,
+      APE: 9,
+      WV: 10,
+      TTA: 11,
+      MPC: 12
+    };
+    var FORMAT_ENUM_REVERSE = {};
+    for (const [k, v] of Object.entries(FORMAT_ENUM))
+      FORMAT_ENUM_REVERSE[v] = k;
+    var SORT_ORDERS = [
+      "sortTitleAsc",
+      "sortDateAddedDesc",
+      "sortAlbumAsc",
+      "sortArtistAsc"
+    ];
+    var _CRC_TABLE = (() => {
+      const t = new Uint32Array(256);
+      for (let n = 0; n < 256; n++) {
+        let c = n;
+        for (let k = 0; k < 8; k++)
+          c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
+        t[n] = c >>> 0;
+      }
+      return t;
+    })();
+    function crc32(buf, byteOffset, byteLength) {
+      let c = 4294967295;
+      const end = byteOffset + byteLength;
+      for (let i = byteOffset; i < end; i++)
+        c = _CRC_TABLE[(c ^ buf[i]) & 255] ^ c >>> 8;
+      return (c ^ 4294967295) >>> 0;
+    }
+    function fnv1a(str) {
+      let h = 2166136261;
+      for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 16777619) >>> 0;
+      }
+      return h >>> 0;
+    }
+    function normalizePath(p) {
+      if (!p) return "";
+      return p.replace(/\\/g, "/").toLowerCase();
+    }
+    var _dv = (buf) => buf instanceof ArrayBuffer ? new DataView(buf) : buf instanceof Uint8Array ? new DataView(buf.buffer, buf.byteOffset, buf.byteLength) : new DataView(buf);
+    function readU16(dv, off) {
+      return dv.getUint16(off, true);
+    }
+    function readU32(dv, off) {
+      return dv.getUint32(off, true);
+    }
+    function readU64(dv, off) {
+      const lo = dv.getUint32(off, true);
+      const hi = dv.getUint32(off + 4, true);
+      return hi * 4294967296 + lo;
+    }
+    function readF32(dv, off) {
+      return dv.getFloat32(off, true);
+    }
+    function readU8(dv, off) {
+      return dv.getUint8(off);
+    }
+    var ManifestReader = class {
+      /**
+       * @param {ArrayBuffer|Uint8Array|Buffer} buf
+       */
+      constructor(buf) {
+        this._buf = buf;
+        this._dv = _dv(buf);
+        this._bytes = buf instanceof Uint8Array ? buf : buf instanceof ArrayBuffer ? new Uint8Array(buf) : new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+        this.valid = false;
+        this.error = null;
+        this._sortCache = /* @__PURE__ */ new Map();
+        this._decodeCache = /* @__PURE__ */ new Map();
+        this._decodeCacheMax = 256;
+        try {
+          this._parseHeader();
+          this.valid = true;
+        } catch (err) {
+          this.error = err.message || String(err);
+        }
+      }
+      _parseHeader() {
+        const dv = this._dv;
+        if (this._bytes.byteLength < HEADER_SIZE)
+          throw new Error("manifest: file too small");
+        let magic = "";
+        for (let i = 0; i < 8; i++)
+          magic += String.fromCharCode(this._bytes[i]);
+        if (magic !== MAGIC) throw new Error(`manifest: bad magic '${magic}'`);
+        this.version = readU16(dv, 8);
+        if (this.version !== VERSION)
+          throw new Error(`manifest: unsupported version ${this.version}`);
+        this.flags = readU16(dv, 10);
+        this.createdAt = readU64(dv, 12);
+        this.trackCount = readU32(dv, 20);
+        this.fpHash = readU32(dv, 24);
+        this.recordsOff = readU32(dv, 28);
+        this.stringsOff = readU32(dv, 32);
+        this.indexOff = readU32(dv, 36);
+        this.sortOff = readU32(dv, 40);
+        this.totalSize = readU32(dv, 44);
+        if (this.totalSize !== this._bytes.byteLength)
+          throw new Error(
+            `manifest: size mismatch (header says ${this.totalSize}, file is ${this._bytes.byteLength})`
+          );
+        const expected = readU32(dv, 60);
+        const actual = crc32(this._bytes, 0, 60);
+        if (expected !== actual)
+          throw new Error(`manifest: header CRC mismatch (got ${actual}, expected ${expected})`);
+        if (!(this.flags & FLAG_SEALED))
+          throw new Error("manifest: not sealed (write was incomplete)");
+      }
+      // ─── String pool ────────────────────────────────────────────────
+      _readString(off, len) {
+        if (len === 0) return "";
+        if (typeof Buffer !== "undefined" && this._bytes instanceof Buffer) {
+          return this._bytes.toString("utf8", off, off + len);
+        }
+        if (!this._td) this._td = new TextDecoder("utf-8");
+        return this._td.decode(this._bytes.subarray(off, off + len));
+      }
+      _readId(recordOff) {
+        let s = "";
+        for (let i = 0; i < 16; i++)
+          s += String.fromCharCode(this._bytes[recordOff + i]);
+        return s;
+      }
+      // ─── Public API ─────────────────────────────────────────────────
+      get headerInfo() {
+        return {
+          version: this.version,
+          flags: this.flags,
+          createdAt: this.createdAt,
+          trackCount: this.trackCount,
+          fpHash: this.fpHash,
+          hasThumbhashes: !!(this.flags & FLAG_HAS_THUMBHASHES),
+          hasSortOrders: !!(this.flags & FLAG_HAS_SORT_ORDERS)
+        };
+      }
+      /**
+       * Decode one record into a track object (same shape as the old
+       * SQLite JSON rows — drop-in for the renderer).
+       * @param {number} recordIdx  0..trackCount-1
+       * @returns {Object|null}
+       */
+      getTrackAt(recordIdx) {
+        if (recordIdx < 0 || recordIdx >= this.trackCount) return null;
+        const cached = this._decodeCache.get(recordIdx);
+        if (cached) return cached;
+        const off = this.recordsOff + recordIdx * RECORD_SIZE;
+        const dv = this._dv;
+        const bytes = this._bytes;
+        const id = this._readId(off);
+        const filePath = this._readString(
+          readU32(dv, off + 16),
+          readU32(dv, off + 20)
+        );
+        const fileName = this._readString(
+          readU32(dv, off + 24),
+          readU32(dv, off + 28)
+        );
+        const title = this._readString(
+          readU32(dv, off + 32),
+          readU32(dv, off + 36)
+        );
+        const artist = this._readString(
+          readU32(dv, off + 40),
+          readU32(dv, off + 44)
+        );
+        const album = this._readString(
+          readU32(dv, off + 48),
+          readU32(dv, off + 52)
+        );
+        const albumArtist = this._readString(
+          readU32(dv, off + 56),
+          readU32(dv, off + 60)
+        );
+        const genre = this._readString(
+          readU32(dv, off + 64),
+          readU32(dv, off + 68)
+        );
+        const thumbHashOff = readU32(dv, off + 72);
+        const thumbHashLen = readU16(dv, off + 76);
+        const thumbHash = thumbHashOff === 0 ? null : this._readString(thumbHashOff, thumbHashLen);
+        const track = {
+          id,
+          filePath,
+          fileName,
+          title,
+          artist,
+          album,
+          albumArtist,
+          genre,
+          year: readU16(dv, off + 78),
+          trackNumber: readU16(dv, off + 80),
+          discNumber: readU16(dv, off + 82),
+          duration: readF32(dv, off + 84),
+          bitrate: readU32(dv, off + 88),
+          sampleRate: readU32(dv, off + 92),
+          channels: readU8(dv, off + 96),
+          format: FORMAT_ENUM_REVERSE[readU8(dv, off + 97)] || "UNKNOWN",
+          _hasCoverArt: readU8(dv, off + 98) === 1,
+          _thumbHash: thumbHash,
+          fileSize: readU64(dv, off + 100),
+          dateAdded: readU64(dv, off + 108),
+          dateModified: readU64(dv, off + 116)
+        };
+        if (this._decodeCache.size >= this._decodeCacheMax) {
+          const firstKey = this._decodeCache.keys().next().value;
+          this._decodeCache.delete(firstKey);
+        }
+        this._decodeCache.set(recordIdx, track);
+        return track;
+      }
+      /**
+       * Decode a range of records. Use this to render the visible viewport.
+       * @param {number} start
+       * @param {number} count
+       * @param {string} [sortOrder]  one of SORT_ORDERS (default: physical order)
+       * @returns {Object[]}
+       */
+      getTracksRange(start, count, sortOrder) {
+        if (start < 0) start = 0;
+        if (start >= this.trackCount) return [];
+        if (count <= 0) return [];
+        if (start + count > this.trackCount) count = this.trackCount - start;
+        const out = new Array(count);
+        if (sortOrder && SORT_ORDERS.includes(sortOrder)) {
+          const order = this._getSortArray(sortOrder);
+          for (let i = 0; i < count; i++)
+            out[i] = this.getTrackAt(order[start + i]);
+        } else {
+          for (let i = 0; i < count; i++)
+            out[i] = this.getTrackAt(start + i);
+        }
+        return out;
+      }
+      /**
+       * Decode ALL tracks. Use sparingly — defeats the lazy-decode purpose.
+       * Mainly for compatibility with code paths that expect a flat array.
+       * @param {string} [sortOrder]
+       * @returns {Object[]}
+       */
+      getAllTracks(sortOrder) {
+        return this.getTracksRange(0, this.trackCount, sortOrder);
+      }
+      /**
+       * O(log n) lookup by id — records are sorted by id at write time.
+       * @param {string} id
+       * @returns {Object|null}
+       */
+      findById(id) {
+        if (!id || id.length !== 16) return null;
+        let lo = 0;
+        let hi = this.trackCount - 1;
+        while (lo <= hi) {
+          const mid = lo + hi >>> 1;
+          const midOff = this.recordsOff + mid * RECORD_SIZE;
+          let midId = "";
+          for (let i = 0; i < 16; i++)
+            midId += String.fromCharCode(this._bytes[midOff + i]);
+          if (midId === id) return this.getTrackAt(mid);
+          if (midId < id) lo = mid + 1;
+          else hi = mid - 1;
+        }
+        return null;
+      }
+      /**
+       * O(1) amortized lookup by filePath via the open-addressing hash table.
+       * @param {string} filePath
+       * @returns {Object|null}
+       */
+      findByFilePath(filePath) {
+        if (!filePath) return null;
+        const key = normalizePath(filePath);
+        const h = fnv1a(key);
+        const slotCount = this._hashSlotCount();
+        if (slotCount === 0) return null;
+        let slot = h & slotCount - 1;
+        const dv = this._dv;
+        for (let probe = 0; probe < slotCount; probe++) {
+          const slotOff = this.indexOff + slot * 4;
+          const recordIdx = readU32(dv, slotOff);
+          if (recordIdx === HASH_EMPTY) return null;
+          const recOff = this.recordsOff + recordIdx * RECORD_SIZE;
+          const fpOff = readU32(dv, recOff + 16);
+          const fpLen = readU32(dv, recOff + 20);
+          const candidate = normalizePath(this._readString(fpOff, fpLen));
+          if (candidate === key) return this.getTrackAt(recordIdx);
+          slot = slot + 1 & slotCount - 1;
+        }
+        return null;
+      }
+      _hashSlotCount() {
+        if (!this.indexOff) return 0;
+        if (this.sortOff) return Math.floor((this.sortOff - this.indexOff) / 4);
+        return Math.floor((this.totalSize - this.indexOff) / 4);
+      }
+      /**
+       * Get a pre-computed sort order as a Uint32Array of record indices.
+       * Returns null if sort orders aren't present in this manifest.
+       */
+      _getSortArray(name) {
+        if (!(this.flags & FLAG_HAS_SORT_ORDERS)) return null;
+        const cached = this._sortCache.get(name);
+        if (cached) return cached;
+        const idx = SORT_ORDERS.indexOf(name);
+        if (idx < 0) return null;
+        const arrOff = readU32(this._dv, this.sortOff + idx * 8);
+        const arrCount = readU32(this._dv, this.sortOff + idx * 8 + 4);
+        if (arrCount === 0 || arrOff === 0) return null;
+        const view = new Uint32Array(
+          this._bytes.buffer,
+          this._bytes.byteOffset + arrOff,
+          arrCount
+        );
+        this._sortCache.set(name, view);
+        return view;
+      }
+      /**
+       * Returns a sorted range — same as getTracksRange but uses a named
+       * sort order. If the manifest doesn't have sort orders, falls back
+       * to physical order (caller should re-sort if needed).
+       */
+      getSortedRange(name, start, count) {
+        return this.getTracksRange(start, count, name);
+      }
+      /**
+       * Returns the full sort order as a Uint32Array (zero-copy view).
+       * Useful when the renderer wants to do its own slicing.
+       */
+      getSortOrder(name) {
+        return this._getSortArray(name);
+      }
+      /**
+       * Returns the list of sort order names present in this manifest.
+       */
+      getAvailableSortOrders() {
+        if (!(this.flags & FLAG_HAS_SORT_ORDERS)) return [];
+        return SORT_ORDERS.filter((n) => this._getSortArray(n) !== null);
+      }
+      /**
+       * Drop the decode cache — call after the manifest is invalidated
+       * (e.g. background scan completed and the renderer fetched a new
+       * ArrayBuffer).
+       */
+      invalidateCache() {
+        this._decodeCache.clear();
+        this._sortCache.clear();
+      }
+    };
+    ManifestReader.MAGIC = MAGIC;
+    ManifestReader.VERSION = VERSION;
+    ManifestReader.HEADER_SIZE = HEADER_SIZE;
+    ManifestReader.RECORD_SIZE = RECORD_SIZE;
+    ManifestReader.HASH_EMPTY = HASH_EMPTY;
+    ManifestReader.FLAG_HAS_THUMBHASHES = FLAG_HAS_THUMBHASHES;
+    ManifestReader.FLAG_HAS_SORT_ORDERS = FLAG_HAS_SORT_ORDERS;
+    ManifestReader.FLAG_SEALED = FLAG_SEALED;
+    ManifestReader.FORMAT_ENUM = FORMAT_ENUM;
+    ManifestReader.SORT_ORDERS = SORT_ORDERS;
+    ManifestReader.crc32 = crc32;
+    ManifestReader.fnv1a = fnv1a;
+    ManifestReader.normalizePath = normalizePath;
+    module2.exports = ManifestReader;
+  }
+});
+
+// main/manifest.js
+var require_manifest = __commonJS({
+  "main/manifest.js"(exports2, module2) {
+    "use strict";
+    var fs = require("fs");
+    var path = require("path");
+    var ManifestReader = require_manifestReader();
+    var {
+      MAGIC,
+      VERSION,
+      HEADER_SIZE,
+      RECORD_SIZE,
+      HASH_EMPTY,
+      FLAG_HAS_THUMBHASHES,
+      FLAG_HAS_SORT_ORDERS,
+      FLAG_SEALED,
+      FORMAT_ENUM,
+      SORT_ORDERS,
+      crc32,
+      fnv1a,
+      normalizePath
+    } = ManifestReader;
+    function nextPow2(n) {
+      let p = 1;
+      while (p < n) p <<= 1;
+      return p;
+    }
+    function formatToEnum(formatStr) {
+      if (!formatStr) return 0;
+      const up = String(formatStr).toUpperCase();
+      return FORMAT_ENUM[up] || 0;
+    }
+    function normalizeId(id) {
+      if (!id) return "0000000000000000";
+      let s = String(id);
+      if (s.length > 16) s = s.substring(0, 16);
+      else if (s.length < 16) s = s.padEnd(16, "0");
+      return s;
+    }
+    var StringPool = class {
+      /**
+       * @param {number} baseOffset  Absolute offset in the file where the
+       *   string pool will be written (i.e. recordsOff + recordsBuf.length).
+       *   We need this because records reference strings by ABSOLUTE offset,
+       *   and the string pool's location isn't known until we've sized the
+       *   records section — which happens BEFORE we add strings.
+       *
+       * Workaround: compute baseOffset up front (it's deterministic:
+       *   HEADER_SIZE + trackCount * RECORD_SIZE) and pass it in.
+       */
+      constructor(baseOffset) {
+        this.baseOffset = baseOffset;
+        this.chunks = [];
+        this.totalLen = 0;
+        this.dedup = /* @__PURE__ */ new Map();
+      }
+      /**
+       * Add a string and return its (offset, length).
+       * Empty strings get offset 0 length 0 (we never legitimately point
+       * at byte 0 of the file because the header sits there; readers
+       * interpret offset 0 length 0 as "empty" — and for thumbhash,
+       * offset 0 means "no thumbhash").
+       */
+      add(str) {
+        if (!str) return { off: 0, len: 0 };
+        const s = String(str);
+        const cached = this.dedup.get(s);
+        if (cached) return cached;
+        const off = this.baseOffset + this.totalLen;
+        const buf = Buffer.from(s, "utf8");
+        const len = buf.length;
+        this.chunks.push(buf);
+        this.totalLen += len;
+        const entry = { off, len };
+        this.dedup.set(s, entry);
+        return entry;
+      }
+      toBuffer() {
+        if (this.chunks.length === 0) return Buffer.alloc(0);
+        return Buffer.concat(this.chunks, this.totalLen);
+      }
+    };
+    var ManifestWriter = class _ManifestWriter {
+      /**
+       * Build the manifest Buffer from an array of track objects.
+       * Does NOT write to disk — caller can use writeManifest() for that.
+       *
+       * @param {Object[]} tracks  Array of track objects (same shape as SQLite rows)
+       * @param {Object}  [opts]
+       * @param {string}  [opts.folderFingerprint]  Folder fingerprint string (hash is stored)
+       * @returns {Buffer}
+       */
+      static build(tracks, opts = {}) {
+        const trackCount = tracks.length;
+        const recordsOff = HEADER_SIZE;
+        const stringsBaseOffset = recordsOff + trackCount * RECORD_SIZE;
+        const pool = new StringPool(stringsBaseOffset);
+        const sorted = tracks.slice().sort((a, b) => {
+          const ai = normalizeId(a.id);
+          const bi = normalizeId(b.id);
+          return ai < bi ? -1 : ai > bi ? 1 : 0;
+        });
+        const recordsBuf = Buffer.alloc(trackCount * RECORD_SIZE);
+        let hasThumbhashes = false;
+        for (let i = 0; i < trackCount; i++) {
+          const t = sorted[i];
+          const off = i * RECORD_SIZE;
+          const id = normalizeId(t.id);
+          recordsBuf.write(id, off, 16, "ascii");
+          const fp = pool.add(t.filePath || "");
+          recordsBuf.writeUInt32LE(fp.off, off + 16);
+          recordsBuf.writeUInt32LE(fp.len, off + 20);
+          const fn = pool.add(t.fileName || "");
+          recordsBuf.writeUInt32LE(fn.off, off + 24);
+          recordsBuf.writeUInt32LE(fn.len, off + 28);
+          const ti = pool.add(t.title || "");
+          recordsBuf.writeUInt32LE(ti.off, off + 32);
+          recordsBuf.writeUInt32LE(ti.len, off + 36);
+          const ar = pool.add(t.artist || "");
+          recordsBuf.writeUInt32LE(ar.off, off + 40);
+          recordsBuf.writeUInt32LE(ar.len, off + 44);
+          const al = pool.add(t.album || "");
+          recordsBuf.writeUInt32LE(al.off, off + 48);
+          recordsBuf.writeUInt32LE(al.len, off + 52);
+          const aa = pool.add(t.albumArtist || "");
+          recordsBuf.writeUInt32LE(aa.off, off + 56);
+          recordsBuf.writeUInt32LE(aa.len, off + 60);
+          const ge = pool.add(t.genre || "");
+          recordsBuf.writeUInt32LE(ge.off, off + 64);
+          recordsBuf.writeUInt32LE(ge.len, off + 68);
+          if (t._thumbHash) {
+            const th = pool.add(t._thumbHash);
+            recordsBuf.writeUInt32LE(th.off, off + 72);
+            recordsBuf.writeUInt16LE(Math.min(th.len, 65535), off + 76);
+            hasThumbhashes = true;
+          } else {
+            recordsBuf.writeUInt32LE(0, off + 72);
+            recordsBuf.writeUInt16LE(0, off + 76);
+          }
+          recordsBuf.writeUInt16LE(Math.min(t.year || 0, 65535), off + 78);
+          recordsBuf.writeUInt16LE(
+            Math.min(t.trackNumber || 0, 65535),
+            off + 80
+          );
+          recordsBuf.writeUInt16LE(
+            Math.min(t.discNumber || 0, 65535),
+            off + 82
+          );
+          recordsBuf.writeFloatLE(Number(t.duration) || 0, off + 84);
+          recordsBuf.writeUInt32LE(
+            Math.min(t.bitrate || 0, 4294967295),
+            off + 88
+          );
+          recordsBuf.writeUInt32LE(
+            Math.min(t.sampleRate || 0, 4294967295),
+            off + 92
+          );
+          recordsBuf.writeUInt8(Math.min(t.channels || 2, 255), off + 96);
+          recordsBuf.writeUInt8(formatToEnum(t.format), off + 97);
+          recordsBuf.writeUInt8(t._hasCoverArt ? 1 : 0, off + 98);
+          recordsBuf.writeUInt8(0, off + 99);
+          writeU64LE(recordsBuf, off + 100, Math.min(t.fileSize || 0, Number.MAX_SAFE_INTEGER));
+          writeU64LE(recordsBuf, off + 108, Math.min(t.dateAdded || 0, Number.MAX_SAFE_INTEGER));
+          writeU64LE(recordsBuf, off + 116, Math.min(t.dateModified || 0, Number.MAX_SAFE_INTEGER));
+        }
+        const slotCount = trackCount === 0 ? 16 : nextPow2(trackCount * 2);
+        const slotMask = slotCount - 1;
+        const indexBuf = Buffer.alloc(slotCount * 4, 255);
+        for (let i = 0; i < trackCount; i++) {
+          const t = sorted[i];
+          const key = normalizePath(t.filePath || t.id || String(i));
+          let slot = fnv1a(key) & slotMask;
+          while (indexBuf.readUInt32LE(slot * 4) !== HASH_EMPTY)
+            slot = slot + 1 & slotMask;
+          indexBuf.writeUInt32LE(i, slot * 4);
+        }
+        const sortTitleAsc = buildSortIndices(
+          sorted,
+          (a, b) => {
+            const ta = (a.title || "").toLowerCase();
+            const tb = (b.title || "").toLowerCase();
+            return ta < tb ? -1 : ta > tb ? 1 : 0;
+          }
+        );
+        const sortDateAddedDesc = buildSortIndices(
+          sorted,
+          (a, b) => {
+            const da = a.dateAdded || 0;
+            const db = b.dateAdded || 0;
+            if (db !== da) return db - da;
+            const ta = (a.title || "").toLowerCase();
+            const tb = (b.title || "").toLowerCase();
+            return ta < tb ? -1 : ta > tb ? 1 : 0;
+          }
+        );
+        const sortAlbumAsc = buildSortIndices(
+          sorted,
+          (a, b) => {
+            const aa = (a.album || "").toLowerCase();
+            const bb = (b.album || "").toLowerCase();
+            if (aa !== bb) return aa < bb ? -1 : 1;
+            const da = a.discNumber || 0;
+            const db = b.discNumber || 0;
+            if (da !== db) return da - db;
+            return (a.trackNumber || 0) - (b.trackNumber || 0);
+          }
+        );
+        const sortArtistAsc = buildSortIndices(
+          sorted,
+          (a, b) => {
+            const aa = (a.artist || "").toLowerCase();
+            const bb = (b.artist || "").toLowerCase();
+            if (aa !== bb) return aa < bb ? -1 : 1;
+            const la = (a.album || "").toLowerCase();
+            const lb = (b.album || "").toLowerCase();
+            if (la !== lb) return la < lb ? -1 : 1;
+            const da = a.discNumber || 0;
+            const db = b.discNumber || 0;
+            if (da !== db) return da - db;
+            return (a.trackNumber || 0) - (b.trackNumber || 0);
+          }
+        );
+        const stringsOffPrecomputed = recordsOff + recordsBuf.length;
+        const indexOffPrecomputed = stringsOffPrecomputed + pool.totalLen;
+        const sortOffPrecomputed = indexOffPrecomputed + indexBuf.length;
+        const sortArraysStart = sortOffPrecomputed + 32;
+        const sortHeaderBuf = Buffer.alloc(32);
+        const sortArrays = [sortTitleAsc, sortDateAddedDesc, sortAlbumAsc, sortArtistAsc];
+        const sortArraysBuf = Buffer.alloc(trackCount * 4 * 4);
+        for (let i = 0; i < 4; i++) {
+          const absOff = sortArraysStart + i * trackCount * 4;
+          sortHeaderBuf.writeUInt32LE(absOff, i * 8);
+          sortHeaderBuf.writeUInt32LE(trackCount, i * 8 + 4);
+          for (let j = 0; j < trackCount; j++)
+            sortArraysBuf.writeUInt32LE(sortArrays[i][j], i * trackCount * 4 + j * 4);
+        }
+        const headerBuf = Buffer.alloc(HEADER_SIZE, 0);
+        const stringsPadding = (4 - pool.totalLen % 4) % 4;
+        const stringsBuf = pool.totalLen === 0 ? Buffer.alloc(0) : Buffer.concat([pool.toBuffer(), Buffer.alloc(stringsPadding)]);
+        const stringsOff = stringsOffPrecomputed;
+        const indexOff = indexOffPrecomputed + stringsPadding;
+        const sortOff = sortOffPrecomputed + stringsPadding;
+        for (let i = 0; i < 4; i++) {
+          const oldOff = sortHeaderBuf.readUInt32LE(i * 8);
+          sortHeaderBuf.writeUInt32LE(oldOff + stringsPadding, i * 8);
+        }
+        const totalSize = sortOff + sortHeaderBuf.length + sortArraysBuf.length;
+        const fpHash = opts.folderFingerprint ? fnv1a(String(opts.folderFingerprint)) : 0;
+        let flags = 0;
+        if (hasThumbhashes) flags |= FLAG_HAS_THUMBHASHES;
+        flags |= FLAG_HAS_SORT_ORDERS;
+        headerBuf.write(MAGIC, 0, 8, "ascii");
+        headerBuf.writeUInt16LE(VERSION, 8);
+        headerBuf.writeUInt16LE(flags, 10);
+        writeU64LE(headerBuf, 12, Date.now());
+        headerBuf.writeUInt32LE(trackCount, 20);
+        headerBuf.writeUInt32LE(fpHash, 24);
+        headerBuf.writeUInt32LE(recordsOff, 28);
+        headerBuf.writeUInt32LE(stringsOff, 32);
+        headerBuf.writeUInt32LE(indexOff, 36);
+        headerBuf.writeUInt32LE(sortOff, 40);
+        headerBuf.writeUInt32LE(totalSize, 44);
+        const file = Buffer.concat(
+          [headerBuf, recordsBuf, stringsBuf, indexBuf, sortHeaderBuf, sortArraysBuf],
+          totalSize
+        );
+        const finalFlags = flags | FLAG_SEALED;
+        file.writeUInt16LE(finalFlags, 10);
+        const crc = crc32(file, 0, 60);
+        file.writeUInt32LE(crc, 60);
+        return file;
+      }
+      /**
+       * Write the manifest atomically (temp file + rename).
+       *
+       * @param {string} filePath  Target path (e.g. .../userData/library.bin)
+       * @param {Object[]} tracks
+       * @param {Object} [opts]
+       * @param {string} [opts.folderFingerprint]
+       * @returns {Promise<{ size:number, trackCount:number, ms:number }>}
+       */
+      static async write(filePath, tracks, opts = {}) {
+        const start = Date.now();
+        const buf = _ManifestWriter.build(tracks, opts);
+        const tmpPath = filePath + ".tmp." + process.pid;
+        await fs.promises.writeFile(tmpPath, buf);
+        try {
+          await fs.promises.rename(tmpPath, filePath);
+        } catch (err) {
+          try {
+            await fs.promises.unlink(filePath);
+          } catch (_) {
+          }
+          await fs.promises.rename(tmpPath, filePath);
+        }
+        return {
+          size: buf.length,
+          trackCount: tracks.length,
+          ms: Date.now() - start
+        };
+      }
+      /**
+       * Synchronous version for cases where the caller is already on a
+       * worker thread or explicitly wants to block (e.g. during app quit).
+       */
+      static writeSync(filePath, tracks, opts = {}) {
+        const start = Date.now();
+        const buf = _ManifestWriter.build(tracks, opts);
+        const tmpPath = filePath + ".tmp." + process.pid;
+        fs.writeFileSync(tmpPath, buf);
+        try {
+          fs.renameSync(tmpPath, filePath);
+        } catch (err) {
+          try {
+            fs.unlinkSync(filePath);
+          } catch (_) {
+          }
+          fs.renameSync(tmpPath, filePath);
+        }
+        return {
+          size: buf.length,
+          trackCount: tracks.length,
+          ms: Date.now() - start
+        };
+      }
+    };
+    function writeU64LE(buf, offset, value) {
+      const v = Math.max(0, Math.min(value, Number.MAX_SAFE_INTEGER));
+      const lo = v >>> 0;
+      const hi = Math.floor(v / 4294967296) >>> 0;
+      buf.writeUInt32LE(lo, offset);
+      buf.writeUInt32LE(hi, offset + 4);
+    }
+    function buildSortIndices(records, comparator) {
+      const n = records.length;
+      const indices = new Uint32Array(n);
+      for (let i = 0; i < n; i++) indices[i] = i;
+      const tmp = Array.from(indices);
+      tmp.sort((a, b) => comparator(records[a], records[b]));
+      for (let i = 0; i < n; i++) indices[i] = tmp[i];
+      return indices;
+    }
+    module2.exports = ManifestWriter;
+  }
+});
+
+// main/manifestIPC.js
+var require_manifestIPC = __commonJS({
+  "main/manifestIPC.js"(exports2, module2) {
+    "use strict";
+    var { ipcMain, app } = require("electron");
+    var fs = require("fs");
+    var path = require("path");
+    var ManifestWriter = require_manifest();
+    var ManifestReader = require_manifestReader();
+    var _manifestPath = null;
+    var _manifestBuf = null;
+    var _manifestInfo = null;
+    var _lastRebuildAt = 0;
+    var _featureFlagEnabled = true;
+    function setFeatureFlag(enabled) {
+      _featureFlagEnabled = !!enabled;
+    }
+    function isFeatureFlagEnabled() {
+      return _featureFlagEnabled;
+    }
+    function _resolvePath() {
+      if (_manifestPath) return _manifestPath;
+      const dataDir = app.getPath("userData");
+      _manifestPath = path.join(dataDir, "library.bin");
+      return _manifestPath;
+    }
+    function _loadBuffer() {
+      const p = _resolvePath();
+      try {
+        if (!fs.existsSync(p)) return null;
+        const buf = fs.readFileSync(p);
+        const reader = new ManifestReader(buf);
+        if (!reader.valid) {
+          console.warn("[manifest] cached file failed validation:", reader.error);
+          return null;
+        }
+        _manifestBuf = buf;
+        _manifestInfo = reader.headerInfo;
+        _manifestInfo.size = buf.length;
+        _manifestInfo.ms = 0;
+        return buf;
+      } catch (err) {
+        console.warn("[manifest] load failed:", err.message);
+        return null;
+      }
+    }
+    function getManifestInfo() {
+      if (!_manifestBuf) _loadBuffer();
+      if (!_manifestBuf) {
+        return { available: false, reason: "missing-or-corrupt" };
+      }
+      return {
+        available: true,
+        path: _manifestPath,
+        ..._manifestInfo
+      };
+    }
+    function getManifestArrayBuffer() {
+      if (!_manifestBuf) _loadBuffer();
+      if (!_manifestBuf) return null;
+      return _manifestBuf.buffer.slice(
+        _manifestBuf.byteOffset,
+        _manifestBuf.byteOffset + _manifestBuf.byteLength
+      );
+    }
+    async function rebuildManifest(tracks, folderFingerprint) {
+      const p = _resolvePath();
+      try {
+        const result = await ManifestWriter.write(p, tracks || [], {
+          folderFingerprint
+        });
+        _manifestBuf = null;
+        _manifestInfo = null;
+        _lastRebuildAt = Date.now();
+        console.log(
+          `[manifest] rebuilt: ${result.trackCount} tracks, ${result.size} bytes, ${result.ms}ms`
+        );
+        return { ok: true, ...result };
+      } catch (err) {
+        console.error("[manifest] rebuild failed:", err.message);
+        return { ok: false, error: err.message, ms: 0, size: 0, trackCount: 0 };
+      }
+    }
+    function rebuildManifestSync(tracks, folderFingerprint) {
+      const p = _resolvePath();
+      try {
+        const result = ManifestWriter.writeSync(p, tracks || [], {
+          folderFingerprint
+        });
+        _manifestBuf = null;
+        _manifestInfo = null;
+        _lastRebuildAt = Date.now();
+        return { ok: true, ...result };
+      } catch (err) {
+        console.error("[manifest] sync rebuild failed:", err.message);
+        return { ok: false, error: err.message };
+      }
+    }
+    function invalidateCache() {
+      _manifestBuf = null;
+      _manifestInfo = null;
+    }
+    function deleteManifest() {
+      const p = _resolvePath();
+      _manifestBuf = null;
+      _manifestInfo = null;
+      try {
+        if (fs.existsSync(p)) fs.unlinkSync(p);
+        return true;
+      } catch (err) {
+        console.warn("[manifest] delete failed:", err.message);
+        return false;
+      }
+    }
+    function registerManifestIPC() {
+      ipcMain.handle("library:get-manifest-info", async () => {
+        if (!_featureFlagEnabled) {
+          return { available: false, reason: "feature-disabled" };
+        }
+        return getManifestInfo();
+      });
+      ipcMain.handle(
+        "library:get-manifest-buffer",
+        async (event, { transfer } = {}) => {
+          if (!_featureFlagEnabled) {
+            return { success: false, reason: "feature-disabled" };
+          }
+          const ab = getManifestArrayBuffer();
+          if (!ab) {
+            return { success: false, reason: "missing-or-corrupt" };
+          }
+          if (transfer === false) {
+            return { success: true, buffer: ab };
+          }
+          return { success: true, buffer: ab };
+        }
+      );
+      ipcMain.handle("library:rebuild-manifest", async (event, opts = {}) => {
+        let tracks = opts.tracks;
+        if (!tracks) {
+          try {
+            const ipcModule = require_ipc();
+            if (typeof ipcModule.getLibraryForManifest === "function") {
+              tracks = ipcModule.getLibraryForManifest();
+            }
+          } catch (err) {
+            console.warn("[manifest] rebuild: could not get library:", err.message);
+            return { ok: false, error: "library-unavailable" };
+          }
+        }
+        if (!tracks) {
+          return { ok: false, error: "library-empty" };
+        }
+        return rebuildManifest(tracks, opts.folderFingerprint);
+      });
+    }
+    module2.exports = {
+      registerManifestIPC,
+      setFeatureFlag,
+      isFeatureFlagEnabled,
+      getManifestInfo,
+      getManifestArrayBuffer,
+      rebuildManifest,
+      rebuildManifestSync,
+      invalidateCache,
+      deleteManifest
+    };
+  }
+});
+
 // package.json
 var require_package = __commonJS({
   "package.json"(exports2, module2) {
     module2.exports = {
       name: "novatune",
-      version: "1.0.6",
+      version: "1.0.7",
       description: "NovaTune \u2014 A premium Windows music player with Spotify-dark aesthetics",
       main: "main/main.bundle.js",
       scripts: {
@@ -1485,6 +2427,10 @@ var require_ipc = __commonJS({
     var FileScanner = require_fileScanner();
     var MetadataReader = require_metadataReader();
     var MetadataWorker = require_metadataWorker();
+    var { ensureDirSync } = require_windowManager();
+    var ManifestWriter = require_manifest();
+    var ManifestIPC = require_manifestIPC();
+    var ManifestReader = require_manifestReader();
     var SUPPORTED_FORMATS = [
       ".mp3",
       ".flac",
@@ -1911,7 +2857,14 @@ var require_ipc = __commonJS({
       SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
       DB_FILE = path.join(DATA_DIR, "novatune.sqlite");
       [DATA_DIR, PLAYLISTS_DIR].forEach((dir) => {
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        try {
+          ensureDirSync(dir);
+        } catch (err) {
+          console.error(
+            `[FATAL] Could not create required directory ${dir}:`,
+            err.message
+          );
+        }
       });
       metadataReader.setCoverCacheDir(path.join(DATA_DIR, "cached_covers"));
       let Database;
@@ -1933,6 +2886,86 @@ var require_ipc = __commonJS({
       db.exec(DB_SCHEMA);
       migrateJsonToDb();
       migrateDbCovers();
+      let manifestEnabled = true;
+      if (process.env.NOVATUNE_USE_MANIFEST === "0" || process.env.NOVATUNE_USE_MANIFEST === "false") {
+        manifestEnabled = false;
+      } else if (process.env.NOVATUNE_USE_MANIFEST === "1" || process.env.NOVATUNE_USE_MANIFEST === "true") {
+        manifestEnabled = true;
+      } else {
+        try {
+          const settingsForFlag = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+          if (settingsForFlag._useManifest === false) manifestEnabled = false;
+        } catch (_) {
+        }
+      }
+      ManifestIPC.setFeatureFlag(manifestEnabled);
+      console.log(`[manifest] feature flag: ${manifestEnabled ? "ON" : "OFF"}`);
+      ManifestIPC.registerManifestIPC();
+      if (manifestEnabled) {
+        setImmediate(async () => {
+          try {
+            const info = ManifestIPC.getManifestInfo();
+            if (!info.available) {
+              console.log(
+                "[manifest] missing on startup \u2014 building from SQLite library..."
+              );
+              const library = getLibrary();
+              if (library && library.length > 0) {
+                const settings = readJSON(SETTINGS_FILE, {
+                  ...DEFAULT_SETTINGS
+                });
+                const existingFp = settings._combinedFingerprint || "";
+                const result = await ManifestIPC.rebuildManifest(
+                  library,
+                  existingFp
+                );
+                if (result.ok) {
+                  console.log(
+                    `[manifest] built on startup: ${result.trackCount} tracks, ${result.size} bytes, ${result.ms}ms`
+                  );
+                  const scanFolders = Array.isArray(settings.scanFolders) ? settings.scanFolders : [];
+                  if (scanFolders.length > 0 && !existingFp) {
+                    console.log(
+                      "[manifest] computing folder fingerprints in background..."
+                    );
+                    try {
+                      const fps = {};
+                      for (const folder of scanFolders) {
+                        const fp = await _computeFolderFingerprint([folder]);
+                        fps[folder] = fp;
+                      }
+                      const combined = Object.keys(fps).sort().map((k) => `${k}=${fps[k]}`).join("|");
+                      const freshSettings = readJSON(SETTINGS_FILE, {
+                        ...DEFAULT_SETTINGS
+                      });
+                      freshSettings._scanFingerprints = fps;
+                      freshSettings._combinedFingerprint = combined;
+                      writeJSON(SETTINGS_FILE, freshSettings);
+                      console.log(
+                        "[manifest] fingerprints persisted \u2014 next launch will skip fingerprint check"
+                      );
+                      await ManifestIPC.rebuildManifest(library, combined);
+                    } catch (fpErr) {
+                      console.warn(
+                        "[manifest] fingerprint computation failed:",
+                        fpErr.message
+                      );
+                    }
+                  }
+                }
+              } else {
+                console.log("[manifest] library is empty \u2014 skipping build");
+              }
+            } else {
+              console.log(
+                `[manifest] already exists: ${info.trackCount} tracks, v${info.version}`
+              );
+            }
+          } catch (err) {
+            console.warn("[manifest] startup build failed:", err.message);
+          }
+        });
+      }
       ipcMain.handle("library:scan", async (event, folderPath) => {
         try {
           console.log(`[library:scan] Scanning folder: ${folderPath}`);
@@ -2202,13 +3235,35 @@ var require_ipc = __commonJS({
             elapsed,
             message: `Done! Checked ${tracks.length} tracks (${skippedCount} from cache) in ${elapsed}s`
           });
+          let latestFingerprint = null;
           try {
             const fp = await _computeFolderFingerprint([folderPath]);
+            latestFingerprint = fp;
             const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
             settings._scanFingerprints = settings._scanFingerprints || {};
             settings._scanFingerprints[folderPath] = fp;
+            const allFps = settings._scanFingerprints;
+            const combined = Object.keys(allFps).sort().map((k) => `${k}=${allFps[k]}`).join("|");
+            settings._combinedFingerprint = combined;
             writeJSON(SETTINGS_FILE, settings);
           } catch (_) {
+          }
+          if (ManifestIPC.isFeatureFlagEnabled()) {
+            const rebuildStart = Date.now();
+            setImmediate(async () => {
+              try {
+                const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+                const fp = settings._combinedFingerprint || "";
+                const result = await ManifestIPC.rebuildManifest(mergedLibrary, fp);
+                if (result.ok) {
+                  console.log(
+                    `[manifest] rebuilt after scan in ${Date.now() - rebuildStart}ms (${result.trackCount} tracks, ${result.size} bytes)`
+                  );
+                }
+              } catch (err) {
+                console.warn("[manifest] post-scan rebuild failed:", err.message);
+              }
+            });
           }
           return { success: true, tracks: mergedLibrary, newTracks: tracks.length };
         } catch (err) {
@@ -2540,6 +3595,10 @@ var require_ipc = __commonJS({
       ipcMain.handle("library:clear", async () => {
         try {
           saveLibrary([]);
+          try {
+            ManifestIPC.deleteManifest();
+          } catch (_) {
+          }
           return { success: true };
         } catch (err) {
           return { success: false, error: err.message };
@@ -3133,6 +4192,19 @@ var require_ipc = __commonJS({
         for (const key of Object.keys(DEFAULT_SETTINGS)) {
           if (settings[key] === void 0) {
             settings[key] = DEFAULT_SETTINGS[key];
+          }
+        }
+        if (Array.isArray(settings.scanFolders) && settings.scanFolders.length) {
+          const stillValid = settings.scanFolders.filter((f) => {
+            try {
+              return fs.existsSync(f);
+            } catch (_) {
+              return false;
+            }
+          });
+          if (stillValid.length !== settings.scanFolders.length) {
+            settings.scanFolders = stillValid;
+            writeJSON(SETTINGS_FILE, settings);
           }
         }
         return { success: true, settings };
@@ -3981,6 +5053,13 @@ ${items}
     }
     module2.exports = registerIPCHandlers;
     module2.exports.setSMTCBridge = setSMTCBridge;
+    module2.exports.getLibraryForManifest = function() {
+      try {
+        return getLibrary();
+      } catch (_) {
+        return null;
+      }
+    };
     var _coverArtByIdCache = /* @__PURE__ */ new Map();
     function getCoverArtByTrackId(trackId) {
       const cached = _coverArtByIdCache.get(trackId);
@@ -4413,6 +5492,23 @@ var require_main = __commonJS({
       protocol,
       net
     } = require("electron");
+    var os = require("os");
+    var fsSafety = require("fs");
+    var pathSafety = require("path");
+    var _crashLogPath = pathSafety.join(os.tmpdir(), "novatune-crash.log");
+    function _logFatal(label, err) {
+      try {
+        fsSafety.appendFileSync(
+          _crashLogPath,
+          `[${(/* @__PURE__ */ new Date()).toISOString()}] ${label}: ${err && err.stack ? err.stack : err}
+`
+        );
+      } catch (_) {
+      }
+      console.error(label, err);
+    }
+    process.on("uncaughtException", (err) => _logFatal("uncaughtException", err));
+    process.on("unhandledRejection", (err) => _logFatal("unhandledRejection", err));
     try {
       require_v8_compile_cache();
     } catch (err) {
@@ -4521,7 +5617,7 @@ var require_main = __commonJS({
       const { x, y, width, height, isMaximized } = windowState.getState();
       let initAccentColor = "#1ed760";
       try {
-        const dataDir = isDev ? path.join(__dirname, "..", "data") : app.getPath("userData");
+        const dataDir = isDev ? path.join(__dirname, "..", "data") : WindowStateManager.DATA_DIR || app.getPath("userData");
         const settingsPath = path.join(dataDir, "settings.json");
         if (fs.existsSync(settingsPath)) {
           const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
@@ -4683,9 +5779,17 @@ var require_main = __commonJS({
       }
     }
     app.whenReady().then(() => {
-      Menu.setApplicationMenu(null);
-      if (process.platform === "win32") {
-        app.setAppUserModelId("com.novatune.player");
+      try {
+        Menu.setApplicationMenu(null);
+      } catch (err) {
+        _logFatal("Menu.setApplicationMenu failed", err);
+      }
+      try {
+        if (process.platform === "win32") {
+          app.setAppUserModelId("com.novatune.player");
+        }
+      } catch (err) {
+        _logFatal("setAppUserModelId failed", err);
       }
       try {
         ({ autoUpdater } = require("electron-updater"));
@@ -4694,48 +5798,78 @@ var require_main = __commonJS({
           "[autoUpdater] electron-updater not installed \u2014 OTA updates disabled."
         );
       }
-      protocol.handle("nova-media", async (request) => {
-        try {
-          const url = request.url;
-          const _corsHeaders = {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET",
-            "Access-Control-Allow-Headers": "Range"
-          };
-          if (url.startsWith("nova-media://art/")) {
-            const trackId = decodeURIComponent(
-              url.slice("nova-media://art/".length).split("?")[0]
-            );
-            const cached = _protocolCache.get(trackId);
-            if (cached) {
-              _protocolCache.delete(trackId);
-              _protocolCache.set(trackId, cached);
-              return new Response(cached.buffer, {
-                status: 200,
-                headers: {
-                  ..._corsHeaders,
-                  "Content-Type": cached.mimeType,
-                  "Cache-Control": "public, max-age=31536000, immutable",
-                  "Content-Length": String(cached.buffer.length)
+      try {
+        protocol.handle("nova-media", async (request) => {
+          try {
+            const url = request.url;
+            const _corsHeaders = {
+              "Access-Control-Allow-Origin": "*",
+              "Access-Control-Allow-Methods": "GET",
+              "Access-Control-Allow-Headers": "Range"
+            };
+            if (url.startsWith("nova-media://art/")) {
+              const trackId = decodeURIComponent(
+                url.slice("nova-media://art/".length).split("?")[0]
+              );
+              const cached = _protocolCache.get(trackId);
+              if (cached) {
+                _protocolCache.delete(trackId);
+                _protocolCache.set(trackId, cached);
+                return new Response(cached.buffer, {
+                  status: 200,
+                  headers: {
+                    ..._corsHeaders,
+                    "Content-Type": cached.mimeType,
+                    "Cache-Control": "public, max-age=31536000, immutable",
+                    "Content-Length": String(cached.buffer.length)
+                  }
+                });
+              }
+              const coverArt = registerIPCHandlers.getCoverArtByTrackId(trackId);
+              if (!coverArt) {
+                return new Response("No cover art", {
+                  status: 404,
+                  headers: {
+                    ..._corsHeaders,
+                    "Content-Type": "text/plain",
+                    "Cache-Control": "no-store"
+                  }
+                });
+              }
+              if (coverArt.startsWith("data:")) {
+                const matches = coverArt.match(/^data:([^;]+);base64,(.+)$/);
+                if (matches) {
+                  const mimeType = matches[1] || "image/jpeg";
+                  const buffer = Buffer.from(matches[2], "base64");
+                  if (_protocolCache.size >= PROTOCOL_CACHE_MAX) {
+                    const firstKey = _protocolCache.keys().next().value;
+                    _protocolCache.delete(firstKey);
+                  }
+                  _protocolCache.set(trackId, { buffer, mimeType });
+                  return new Response(buffer, {
+                    status: 200,
+                    headers: {
+                      ..._corsHeaders,
+                      "Content-Type": mimeType,
+                      "Cache-Control": "public, max-age=31536000, immutable",
+                      "Content-Length": String(buffer.length)
+                    }
+                  });
                 }
-              });
-            }
-            const coverArt = registerIPCHandlers.getCoverArtByTrackId(trackId);
-            if (!coverArt) {
-              return new Response("No cover art", {
-                status: 404,
-                headers: {
-                  ..._corsHeaders,
-                  "Content-Type": "text/plain",
-                  "Cache-Control": "no-store"
-                }
-              });
-            }
-            if (coverArt.startsWith("data:")) {
-              const matches = coverArt.match(/^data:([^;]+);base64,(.+)$/);
-              if (matches) {
-                const mimeType = matches[1] || "image/jpeg";
-                const buffer = Buffer.from(matches[2], "base64");
+              }
+              if (fs.existsSync(coverArt)) {
+                const ext = path.extname(coverArt).toLowerCase();
+                const mimeMap = {
+                  ".webp": "image/webp",
+                  ".png": "image/png",
+                  ".jpg": "image/jpeg",
+                  ".jpeg": "image/jpeg",
+                  ".gif": "image/gif",
+                  ".bmp": "image/bmp",
+                  ".avif": "image/avif"
+                };
+                const mimeType = mimeMap[ext] || "image/webp";
+                const buffer = fs.readFileSync(coverArt);
                 if (_protocolCache.size >= PROTOCOL_CACHE_MAX) {
                   const firstKey = _protocolCache.keys().next().value;
                   _protocolCache.delete(firstKey);
@@ -4751,75 +5885,27 @@ var require_main = __commonJS({
                   }
                 });
               }
-            }
-            if (fs.existsSync(coverArt)) {
-              const ext = path.extname(coverArt).toLowerCase();
-              const mimeMap = {
-                ".webp": "image/webp",
-                ".png": "image/png",
-                ".jpg": "image/jpeg",
-                ".jpeg": "image/jpeg",
-                ".gif": "image/gif",
-                ".bmp": "image/bmp",
-                ".avif": "image/avif"
-              };
-              const mimeType = mimeMap[ext] || "image/webp";
-              const buffer = fs.readFileSync(coverArt);
-              if (_protocolCache.size >= PROTOCOL_CACHE_MAX) {
-                const firstKey = _protocolCache.keys().next().value;
-                _protocolCache.delete(firstKey);
-              }
-              _protocolCache.set(trackId, { buffer, mimeType });
-              return new Response(buffer, {
-                status: 200,
+              return new Response("Cover art file not found", {
+                status: 404,
                 headers: {
                   ..._corsHeaders,
-                  "Content-Type": mimeType,
-                  "Cache-Control": "public, max-age=31536000, immutable",
-                  "Content-Length": String(buffer.length)
+                  "Content-Type": "text/plain",
+                  "Cache-Control": "no-store"
                 }
               });
             }
-            return new Response("Cover art file not found", {
-              status: 404,
-              headers: {
-                ..._corsHeaders,
-                "Content-Type": "text/plain",
-                "Cache-Control": "no-store"
-              }
-            });
-          }
-          if (url.startsWith("nova-media://thumb/")) {
-            const parts = url.slice("nova-media://thumb/".length).split("/");
-            const trackId = parts[0];
-            const size = parts[1] || "48";
-            const thumbDir = path.join(
-              app.getPath("userData"),
-              "cached_covers",
-              "thumbs"
-            );
-            if (!fs.existsSync(thumbDir))
-              fs.mkdirSync(thumbDir, { recursive: true });
-            const thumbFile = path.join(thumbDir, `${trackId}_${size}.webp`);
-            if (fs.existsSync(thumbFile)) {
-              const stat = fs.statSync(thumbFile);
-              const buffer = fs.readFileSync(thumbFile);
-              return new Response(buffer, {
-                status: 200,
-                headers: {
-                  ..._corsHeaders,
-                  "Content-Type": "image/webp",
-                  "Cache-Control": "public, max-age=31536000, immutable",
-                  "Content-Length": String(stat.size)
-                }
-              });
-            }
-            const genKey = `thumbGen::${trackId}::${size}`;
-            if (_thumbGenInFlight.has(genKey)) {
-              try {
-                await _thumbGenInFlight.get(genKey);
-              } catch (_) {
-              }
+            if (url.startsWith("nova-media://thumb/")) {
+              const parts = url.slice("nova-media://thumb/".length).split("/");
+              const trackId = parts[0];
+              const size = parts[1] || "48";
+              const thumbDir = path.join(
+                app.getPath("userData"),
+                "cached_covers",
+                "thumbs"
+              );
+              if (!fs.existsSync(thumbDir))
+                fs.mkdirSync(thumbDir, { recursive: true });
+              const thumbFile = path.join(thumbDir, `${trackId}_${size}.webp`);
               if (fs.existsSync(thumbFile)) {
                 const stat = fs.statSync(thumbFile);
                 const buffer = fs.readFileSync(thumbFile);
@@ -4833,6 +5919,80 @@ var require_main = __commonJS({
                   }
                 });
               }
+              const genKey = `thumbGen::${trackId}::${size}`;
+              if (_thumbGenInFlight.has(genKey)) {
+                try {
+                  await _thumbGenInFlight.get(genKey);
+                } catch (_) {
+                }
+                if (fs.existsSync(thumbFile)) {
+                  const stat = fs.statSync(thumbFile);
+                  const buffer = fs.readFileSync(thumbFile);
+                  return new Response(buffer, {
+                    status: 200,
+                    headers: {
+                      ..._corsHeaders,
+                      "Content-Type": "image/webp",
+                      "Cache-Control": "public, max-age=31536000, immutable",
+                      "Content-Length": String(stat.size)
+                    }
+                  });
+                }
+                return new Response("Thumbnail not available", {
+                  status: 404,
+                  headers: {
+                    ..._corsHeaders,
+                    "Content-Type": "text/plain",
+                    "Cache-Control": "no-store"
+                  }
+                });
+              }
+              const genPromise = (async () => {
+                const sharp = require("sharp");
+                const coverArt = registerIPCHandlers.getCoverArtByTrackId(trackId);
+                if (!coverArt) return null;
+                let inputBuffer;
+                if (coverArt.startsWith("data:")) {
+                  const base64 = coverArt.split(",")[1];
+                  if (base64) inputBuffer = Buffer.from(base64, "base64");
+                } else if (fs.existsSync(coverArt)) {
+                  inputBuffer = fs.readFileSync(coverArt);
+                }
+                if (!inputBuffer) return null;
+                const targetSize = Math.max(
+                  32,
+                  Math.min(parseInt(size) || 48, 800)
+                );
+                const metadata = await sharp(inputBuffer).metadata();
+                const side = Math.min(metadata.width, metadata.height);
+                const left = Math.floor((metadata.width - side) / 2);
+                const top = Math.floor((metadata.height - side) / 2);
+                const thumbBuffer = await sharp(inputBuffer).extract({ left, top, width: side, height: side }).resize(targetSize, targetSize, { fit: "cover" }).webp({ quality: 75 }).toBuffer();
+                fs.writeFileSync(thumbFile, thumbBuffer);
+                return thumbBuffer;
+              })();
+              _thumbGenInFlight.set(genKey, genPromise);
+              try {
+                const thumbBuffer = await genPromise;
+                if (thumbBuffer) {
+                  return new Response(thumbBuffer, {
+                    status: 200,
+                    headers: {
+                      ..._corsHeaders,
+                      "Content-Type": "image/webp",
+                      "Cache-Control": "public, max-age=31536000, immutable",
+                      "Content-Length": String(thumbBuffer.length)
+                    }
+                  });
+                }
+              } catch (e) {
+                console.warn(
+                  `[thumb] On-demand generation failed for ${trackId}:`,
+                  e.message
+                );
+              } finally {
+                _thumbGenInFlight.delete(genKey);
+              }
               return new Response("Thumbnail not available", {
                 status: 404,
                 headers: {
@@ -4842,131 +6002,97 @@ var require_main = __commonJS({
                 }
               });
             }
-            const genPromise = (async () => {
-              const sharp = require("sharp");
-              const coverArt = registerIPCHandlers.getCoverArtByTrackId(trackId);
-              if (!coverArt) return null;
-              let inputBuffer;
-              if (coverArt.startsWith("data:")) {
-                const base64 = coverArt.split(",")[1];
-                if (base64) inputBuffer = Buffer.from(base64, "base64");
-              } else if (fs.existsSync(coverArt)) {
-                inputBuffer = fs.readFileSync(coverArt);
-              }
-              if (!inputBuffer) return null;
-              const targetSize = Math.max(32, Math.min(parseInt(size) || 48, 800));
-              const metadata = await sharp(inputBuffer).metadata();
-              const side = Math.min(metadata.width, metadata.height);
-              const left = Math.floor((metadata.width - side) / 2);
-              const top = Math.floor((metadata.height - side) / 2);
-              const thumbBuffer = await sharp(inputBuffer).extract({ left, top, width: side, height: side }).resize(targetSize, targetSize, { fit: "cover" }).webp({ quality: 75 }).toBuffer();
-              fs.writeFileSync(thumbFile, thumbBuffer);
-              return thumbBuffer;
-            })();
-            _thumbGenInFlight.set(genKey, genPromise);
-            try {
-              const thumbBuffer = await genPromise;
-              if (thumbBuffer) {
-                return new Response(thumbBuffer, {
-                  status: 200,
+            if (url.startsWith("nova-media://cover/")) {
+              const encoded = url.slice("nova-media://cover/".length);
+              const cleanEncoded = encoded.split("?")[0];
+              const filePath = decodeURIComponent(cleanEncoded);
+              if (!fs.existsSync(filePath)) {
+                return new Response("Cover art file not found", {
+                  status: 404,
                   headers: {
                     ..._corsHeaders,
-                    "Content-Type": "image/webp",
-                    "Cache-Control": "public, max-age=31536000, immutable",
-                    "Content-Length": String(thumbBuffer.length)
+                    "Content-Type": "text/plain",
+                    "Cache-Control": "no-store"
                   }
                 });
               }
-            } catch (e) {
-              console.warn(
-                `[thumb] On-demand generation failed for ${trackId}:`,
-                e.message
-              );
-            } finally {
-              _thumbGenInFlight.delete(genKey);
-            }
-            return new Response("Thumbnail not available", {
-              status: 404,
-              headers: {
-                ..._corsHeaders,
-                "Content-Type": "text/plain",
-                "Cache-Control": "no-store"
-              }
-            });
-          }
-          if (url.startsWith("nova-media://cover/")) {
-            const encoded = url.slice("nova-media://cover/".length);
-            const cleanEncoded = encoded.split("?")[0];
-            const filePath = decodeURIComponent(cleanEncoded);
-            if (!fs.existsSync(filePath)) {
-              return new Response("Cover art file not found", {
-                status: 404,
+              const ext = path.extname(filePath).toLowerCase();
+              const mimeMap = {
+                ".webp": "image/webp",
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".gif": "image/gif",
+                ".bmp": "image/bmp",
+                ".avif": "image/avif"
+              };
+              const mimeType = mimeMap[ext] || "image/webp";
+              const stat = fs.statSync(filePath);
+              const buffer = fs.readFileSync(filePath);
+              return new Response(buffer, {
+                status: 200,
                 headers: {
                   ..._corsHeaders,
-                  "Content-Type": "text/plain",
-                  "Cache-Control": "no-store"
+                  "Content-Type": mimeType,
+                  "Cache-Control": "public, max-age=31536000, immutable",
+                  "Content-Length": String(stat.size)
                 }
               });
             }
-            const ext = path.extname(filePath).toLowerCase();
-            const mimeMap = {
-              ".webp": "image/webp",
-              ".png": "image/png",
-              ".jpg": "image/jpeg",
-              ".jpeg": "image/jpeg",
-              ".gif": "image/gif",
-              ".bmp": "image/bmp",
-              ".avif": "image/avif"
-            };
-            const mimeType = mimeMap[ext] || "image/webp";
-            const stat = fs.statSync(filePath);
-            const buffer = fs.readFileSync(filePath);
-            return new Response(buffer, {
-              status: 200,
-              headers: {
-                ..._corsHeaders,
-                "Content-Type": mimeType,
-                "Cache-Control": "public, max-age=31536000, immutable",
-                "Content-Length": String(stat.size)
-              }
-            });
-          }
-          if (url.startsWith("nova-media://local/")) {
-            let filePath = decodeNovaMediaLocalPath(url);
-            if (!fs.existsSync(filePath)) {
-              try {
-                const alternativePath = registerIPCHandlers.findAlternativeTrackPath(filePath);
-                if (alternativePath) {
-                  console.log(
-                    `[self-healing] Resolved missing file ${filePath} to ${alternativePath}`
+            if (url.startsWith("nova-media://local/")) {
+              let filePath = decodeNovaMediaLocalPath(url);
+              if (!fs.existsSync(filePath)) {
+                try {
+                  const alternativePath = registerIPCHandlers.findAlternativeTrackPath(filePath);
+                  if (alternativePath) {
+                    console.log(
+                      `[self-healing] Resolved missing file ${filePath} to ${alternativePath}`
+                    );
+                    filePath = alternativePath;
+                  }
+                } catch (err) {
+                  console.warn(
+                    "[self-healing] Failed to resolve alternative file:",
+                    err.message
                   );
-                  filePath = alternativePath;
                 }
-              } catch (err) {
-                console.warn(
-                  "[self-healing] Failed to resolve alternative file:",
-                  err.message
-                );
               }
+              if (!fs.existsSync(filePath)) {
+                return new Response("File not found", { status: 404 });
+              }
+              const stat = fs.statSync(filePath);
+              if (stat.size === 0) {
+                console.warn(`nova-media: zero-byte file: ${filePath}`);
+                return new Response("Empty file", { status: 404 });
+              }
+              return serveAudioFile(request, filePath);
             }
-            if (!fs.existsSync(filePath)) {
-              return new Response("File not found", { status: 404 });
-            }
-            const stat = fs.statSync(filePath);
-            if (stat.size === 0) {
-              console.warn(`nova-media: zero-byte file: ${filePath}`);
-              return new Response("Empty file", { status: 404 });
-            }
-            return serveAudioFile(request, filePath);
+            return new Response("Not found", { status: 404 });
+          } catch (err) {
+            console.error("nova-media protocol error:", err);
+            return new Response("Internal error", { status: 500 });
           }
-          return new Response("Not found", { status: 404 });
-        } catch (err) {
-          console.error("nova-media protocol error:", err);
-          return new Response("Internal error", { status: 500 });
+        });
+      } catch (err) {
+        _logFatal("protocol.handle(nova-media) registration failed", err);
+      }
+      try {
+        createMainWindow();
+      } catch (err) {
+        _logFatal("createMainWindow failed", err);
+        try {
+          mainWindow = new BrowserWindow({ width: 900, height: 600 });
+          mainWindow.loadURL(
+            "data:text/html,<body style='background:#121212;color:#fff;font-family:sans-serif;padding:40px'><h2>NovaTune failed to start</h2><p>Details were written to:<br>" + _crashLogPath.replace(/\\/g, "\\\\") + "</p></body>"
+          );
+        } catch (_) {
         }
-      });
-      createMainWindow();
-      registerIPCHandlers(mainWindow);
+      }
+      try {
+        registerIPCHandlers(mainWindow);
+      } catch (err) {
+        _logFatal("registerIPCHandlers failed", err);
+      }
       if (autoUpdater && app.isPackaged) {
         autoUpdater.autoDownload = true;
         autoUpdater.autoInstallOnAppQuit = true;
