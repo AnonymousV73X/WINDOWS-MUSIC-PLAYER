@@ -28,6 +28,29 @@ const {
   net,
 } = require("electron");
 
+// ─── Crash Safety Net ────────────────────────────────────────────────
+// Previously, any synchronous throw during startup (e.g. mkdir failing
+// right after a user manually deleted the app's data folder) crashed the
+// process before a window ever appeared — no dialog, nothing in Event
+// Viewer, just a ghost process in Task Manager. Log to a location that
+// never depends on userData (which may be the very thing that's broken)
+// and keep going wherever possible instead of dying silently.
+const os = require("os");
+const fsSafety = require("fs");
+const pathSafety = require("path");
+const _crashLogPath = pathSafety.join(os.tmpdir(), "novatune-crash.log");
+function _logFatal(label, err) {
+  try {
+    fsSafety.appendFileSync(
+      _crashLogPath,
+      `[${new Date().toISOString()}] ${label}: ${err && err.stack ? err.stack : err}\n`,
+    );
+  } catch (_) {}
+  console.error(label, err);
+}
+process.on("uncaughtException", (err) => _logFatal("uncaughtException", err));
+process.on("unhandledRejection", (err) => _logFatal("unhandledRejection", err));
+
 // ─── V8 Compile Cache (HDD Optimization) ─────────────────────────
 // MUST be required immediately after electron but before any massive user modules.
 try {
@@ -172,7 +195,7 @@ function createMainWindow() {
   try {
     const dataDir = isDev
       ? path.join(__dirname, "..", "data")
-      : app.getPath("userData");
+      : WindowStateManager.DATA_DIR || app.getPath("userData");
     const settingsPath = path.join(dataDir, "settings.json");
     if (fs.existsSync(settingsPath)) {
       const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
@@ -384,10 +407,18 @@ async function _serveAudioFileAsync(request, filePath) {
 
 // ─── App Lifecycle ──────────────────────────────────────────────────
 app.whenReady().then(() => {
-  Menu.setApplicationMenu(null);
+  try {
+    Menu.setApplicationMenu(null);
+  } catch (err) {
+    _logFatal("Menu.setApplicationMenu failed", err);
+  }
 
-  if (process.platform === "win32") {
-    app.setAppUserModelId("com.novatune.player");
+  try {
+    if (process.platform === "win32") {
+      app.setAppUserModelId("com.novatune.player");
+    }
+  } catch (err) {
+    _logFatal("setAppUserModelId failed", err);
   }
 
   // Lazy-load electron-updater after app is ready (avoids blocking startup)
@@ -400,58 +431,90 @@ app.whenReady().then(() => {
   }
 
   // ── nova-media:// protocol handler ──────────────────────────────
-  protocol.handle("nova-media", async (request) => {
-    try {
-      const url = request.url;
+  try {
+    protocol.handle("nova-media", async (request) => {
+      try {
+        const url = request.url;
 
-      // ── Common CORS headers for ALL nova-media:// responses ──────
-      const _corsHeaders = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET",
-        "Access-Control-Allow-Headers": "Range",
-      };
+        // ── Common CORS headers for ALL nova-media:// responses ──────
+        const _corsHeaders = {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET",
+          "Access-Control-Allow-Headers": "Range",
+        };
 
-      // ── nova-media://art/{trackId} ──────────────────────────────
-      if (url.startsWith("nova-media://art/")) {
-        const trackId = decodeURIComponent(
-          url.slice("nova-media://art/".length).split("?")[0],
-        );
+        // ── nova-media://art/{trackId} ──────────────────────────────
+        if (url.startsWith("nova-media://art/")) {
+          const trackId = decodeURIComponent(
+            url.slice("nova-media://art/".length).split("?")[0],
+          );
 
-        // Protocol cache check
-        const cached = _protocolCache.get(trackId);
-        if (cached) {
-          _protocolCache.delete(trackId);
-          _protocolCache.set(trackId, cached);
-          return new Response(cached.buffer, {
-            status: 200,
-            headers: {
-              ..._corsHeaders,
-              "Content-Type": cached.mimeType,
-              "Cache-Control": "public, max-age=31536000, immutable",
-              "Content-Length": String(cached.buffer.length),
-            },
-          });
-        }
+          // Protocol cache check
+          const cached = _protocolCache.get(trackId);
+          if (cached) {
+            _protocolCache.delete(trackId);
+            _protocolCache.set(trackId, cached);
+            return new Response(cached.buffer, {
+              status: 200,
+              headers: {
+                ..._corsHeaders,
+                "Content-Type": cached.mimeType,
+                "Cache-Control": "public, max-age=31536000, immutable",
+                "Content-Length": String(cached.buffer.length),
+              },
+            });
+          }
 
-        const coverArt = registerIPCHandlers.getCoverArtByTrackId(trackId);
+          const coverArt = registerIPCHandlers.getCoverArtByTrackId(trackId);
 
-        if (!coverArt) {
-          return new Response("No cover art", {
-            status: 404,
-            headers: {
-              ..._corsHeaders,
-              "Content-Type": "text/plain",
-              "Cache-Control": "no-store",
-            },
-          });
-        }
+          if (!coverArt) {
+            return new Response("No cover art", {
+              status: 404,
+              headers: {
+                ..._corsHeaders,
+                "Content-Type": "text/plain",
+                "Cache-Control": "no-store",
+              },
+            });
+          }
 
-        // Base64 data: URI
-        if (coverArt.startsWith("data:")) {
-          const matches = coverArt.match(/^data:([^;]+);base64,(.+)$/);
-          if (matches) {
-            const mimeType = matches[1] || "image/jpeg";
-            const buffer = Buffer.from(matches[2], "base64");
+          // Base64 data: URI
+          if (coverArt.startsWith("data:")) {
+            const matches = coverArt.match(/^data:([^;]+);base64,(.+)$/);
+            if (matches) {
+              const mimeType = matches[1] || "image/jpeg";
+              const buffer = Buffer.from(matches[2], "base64");
+              if (_protocolCache.size >= PROTOCOL_CACHE_MAX) {
+                const firstKey = _protocolCache.keys().next().value;
+                _protocolCache.delete(firstKey);
+              }
+              _protocolCache.set(trackId, { buffer, mimeType });
+              return new Response(buffer, {
+                status: 200,
+                headers: {
+                  ..._corsHeaders,
+                  "Content-Type": mimeType,
+                  "Cache-Control": "public, max-age=31536000, immutable",
+                  "Content-Length": String(buffer.length),
+                },
+              });
+            }
+          }
+
+          // File path
+          if (fs.existsSync(coverArt)) {
+            const ext = path.extname(coverArt).toLowerCase();
+            const mimeMap = {
+              ".webp": "image/webp",
+              ".png": "image/png",
+              ".jpg": "image/jpeg",
+              ".jpeg": "image/jpeg",
+              ".gif": "image/gif",
+              ".bmp": "image/bmp",
+              ".avif": "image/avif",
+            };
+            const mimeType = mimeMap[ext] || "image/webp";
+            const buffer = fs.readFileSync(coverArt);
             if (_protocolCache.size >= PROTOCOL_CACHE_MAX) {
               const firstKey = _protocolCache.keys().next().value;
               _protocolCache.delete(firstKey);
@@ -467,82 +530,31 @@ app.whenReady().then(() => {
               },
             });
           }
-        }
 
-        // File path
-        if (fs.existsSync(coverArt)) {
-          const ext = path.extname(coverArt).toLowerCase();
-          const mimeMap = {
-            ".webp": "image/webp",
-            ".png": "image/png",
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".gif": "image/gif",
-            ".bmp": "image/bmp",
-            ".avif": "image/avif",
-          };
-          const mimeType = mimeMap[ext] || "image/webp";
-          const buffer = fs.readFileSync(coverArt);
-          if (_protocolCache.size >= PROTOCOL_CACHE_MAX) {
-            const firstKey = _protocolCache.keys().next().value;
-            _protocolCache.delete(firstKey);
-          }
-          _protocolCache.set(trackId, { buffer, mimeType });
-          return new Response(buffer, {
-            status: 200,
+          return new Response("Cover art file not found", {
+            status: 404,
             headers: {
               ..._corsHeaders,
-              "Content-Type": mimeType,
-              "Cache-Control": "public, max-age=31536000, immutable",
-              "Content-Length": String(buffer.length),
+              "Content-Type": "text/plain",
+              "Cache-Control": "no-store",
             },
           });
         }
 
-        return new Response("Cover art file not found", {
-          status: 404,
-          headers: {
-            ..._corsHeaders,
-            "Content-Type": "text/plain",
-            "Cache-Control": "no-store",
-          },
-        });
-      }
+        // ── nova-media://thumb/{trackId}/{size} ──────────────────────
+        if (url.startsWith("nova-media://thumb/")) {
+          const parts = url.slice("nova-media://thumb/".length).split("/");
+          const trackId = parts[0];
+          const size = parts[1] || "48";
+          const thumbDir = path.join(
+            app.getPath("userData"),
+            "cached_covers",
+            "thumbs",
+          );
+          if (!fs.existsSync(thumbDir))
+            fs.mkdirSync(thumbDir, { recursive: true });
+          const thumbFile = path.join(thumbDir, `${trackId}_${size}.webp`);
 
-      // ── nova-media://thumb/{trackId}/{size} ──────────────────────
-      if (url.startsWith("nova-media://thumb/")) {
-        const parts = url.slice("nova-media://thumb/".length).split("/");
-        const trackId = parts[0];
-        const size = parts[1] || "48";
-        const thumbDir = path.join(
-          app.getPath("userData"),
-          "cached_covers",
-          "thumbs",
-        );
-        if (!fs.existsSync(thumbDir))
-          fs.mkdirSync(thumbDir, { recursive: true });
-        const thumbFile = path.join(thumbDir, `${trackId}_${size}.webp`);
-
-        if (fs.existsSync(thumbFile)) {
-          const stat = fs.statSync(thumbFile);
-          const buffer = fs.readFileSync(thumbFile);
-          return new Response(buffer, {
-            status: 200,
-            headers: {
-              ..._corsHeaders,
-              "Content-Type": "image/webp",
-              "Cache-Control": "public, max-age=31536000, immutable",
-              "Content-Length": String(stat.size),
-            },
-          });
-        }
-
-        // In-flight deduplication
-        const genKey = `thumbGen::${trackId}::${size}`;
-        if (_thumbGenInFlight.has(genKey)) {
-          try {
-            await _thumbGenInFlight.get(genKey);
-          } catch (_) {}
           if (fs.existsSync(thumbFile)) {
             const stat = fs.statSync(thumbFile);
             const buffer = fs.readFileSync(thumbFile);
@@ -556,6 +568,92 @@ app.whenReady().then(() => {
               },
             });
           }
+
+          // In-flight deduplication
+          const genKey = `thumbGen::${trackId}::${size}`;
+          if (_thumbGenInFlight.has(genKey)) {
+            try {
+              await _thumbGenInFlight.get(genKey);
+            } catch (_) {}
+            if (fs.existsSync(thumbFile)) {
+              const stat = fs.statSync(thumbFile);
+              const buffer = fs.readFileSync(thumbFile);
+              return new Response(buffer, {
+                status: 200,
+                headers: {
+                  ..._corsHeaders,
+                  "Content-Type": "image/webp",
+                  "Cache-Control": "public, max-age=31536000, immutable",
+                  "Content-Length": String(stat.size),
+                },
+              });
+            }
+            return new Response("Thumbnail not available", {
+              status: 404,
+              headers: {
+                ..._corsHeaders,
+                "Content-Type": "text/plain",
+                "Cache-Control": "no-store",
+              },
+            });
+          }
+
+          // Start on-demand generation
+          const genPromise = (async () => {
+            const sharp = require("sharp");
+            const coverArt = registerIPCHandlers.getCoverArtByTrackId(trackId);
+            if (!coverArt) return null;
+            let inputBuffer;
+            if (coverArt.startsWith("data:")) {
+              const base64 = coverArt.split(",")[1];
+              if (base64) inputBuffer = Buffer.from(base64, "base64");
+            } else if (fs.existsSync(coverArt)) {
+              inputBuffer = fs.readFileSync(coverArt);
+            }
+            if (!inputBuffer) return null;
+
+            const targetSize = Math.max(
+              32,
+              Math.min(parseInt(size) || 48, 800),
+            );
+            const metadata = await sharp(inputBuffer).metadata();
+            const side = Math.min(metadata.width, metadata.height);
+            const left = Math.floor((metadata.width - side) / 2);
+            const top = Math.floor((metadata.height - side) / 2);
+
+            const thumbBuffer = await sharp(inputBuffer)
+              .extract({ left, top, width: side, height: side })
+              .resize(targetSize, targetSize, { fit: "cover" })
+              .webp({ quality: 75 })
+              .toBuffer();
+
+            fs.writeFileSync(thumbFile, thumbBuffer);
+            return thumbBuffer;
+          })();
+
+          _thumbGenInFlight.set(genKey, genPromise);
+          try {
+            const thumbBuffer = await genPromise;
+            if (thumbBuffer) {
+              return new Response(thumbBuffer, {
+                status: 200,
+                headers: {
+                  ..._corsHeaders,
+                  "Content-Type": "image/webp",
+                  "Cache-Control": "public, max-age=31536000, immutable",
+                  "Content-Length": String(thumbBuffer.length),
+                },
+              });
+            }
+          } catch (e) {
+            console.warn(
+              `[thumb] On-demand generation failed for ${trackId}:`,
+              e.message,
+            );
+          } finally {
+            _thumbGenInFlight.delete(genKey);
+          }
+
           return new Response("Thumbnail not available", {
             status: 404,
             headers: {
@@ -566,159 +664,120 @@ app.whenReady().then(() => {
           });
         }
 
-        // Start on-demand generation
-        const genPromise = (async () => {
-          const sharp = require("sharp");
-          const coverArt = registerIPCHandlers.getCoverArtByTrackId(trackId);
-          if (!coverArt) return null;
-          let inputBuffer;
-          if (coverArt.startsWith("data:")) {
-            const base64 = coverArt.split(",")[1];
-            if (base64) inputBuffer = Buffer.from(base64, "base64");
-          } else if (fs.existsSync(coverArt)) {
-            inputBuffer = fs.readFileSync(coverArt);
-          }
-          if (!inputBuffer) return null;
+        // ── nova-media://cover/{encoded-path} ────────────────────────
+        if (url.startsWith("nova-media://cover/")) {
+          const encoded = url.slice("nova-media://cover/".length);
+          const cleanEncoded = encoded.split("?")[0];
+          const filePath = decodeURIComponent(cleanEncoded);
 
-          const targetSize = Math.max(32, Math.min(parseInt(size) || 48, 800));
-          const metadata = await sharp(inputBuffer).metadata();
-          const side = Math.min(metadata.width, metadata.height);
-          const left = Math.floor((metadata.width - side) / 2);
-          const top = Math.floor((metadata.height - side) / 2);
-
-          const thumbBuffer = await sharp(inputBuffer)
-            .extract({ left, top, width: side, height: side })
-            .resize(targetSize, targetSize, { fit: "cover" })
-            .webp({ quality: 75 })
-            .toBuffer();
-
-          fs.writeFileSync(thumbFile, thumbBuffer);
-          return thumbBuffer;
-        })();
-
-        _thumbGenInFlight.set(genKey, genPromise);
-        try {
-          const thumbBuffer = await genPromise;
-          if (thumbBuffer) {
-            return new Response(thumbBuffer, {
-              status: 200,
+          if (!fs.existsSync(filePath)) {
+            return new Response("Cover art file not found", {
+              status: 404,
               headers: {
                 ..._corsHeaders,
-                "Content-Type": "image/webp",
-                "Cache-Control": "public, max-age=31536000, immutable",
-                "Content-Length": String(thumbBuffer.length),
+                "Content-Type": "text/plain",
+                "Cache-Control": "no-store",
               },
             });
           }
-        } catch (e) {
-          console.warn(
-            `[thumb] On-demand generation failed for ${trackId}:`,
-            e.message,
-          );
-        } finally {
-          _thumbGenInFlight.delete(genKey);
-        }
 
-        return new Response("Thumbnail not available", {
-          status: 404,
-          headers: {
-            ..._corsHeaders,
-            "Content-Type": "text/plain",
-            "Cache-Control": "no-store",
-          },
-        });
-      }
-
-      // ── nova-media://cover/{encoded-path} ────────────────────────
-      if (url.startsWith("nova-media://cover/")) {
-        const encoded = url.slice("nova-media://cover/".length);
-        const cleanEncoded = encoded.split("?")[0];
-        const filePath = decodeURIComponent(cleanEncoded);
-
-        if (!fs.existsSync(filePath)) {
-          return new Response("Cover art file not found", {
-            status: 404,
+          const ext = path.extname(filePath).toLowerCase();
+          const mimeMap = {
+            ".webp": "image/webp",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".bmp": "image/bmp",
+            ".avif": "image/avif",
+          };
+          const mimeType = mimeMap[ext] || "image/webp";
+          const stat = fs.statSync(filePath);
+          const buffer = fs.readFileSync(filePath);
+          return new Response(buffer, {
+            status: 200,
             headers: {
               ..._corsHeaders,
-              "Content-Type": "text/plain",
-              "Cache-Control": "no-store",
+              "Content-Type": mimeType,
+              "Cache-Control": "public, max-age=31536000, immutable",
+              "Content-Length": String(stat.size),
             },
           });
         }
 
-        const ext = path.extname(filePath).toLowerCase();
-        const mimeMap = {
-          ".webp": "image/webp",
-          ".png": "image/png",
-          ".jpg": "image/jpeg",
-          ".jpeg": "image/jpeg",
-          ".gif": "image/gif",
-          ".bmp": "image/bmp",
-          ".avif": "image/avif",
-        };
-        const mimeType = mimeMap[ext] || "image/webp";
-        const stat = fs.statSync(filePath);
-        const buffer = fs.readFileSync(filePath);
-        return new Response(buffer, {
-          status: 200,
-          headers: {
-            ..._corsHeaders,
-            "Content-Type": mimeType,
-            "Cache-Control": "public, max-age=31536000, immutable",
-            "Content-Length": String(stat.size),
-          },
-        });
-      }
+        // ── nova-media://local/<encoded-absolute-path> ───────────────
+        // Served via fs.createReadStream (Node libuv thread pool).
+        // Avoids net.fetch(file://) blocking on Windows when concurrent
+        // streams are open through Chromium's network service thread.
+        if (url.startsWith("nova-media://local/")) {
+          let filePath = decodeNovaMediaLocalPath(url);
 
-      // ── nova-media://local/<encoded-absolute-path> ───────────────
-      // Served via fs.createReadStream (Node libuv thread pool).
-      // Avoids net.fetch(file://) blocking on Windows when concurrent
-      // streams are open through Chromium's network service thread.
-      if (url.startsWith("nova-media://local/")) {
-        let filePath = decodeNovaMediaLocalPath(url);
-
-        // Self-healing: find alternative path if file is missing
-        if (!fs.existsSync(filePath)) {
-          try {
-            const alternativePath =
-              registerIPCHandlers.findAlternativeTrackPath(filePath);
-            if (alternativePath) {
-              console.log(
-                `[self-healing] Resolved missing file ${filePath} to ${alternativePath}`,
+          // Self-healing: find alternative path if file is missing
+          if (!fs.existsSync(filePath)) {
+            try {
+              const alternativePath =
+                registerIPCHandlers.findAlternativeTrackPath(filePath);
+              if (alternativePath) {
+                console.log(
+                  `[self-healing] Resolved missing file ${filePath} to ${alternativePath}`,
+                );
+                filePath = alternativePath;
+              }
+            } catch (err) {
+              console.warn(
+                "[self-healing] Failed to resolve alternative file:",
+                err.message,
               );
-              filePath = alternativePath;
             }
-          } catch (err) {
-            console.warn(
-              "[self-healing] Failed to resolve alternative file:",
-              err.message,
-            );
           }
+
+          if (!fs.existsSync(filePath)) {
+            return new Response("File not found", { status: 404 });
+          }
+
+          const stat = fs.statSync(filePath);
+          if (stat.size === 0) {
+            console.warn(`nova-media: zero-byte file: ${filePath}`);
+            return new Response("Empty file", { status: 404 });
+          }
+
+          return serveAudioFile(request, filePath);
         }
 
-        if (!fs.existsSync(filePath)) {
-          return new Response("File not found", { status: 404 });
-        }
-
-        const stat = fs.statSync(filePath);
-        if (stat.size === 0) {
-          console.warn(`nova-media: zero-byte file: ${filePath}`);
-          return new Response("Empty file", { status: 404 });
-        }
-
-        return serveAudioFile(request, filePath);
+        // Unknown nova-media:// path
+        return new Response("Not found", { status: 404 });
+      } catch (err) {
+        console.error("nova-media protocol error:", err);
+        return new Response("Internal error", { status: 500 });
       }
+    });
+  } catch (err) {
+    _logFatal("protocol.handle(nova-media) registration failed", err);
+  }
 
-      // Unknown nova-media:// path
-      return new Response("Not found", { status: 404 });
-    } catch (err) {
-      console.error("nova-media protocol error:", err);
-      return new Response("Internal error", { status: 500 });
-    }
-  });
+  // createMainWindow() must run no matter what happened above — the window
+  // is the whole point, and every step before this is best-effort.
+  try {
+    createMainWindow();
+  } catch (err) {
+    _logFatal("createMainWindow failed", err);
+    // Last-resort minimal window so the app isn't a silent ghost process.
+    try {
+      mainWindow = new BrowserWindow({ width: 900, height: 600 });
+      mainWindow.loadURL(
+        "data:text/html,<body style='background:#121212;color:#fff;font-family:sans-serif;padding:40px'>" +
+          "<h2>NovaTune failed to start</h2><p>Details were written to:<br>" +
+          _crashLogPath.replace(/\\/g, "\\\\") +
+          "</p></body>",
+      );
+    } catch (_) {}
+  }
 
-  createMainWindow();
-  registerIPCHandlers(mainWindow);
+  try {
+    registerIPCHandlers(mainWindow);
+  } catch (err) {
+    _logFatal("registerIPCHandlers failed", err);
+  }
 
   // ─── Auto-Updater ─────────────────────────────────────────────────
   if (autoUpdater && app.isPackaged) {
