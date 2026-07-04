@@ -25,6 +25,15 @@ const crypto = require("crypto");
 const FileScanner = require("./fileScanner");
 const MetadataReader = require("./metadataReader");
 const MetadataWorker = require("./metadataWorker");
+const { ensureDirSync } = require("./windowManager");
+
+// ─── Binary manifest subsystem (cache layer over SQLite) ────────────
+// Loaded eagerly because they have no native deps (pure JS). The actual
+// IPC handlers are registered inside registerIPCHandlers() so they
+// share the app.getPath('userData') resolution timing.
+const ManifestWriter = require("./manifest");
+const ManifestIPC = require("./manifestIPC");
+const ManifestReader = require("./manifestReader");
 
 // ─── Supported Audio Formats ────────────────────────────────────────
 const SUPPORTED_FORMATS = [
@@ -561,7 +570,14 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   DB_FILE = path.join(DATA_DIR, "novatune.sqlite");
 
   [DATA_DIR, PLAYLISTS_DIR].forEach((dir) => {
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    try {
+      ensureDirSync(dir);
+    } catch (err) {
+      console.error(
+        `[FATAL] Could not create required directory ${dir}:`,
+        err.message,
+      );
+    }
   });
 
   // Set cover art cache directory for metadataReader (must be after DATA_DIR is resolved)
@@ -598,6 +614,150 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
 
   migrateJsonToDb();
   migrateDbCovers();
+
+  // ── Binary manifest feature flag ──────────────────────────────────
+  // Resolution order: env var > settings.json key > default ON.
+  // We default ON because ultraspeed is the goal, but a corrupt manifest
+  // silently falls back to SQLite — see manifestReader.js validation.
+  let manifestEnabled = true;
+  if (
+    process.env.NOVATUNE_USE_MANIFEST === "0" ||
+    process.env.NOVATUNE_USE_MANIFEST === "false"
+  ) {
+    manifestEnabled = false;
+  } else if (
+    process.env.NOVATUNE_USE_MANIFEST === "1" ||
+    process.env.NOVATUNE_USE_MANIFEST === "true"
+  ) {
+    manifestEnabled = true;
+  } else {
+    // Env var unset → consult settings.json
+    try {
+      const settingsForFlag = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+      if (settingsForFlag._useManifest === false) manifestEnabled = false;
+    } catch (_) {
+      /* default ON */
+    }
+  }
+  ManifestIPC.setFeatureFlag(manifestEnabled);
+  console.log(`[manifest] feature flag: ${manifestEnabled ? "ON" : "OFF"}`);
+
+  // Register manifest IPC handlers (library:get-manifest-info, etc.)
+  ManifestIPC.registerManifestIPC();
+
+  // ── CRITICAL: Build manifest on startup if missing ──────────────
+  // Without this, the manifest NEVER gets built on a stable library
+  // (because library:scan is skipped when fingerprints match), so the
+  // renderer always falls back to the slow SQLite paginated path.
+  //
+  // This runs in the BACKGROUND (setImmediate) so it doesn't block IPC
+  // handler registration or window creation. The first renderer request
+  // for library:get-manifest-info may still see "missing" — that's fine,
+  // the renderer falls back to SQLite for that one launch, and the next
+  // launch uses the freshly-built manifest.
+  //
+  // CHANGED v2.5: After building the manifest, we ALSO compute and
+  // persist _combinedFingerprint in the background. This is the field
+  // the renderer's fingerprint fast-path checks — without it, the
+  // renderer falls through to the stat-walk fingerprint check on every
+  // launch. By computing it ONCE here (in the background, after the
+  // manifest is built), subsequent launches skip the fingerprint check
+  // entirely.
+  if (manifestEnabled) {
+    setImmediate(async () => {
+      try {
+        const info = ManifestIPC.getManifestInfo();
+        if (!info.available) {
+          console.log(
+            "[manifest] missing on startup — building from SQLite library...",
+          );
+          const library = getLibrary();
+          if (library && library.length > 0) {
+            // Read current settings to get the (possibly empty) fingerprint
+            const settings = readJSON(SETTINGS_FILE, {
+              ...DEFAULT_SETTINGS,
+            });
+            const existingFp = settings._combinedFingerprint || "";
+
+            // Build the manifest
+            const result = await ManifestIPC.rebuildManifest(
+              library,
+              existingFp,
+            );
+            if (result.ok) {
+              console.log(
+                `[manifest] built on startup: ${result.trackCount} tracks, ` +
+                  `${result.size} bytes, ${result.ms}ms`,
+              );
+
+              // ── Compute + persist fingerprints in the background ──
+              // This is the key fix for v2.5: without _combinedFingerprint
+              // persisted, the renderer's fast-path doesn't trigger and
+              // it falls through to the 30-60s stat-walk on every launch.
+              //
+              // We compute fingerprints for all scan folders, persist them
+              // to settings._scanFingerprints AND settings._combinedFingerprint.
+              // This runs AFTER the manifest is built, so it doesn't delay
+              // the manifest being available to the renderer.
+              //
+              // On HDD this takes 30-60s, but it's in the background —
+              // the user is already playing music by now. Next launch,
+              // the fast-path triggers and this never runs again (until
+              // a scan invalidates the fingerprint).
+              const scanFolders = Array.isArray(settings.scanFolders)
+                ? settings.scanFolders
+                : [];
+              if (scanFolders.length > 0 && !existingFp) {
+                console.log(
+                  "[manifest] computing folder fingerprints in background...",
+                );
+                try {
+                  const fps = {};
+                  for (const folder of scanFolders) {
+                    const fp = await _computeFolderFingerprint([folder]);
+                    fps[folder] = fp;
+                  }
+                  const combined = Object.keys(fps)
+                    .sort()
+                    .map((k) => `${k}=${fps[k]}`)
+                    .join("|");
+
+                  // Persist both _scanFingerprints and _combinedFingerprint
+                  const freshSettings = readJSON(SETTINGS_FILE, {
+                    ...DEFAULT_SETTINGS,
+                  });
+                  freshSettings._scanFingerprints = fps;
+                  freshSettings._combinedFingerprint = combined;
+                  writeJSON(SETTINGS_FILE, freshSettings);
+                  console.log(
+                    "[manifest] fingerprints persisted — next launch will skip fingerprint check",
+                  );
+
+                  // Rebuild manifest with the correct fpHash now that we
+                  // have the real fingerprint. This is fast (~35ms).
+                  await ManifestIPC.rebuildManifest(library, combined);
+                } catch (fpErr) {
+                  console.warn(
+                    "[manifest] fingerprint computation failed:",
+                    fpErr.message,
+                  );
+                }
+              }
+            }
+          } else {
+            console.log("[manifest] library is empty — skipping build");
+          }
+        } else {
+          console.log(
+            `[manifest] already exists: ${info.trackCount} tracks, v${info.version}`,
+          );
+        }
+      } catch (err) {
+        console.warn("[manifest] startup build failed:", err.message);
+      }
+    });
+  }
+
   // ═══════════════════════════════════════════════════════════════════
   // LIBRARY IPC
   // ═══════════════════════════════════════════════════════════════════
@@ -950,13 +1110,50 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       });
 
       // Save fingerprint so next startup can skip the scan if nothing changed
+      let latestFingerprint = null;
       try {
         const fp = await _computeFolderFingerprint([folderPath]);
+        latestFingerprint = fp;
         const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
         settings._scanFingerprints = settings._scanFingerprints || {};
         settings._scanFingerprints[folderPath] = fp;
+        // Persist the combined fingerprint string for the manifest's fpHash
+        // (concatenation of all folder fingerprints, deterministic order)
+        const allFps = settings._scanFingerprints;
+        const combined = Object.keys(allFps)
+          .sort()
+          .map((k) => `${k}=${allFps[k]}`)
+          .join("|");
+        settings._combinedFingerprint = combined;
         writeJSON(SETTINGS_FILE, settings);
       } catch (_) {}
+
+      // ── Rebuild binary manifest so next startup reads ONE file ──
+      // Fire-and-forget: the user's scan is already complete (success
+      // returned), and the manifest rebuild is a ~50-200ms job for a
+      // 1000-track library. If it fails, the next startup falls back
+      // to SQLite — no user-visible disruption.
+      if (ManifestIPC.isFeatureFlagEnabled()) {
+        const rebuildStart = Date.now();
+        setImmediate(async () => {
+          try {
+            // Re-fetch fresh library (the in-memory cache was just
+            // invalidated by saveLibrary). Pass the mergedLibrary
+            // directly to avoid a redundant SQLite round-trip.
+            const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+            const fp = settings._combinedFingerprint || "";
+            const result = await ManifestIPC.rebuildManifest(mergedLibrary, fp);
+            if (result.ok) {
+              console.log(
+                `[manifest] rebuilt after scan in ${Date.now() - rebuildStart}ms ` +
+                  `(${result.trackCount} tracks, ${result.size} bytes)`,
+              );
+            }
+          } catch (err) {
+            console.warn("[manifest] post-scan rebuild failed:", err.message);
+          }
+        });
+      }
 
       return { success: true, tracks: mergedLibrary, newTracks: tracks.length };
     } catch (err) {
@@ -1433,6 +1630,11 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   ipcMain.handle("library:clear", async () => {
     try {
       saveLibrary([]);
+      // Drop the manifest too so the renderer falls back to SQLite
+      // until the next scan rebuilds it.
+      try {
+        ManifestIPC.deleteManifest();
+      } catch (_) {}
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
@@ -2187,6 +2389,25 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         settings[key] = DEFAULT_SETTINGS[key];
       }
     }
+
+    // Self-heal: drop any scan folder that no longer exists on disk (deleted,
+    // renamed, or on a now-disconnected drive) so the app never silently
+    // keeps trying to scan a dead path. Renderer already shows an
+    // "add a folder" empty state when scanFolders is empty.
+    if (Array.isArray(settings.scanFolders) && settings.scanFolders.length) {
+      const stillValid = settings.scanFolders.filter((f) => {
+        try {
+          return fs.existsSync(f);
+        } catch (_) {
+          return false;
+        }
+      });
+      if (stillValid.length !== settings.scanFolders.length) {
+        settings.scanFolders = stillValid;
+        writeJSON(SETTINGS_FILE, settings);
+      }
+    }
+
     return { success: true, settings };
   });
 
@@ -3259,6 +3480,20 @@ function parseLRC(content) {
 
 module.exports = registerIPCHandlers;
 module.exports.setSMTCBridge = setSMTCBridge;
+
+/**
+ * Expose getLibrary() to the manifest IPC module so it can rebuild
+ * library.bin on demand (e.g. via library:rebuild-manifest IPC).
+ * Wrapped in a try/catch so a missing db (e.g. during early init)
+ * returns null instead of crashing.
+ */
+module.exports.getLibraryForManifest = function () {
+  try {
+    return getLibrary();
+  } catch (_) {
+    return null;
+  }
+};
 
 /**
  * Revolutionary: Look up cover art by track ID for the nova-media://art/ protocol.
