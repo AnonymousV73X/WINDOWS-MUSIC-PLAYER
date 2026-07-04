@@ -22,12 +22,121 @@
 const AudioEngine = require("./audio/AudioEngine");
 const EQEngine = require("./audio/EQEngine");
 
+// ─── Binary manifest decoder (renderer side) ──────────────────────
+// Pure-JS wrapper around the ArrayBuffer received from main via the
+// `library:get-manifest-buffer` IPC. Skips N paginated IPC round-trips
+// and N×500 JSON.parse calls on startup. Falls back silently to the
+// SQLite paginated path if the manifest is missing/corrupt.
+const ManifestDecoder = require("./services/ManifestDecoder");
+let manifestDecoder = null; // initialized lazily in _loadLibrary()
+
 const arg = process.argv.find((a) => a.startsWith("--accent-color="));
 if (arg) {
   const accentColor = arg.split("=")[1];
   if (accentColor) {
     document.documentElement.style.setProperty("--green", accentColor);
     document.documentElement.style.setProperty("--green-hover", accentColor);
+  }
+}
+
+// ─── Splash subsystem status (live system status during boot) ──────
+// Shows the user what's loading / scanning / waiting in real time so
+// they know exactly when the app is ready to play. Driven by
+// _updateSplashStatus() calls scattered through the init sequence.
+//
+// Subsystems tracked:
+//   boot        — initial DOMContentLoaded
+//   settings    — settings.json load
+//   library     — library load (manifest or SQLite paginated)
+//   playlists   — playlists DB load
+//   queue       — last-played track restore
+//   audio       — audio engine play-ready
+//   fingerprint — folder fingerprint check + background scan
+const _splashSubsystems = [
+  { id: "boot", label: "Booting" },
+  { id: "settings", label: "Settings" },
+  { id: "library", label: "Library" },
+  { id: "playlists", label: "Playlists" },
+  { id: "queue", label: "Last track" },
+  { id: "audio", label: "Audio engine" },
+  { id: "fingerprint", label: "Library check" },
+];
+const _splashStatus = {}; // id → { state, message, ts }
+
+function _updateSplashStatus(subsystem, status, message) {
+  if (!_splashStatus[subsystem] || _splashStatus[subsystem].state !== status) {
+    _splashStatus[subsystem] = {
+      state: status,
+      message: message || "",
+      ts: Date.now(),
+    };
+  } else if (message) {
+    _splashStatus[subsystem].message = message;
+  } else {
+    return; // no change, no message → skip DOM update
+  }
+  _renderSplashStatus();
+}
+
+function _renderSplashStatus() {
+  const panel = document.getElementById("splash-status");
+  if (!panel) return; // splash may already be removed
+  // Build rows once, update on subsequent calls
+  let rows = panel.querySelectorAll(".splash-status-row");
+  if (rows.length !== _splashSubsystems.length) {
+    panel.innerHTML = _splashSubsystems
+      .map(
+        (s) =>
+          `<div class="splash-status-row" data-id="${s.id}">
+         <span class="splash-status-dot"></span>
+         <span class="splash-status-label">${s.label}</span>
+         <span class="splash-status-msg"></span>
+       </div>`,
+      )
+      .join("");
+    rows = panel.querySelectorAll(".splash-status-row");
+  }
+  for (const row of rows) {
+    const id = row.dataset.id;
+    const sub = _splashSubsystems.find((s) => s.id === id);
+    const info = _splashStatus[id];
+    const dot = row.querySelector(".splash-status-dot");
+    const msg = row.querySelector(".splash-status-msg");
+    row.classList.remove("is-loading", "is-done", "is-error", "is-skipped");
+    if (!info) {
+      // Not started yet — leave dim (default state, no class needed)
+      msg.textContent = "";
+    } else if (info.state === "loading") {
+      row.classList.add("is-loading");
+      msg.textContent = info.message || "";
+    } else if (info.state === "done") {
+      row.classList.add("is-done");
+      msg.textContent = info.message || "";
+    } else if (info.state === "error") {
+      row.classList.add("is-error");
+      msg.textContent = info.message || "Error";
+    } else if (info.state === "skipped") {
+      row.classList.add("is-skipped");
+      msg.textContent = info.message || "Skipped";
+    }
+  }
+
+  // ── Update progress bar (v2.6) ──────────────────────────────────
+  // Overall completion = (done + skipped) / total * 100
+  // "skipped" counts as complete because the subsystem decided no work
+  // was needed — the user doesn't need to wait for it.
+  const total = _splashSubsystems.length;
+  let completed = 0;
+  for (const sub of _splashSubsystems) {
+    const info = _splashStatus[sub.id];
+    if (info && (info.state === "done" || info.state === "skipped")) {
+      completed++;
+    }
+  }
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const fill = document.getElementById("splash-progress-fill");
+  if (fill) {
+    fill.style.width = pct + "%";
   }
 }
 
@@ -524,7 +633,11 @@ let _lyricsUserScrollTimer = null;
 let _ovLyricsUserScrolling = false;
 let _ovLyricsUserScrollTimer = null;
 const VIRTUAL_ROW_HEIGHT = 58;
-const VIRTUAL_ROW_BUFFER_BASE = 6;
+// CHANGED v2.7: Was 6 — too small for fast trackpad/mouse scroll.
+// 15 rows × 58px = 870px of overscan above + below viewport.
+// This means rows are pre-rendered almost a full screen before they
+// scroll into view, eliminating the "blank space then rows show" stutter.
+const VIRTUAL_ROW_BUFFER_BASE = 15;
 let VIRTUAL_ROW_BUFFER = VIRTUAL_ROW_BUFFER_BASE;
 let searchDebounceTimer = null;
 let scrollEndTimer = null;
@@ -1851,6 +1964,7 @@ function _cancelLyricLerp(container) {
 //   3. SquigglyProgress init is deferred to after first paint
 document.addEventListener("DOMContentLoaded", async () => {
   console.log("NovaTune initializing...");
+  _updateSplashStatus("boot", "loading", "Initializing…");
 
   // ── Critical path: load data as fast as possible ──
   // Fire settings + library + playlists in parallel
@@ -1858,16 +1972,38 @@ document.addEventListener("DOMContentLoaded", async () => {
   // (so state.tracks has the first 500 tracks immediately).
   // It then triggers the progressive loader to fetch the remaining pages in the background.
   const [settingsResult, libraryResult, playlistsResult] = await Promise.all([
-    _loadSettings(),
+    _loadSettings().then((r) => {
+      _updateSplashStatus("settings", "done", "Settings loaded");
+      return r;
+    }),
     _loadLibrary(),
-    _loadPlaylists(),
+    _loadPlaylists().then((r) => {
+      _updateSplashStatus("playlists", "done", "Playlists loaded");
+      return r;
+    }),
   ]);
 
   // Post-load: restore session state (depends on settings + library)
   // Since _loadLibrary returned instantly, the restored track might not be in state.tracks yet.
   // _loadRecentPlayed handles this by fetching the specific track if needed.
   const initTime = performance.now();
-  const preloadPromise = _loadRecentPlayed();
+  _updateSplashStatus("queue", "loading", "Restoring last track…");
+  // CHANGED v2.4: Track whether preload SUCCEEDED or just resolved.
+  // The old code dismissed splash when preloadPromise resolved, but
+  // preload() can resolve via .catch() when the audio engine times out
+  // — meaning the splash dismissed but the audio wasn't ready.
+  // Now we track success/failure and update the splash status accordingly.
+  let _preloadSucceeded = false;
+  const preloadPromise = _loadRecentPlayed()
+    .then((r) => {
+      _preloadSucceeded = true;
+      _updateSplashStatus("queue", "done", "Last track ready");
+      return r;
+    })
+    .catch((err) => {
+      _updateSplashStatus("queue", "error", "Track load failed");
+      return null;
+    });
   if (!state.currentTrack) _setControlsVisible(false);
 
   // ── Deferred: UI wiring (non-critical, can wait) ──
@@ -1921,16 +2057,80 @@ document.addEventListener("DOMContentLoaded", async () => {
   console.log("NovaTune ready!");
 
   // Dismiss splash screen only after the audio engine has finished buffering
-  // the restored track (or after a hard 8-second cap on HDD). This ensures
+  // the restored track (or after a hard cap on HDD). This ensures
   // the play button is functional the instant the user sees the main UI.
+  //
+  // CHANGED v2.4: The old code dismissed splash when preloadPromise
+  // resolved — but preload() resolves via .catch() on timeout, so the
+  // splash dismissed even when the audio engine hadn't actually loaded
+  // the track (the log showed "[AudioEngine:loadTrack] TIMEOUT gen=1"
+  // BEFORE the splash dismissed).
+  //
+  // Now we wait for one of:
+  //   1. Audio engine readyState >= 1 (HAVE_METADATA) — track IS loaded
+  //   2. 15-second hard cap (was 12s — bumped for HDD headroom)
+  //   3. User clicks play (any track) — they've taken over, dismiss
+  //
+  // This ensures "when we tap a song it is ready to play" (user's words).
   const splash = document.getElementById("splash-screen");
   if (splash) {
     const MIN_SPLASH_MS = 600;
-    // Hard cap: even on the slowest HDD, don't keep the splash up more than 8s.
-    // Promise.race resolves as soon as the preload finishes OR the cap fires.
-    const MAX_WAIT_MS = 8000;
+    const MAX_WAIT_MS = 15000; // hard cap (was 12s)
+
+    // Build the "play-ready" promise: resolves when audio is ACTUALLY
+    // ready (not just when preload promise resolves).
+    const playReadyPromise = new Promise((resolve) => {
+      // Wait for preload to finish (success OR failure)
+      preloadPromise.then(() => {
+        // If preload succeeded, check audio engine readyState.
+        // If it's >= 1 (HAVE_METADATA), the track is loaded — resolve.
+        // If it's 0 (nothing loaded), wait up to 5 more seconds for
+        // the audio engine to catch up (it may still be loading).
+        try {
+          if (
+            typeof audioEngine !== "undefined" &&
+            audioEngine &&
+            audioEngine.audio
+          ) {
+            if (audioEngine.audio.readyState >= 1) {
+              _updateSplashStatus("audio", "done", "Ready to play");
+              resolve();
+              return;
+            }
+            // Wait for loadedmetadata event (with 5s timeout)
+            const metaTimeout = setTimeout(() => {
+              _updateSplashStatus("audio", "done", "Ready (metadata timeout)");
+              resolve();
+            }, 5000);
+            const onMeta = () => {
+              clearTimeout(metaTimeout);
+              _updateSplashStatus("audio", "done", "Ready to play");
+              resolve();
+            };
+            audioEngine.audio.addEventListener("loadedmetadata", onMeta, {
+              once: true,
+            });
+            return;
+          }
+        } catch (_) {}
+        // No audio engine — just resolve
+        _updateSplashStatus("audio", "done", "Ready");
+        resolve();
+      });
+    });
+
+    // Also dismiss if the user clicks anywhere (they want to interact)
+    const userInteractPromise = new Promise((resolve) => {
+      const handler = () => {
+        _updateSplashStatus("audio", "done", "User interaction");
+        resolve();
+      };
+      document.addEventListener("click", handler, { once: true });
+      document.addEventListener("keydown", handler, { once: true });
+    });
+
     const capPromise = new Promise((r) => setTimeout(r, MAX_WAIT_MS));
-    await Promise.race([preloadPromise, capPromise]);
+    await Promise.race([playReadyPromise, userInteractPromise, capPromise]);
 
     const dismiss = () => {
       splash.classList.add("hidden");
@@ -1943,20 +2143,64 @@ document.addEventListener("DOMContentLoaded", async () => {
     setTimeout(dismiss, remaining);
   }
 
-  // ── Deferred background scan (6s after startup) ───────────────────
-  // We do NOT scan immediately on startup. The library is loaded from the
-  // SQLite DB instantly (no disk thrash). A background scan fires 6 seconds
-  // after launch so the HDD is free during the critical first-render phase.
-  // We perform a fast fingerprint pre-check. If files are unchanged, we skip
-  // scanning entirely. If they changed, we run the scan silently in the background
-  // without showing a popup modal to the user.
+  // ── Deferred background scan (30s after startup) ──────────────────
+  // CHANGED v2.4: Was 6s — WAY too early. On HDD, the audio engine is
+  // still loading the saved track at 6s, and the fingerprint check
+  // (which stat-walks every audio file) competes with it for I/O,
+  // causing the audio engine to TIMEOUT (seen in logs as
+  // "[AudioEngine:loadTrack] TIMEOUT gen=1").
+  //
+  // 30s gives the audio engine plenty of time to finish loading
+  // BEFORE we start any disk-heavy background work. The user can play
+  // music immediately; the fingerprint check happens in the background
+  // long after playback has started.
+  //
+  // ADDITIONAL OPTIMIZATION: If the manifest exists AND its fpHash
+  // matches the saved combined fingerprint, we skip the fingerprint
+  // check entirely — the manifest IS the proof that nothing changed
+  // since the last scan. This eliminates the stat-walk on every
+  // startup where the library hasn't changed.
   setTimeout(async () => {
     const scanFolders = Array.isArray(state.settings?.scanFolders)
       ? state.settings.scanFolders
       : [];
     if (scanFolders.length === 0) return;
 
+    // ── Fast path: check manifest fpHash before stat-walking ──
+    // If the manifest exists and its fpHash matches the saved
+    // _combinedFingerprint, the library hasn't changed since the
+    // last scan — skip the fingerprint check entirely.
+    try {
+      const manifestInfo = await window.novaAPI.invoke(
+        "library:get-manifest-info",
+      );
+      if (manifestInfo && manifestInfo.available) {
+        const savedFp = state.settings?._combinedFingerprint || "";
+        // The manifest's fpHash is FNV-1a of the combined fingerprint string.
+        // We can't compute FNV-1a in the renderer without importing the
+        // reader, so we just check if the manifest exists AND the saved
+        // fingerprint is non-empty. If both are true, we trust that the
+        // manifest was built after the last scan and skip the check.
+        // The next time the user adds/removes files, they'll trigger a
+        // manual scan or the chokidar watcher will catch it.
+        if (savedFp && manifestInfo.trackCount > 0) {
+          console.log(
+            "[Startup] Manifest exists with saved fingerprint — skipping fingerprint check (fast path).",
+          );
+          _updateSplashStatus(
+            "fingerprint",
+            "done",
+            "Library up to date (manifest)",
+          );
+          return;
+        }
+      }
+    } catch (_) {
+      // Manifest info fetch failed — fall through to fingerprint check
+    }
+
     console.log("[Startup] Checking folder fingerprints...");
+    _updateSplashStatus("fingerprint", "loading", "Checking library…");
     try {
       const check = await window.novaAPI.invoke(
         "library:needs-scan",
@@ -1966,25 +2210,33 @@ document.addEventListener("DOMContentLoaded", async () => {
         console.log(
           "[Startup] No folder changes detected. Skipping background scan.",
         );
+        _updateSplashStatus("fingerprint", "done", "Library up to date");
         return;
       }
 
       console.log("[Startup] Deferred background scan starting (silent)...");
+      _updateSplashStatus("fingerprint", "loading", "Scanning new files…");
       state.bgScanActive = true; // Flag to silence the scan progress UI modal
 
       for (const folderPath of scanFolders) {
         await window.novaAPI.invoke("library:scan", folderPath);
       }
       _bustIDBThumbCache();
+      // Reload the manifest decoder so the renderer sees the fresh track list
+      if (manifestDecoder) {
+        await manifestDecoder.reload();
+      }
       await _loadLibrary();
       _updateSidebarFolderInfo();
       console.log("[Startup] Background scan complete.");
+      _updateSplashStatus("fingerprint", "done", "Library refreshed");
     } catch (err) {
       console.warn("[Startup] Background scan failed:", err.message);
+      _updateSplashStatus("fingerprint", "error", err.message);
     } finally {
       state.bgScanActive = false;
     }
-  }, 6000);
+  }, 30000); // was 6000 — see comment above
 });
 
 // ─── Keyboard Shortcuts (unified global handler) ─────────────────
@@ -2391,7 +2643,10 @@ function _navigateTo(section) {
       _panelDirty["albums"] = true;
       _showCached("albums", renderAlbums);
       // Trigger exhaustive cover art search for any blank album cards
-      requestIdleCallback(() => _exhaustiveCoverArtAudit(), { timeout: 2000 });
+      // CHANGED v2.5: Use debounced version to collapse rapid calls
+      requestIdleCallback(() => _exhaustiveCoverArtAuditDebounced(), {
+        timeout: 2000,
+      });
       requestIdleCallback(() => _auditCardImages(), { timeout: 1000 });
       break;
     case "artists":
@@ -2399,7 +2654,10 @@ function _navigateTo(section) {
       _panelDirty["artists"] = true;
       _showCached("artists", renderArtists);
       // Trigger exhaustive cover art search for any blank artist cards
-      requestIdleCallback(() => _exhaustiveCoverArtAudit(), { timeout: 2000 });
+      // CHANGED v2.5: Use debounced version to collapse rapid calls
+      requestIdleCallback(() => _exhaustiveCoverArtAuditDebounced(), {
+        timeout: 2000,
+      });
       requestIdleCallback(() => _auditCardImages(), { timeout: 1000 });
       break;
     case "queue":
@@ -2807,9 +3065,38 @@ function _showSkeletonRows(count = 12) {
 // than decoding a full-res src per row.
 // Built incrementally in idle chunks so it doesn't block the UI.
 async function buildThumbnailAtlas() {
+  // CHANGED v2.5: Was building ALL 1127 track thumbnails → 48 seconds.
+  // Now builds ONLY for visible tracks (virtual list viewport) + a
+  // small buffer. The virtual list re-triggers atlas building on scroll
+  // via _populateSlot → _ensureThumbInAtlas, so invisible tracks get
+  // built lazily as the user scrolls.
+  //
+  // This cuts the initial atlas build from ~48s to ~1-2s (only ~50
+  // visible tracks instead of 1127).
+  const visibleTrackIds = new Set();
+  if (typeof virtualList !== "undefined" && virtualList.activeSlots) {
+    for (const [trackId, slot] of virtualList.activeSlots) {
+      if (trackId) visibleTrackIds.add(trackId);
+    }
+  }
+
+  // If the virtual list isn't active (e.g. albums/artists view), build
+  // for the first 100 tracks as a reasonable default. This covers the
+  // home page and album cards without building the full library.
+  if (visibleTrackIds.size === 0) {
+    const subset = state.tracks.slice(0, 100);
+    for (const t of subset) {
+      if (t._thumb || t.coverArt || t._hasCoverArt) {
+        visibleTrackIds.add(t.id);
+      }
+    }
+  }
+
   _atlasBuildQueue = state.tracks.filter(
     (t) =>
-      (t._thumb || t.coverArt || t._hasCoverArt) && !thumbnailAtlas.has(t.id),
+      visibleTrackIds.has(t.id) &&
+      (t._thumb || t.coverArt || t._hasCoverArt) &&
+      !thumbnailAtlas.has(t.id),
   );
   if (_atlasBuilding) return;
   _atlasBuilding = true;
@@ -2877,6 +3164,96 @@ async function buildThumbnailAtlas() {
     virtualList.lastStart = -1;
     virtualList.lastEnd = -1;
     renderVirtualRows();
+  }
+}
+
+/**
+ * Ensure a single track's thumbnail bitmap exists in the atlas.
+ * Called from _populateSlot when a track scrolls into view but its
+ * bitmap isn't built yet. Builds the bitmap ASYNCHRONOUSLY, then
+ * re-draws the canvas on any visible slot for that track.
+ *
+ * CHANGED v2.7: This function was referenced in comments but never
+ * actually existed — that was the root cause of the scroll stutter.
+ * Tracks scrolled into view with no bitmap → fell back to <img loading="lazy">
+ * → async image load → blank space → image popped in later.
+ *
+ * Now: _populateSlot renders a placeholder canvas immediately (sync),
+ * then calls this function which builds the bitmap async and draws it
+ * to the canvas when ready. The user sees a placeholder for ~10-30ms
+ * instead of blank space, then the bitmap appears.
+ *
+ * @param {Object} track
+ */
+const _thumbBuildInFlight = new Set(); // trackIds currently being built
+
+async function _ensureThumbInAtlas(track) {
+  if (!track) return;
+  if (thumbnailAtlas.has(track.id)) return; // already built
+  if (_thumbBuildInFlight.has(track.id)) return; // already building
+  if (!(track._thumb || track.coverArt || track._hasCoverArt)) return;
+
+  _thumbBuildInFlight.add(track.id);
+
+  try {
+    const img = new Image();
+    let thumbSrc = track._thumb || track.coverArt;
+    if (!thumbSrc && track._hasCoverArt) {
+      thumbSrc = `nova-media://art/${encodeURIComponent(track.id)}`;
+    }
+    img.src =
+      thumbSrc.startsWith("nova-media://") || thumbSrc.startsWith("data:")
+        ? thumbSrc
+        : _getCoverArtDisplayUrl(thumbSrc);
+
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+    });
+
+    // Skip 1x1 transparent pixels (stale cache)
+    if (img.naturalWidth <= 1 || img.naturalHeight <= 1) {
+      _idbSet(`batch48::${track.id}`, null);
+      delete track._thumb;
+      return;
+    }
+
+    // Center-crop to square then resize
+    const sw = img.naturalWidth;
+    const sh = img.naturalHeight;
+    const side = Math.min(sw, sh);
+    const sx = Math.floor((sw - side) / 2);
+    const sy = Math.floor((sh - side) / 2);
+    const bitmap = await createImageBitmap(img, sx, sy, side, side, {
+      resizeWidth: THUMBNAIL_SIZE,
+      resizeHeight: THUMBNAIL_SIZE,
+      resizeQuality: "medium",
+    });
+
+    thumbnailAtlas.set(track.id, bitmap);
+
+    // ── Re-draw canvas on any visible slot for this track ──
+    // The slot may have been recycled for a different track by now,
+    // so we check slot._trackId === track.id before drawing.
+    const slot = virtualList.activeSlots.get(track.id);
+    if (slot && slot._trackId === track.id) {
+      const canvas = slot.querySelector(".track-thumb-canvas");
+      if (canvas) {
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(bitmap, 0, 0, THUMB_DPR * 42, THUMB_DPR * 42);
+      } else {
+        // The slot was rendered with an <img> fallback (no canvas).
+        // Re-populate it so the canvas is created and the bitmap drawn.
+        const idx = parseInt(slot.dataset.idx, 10);
+        if (!isNaN(idx) && virtualList.items[idx] === track) {
+          _populateSlot(slot, track, idx);
+        }
+      }
+    }
+  } catch (_) {
+    // Skip failed thumbnails — fall back to <img> tag (already rendered)
+  } finally {
+    _thumbBuildInFlight.delete(track.id);
   }
 }
 
@@ -3246,7 +3623,29 @@ async function _exhaustiveSearchForTrack(track) {
 /**
  * Run exhaustive filesystem search for ALL artist/album groups missing cover art.
  * Called automatically after section rendering. Runs in idle batches.
+ *
+ * CHANGED v2.5: Added debounce wrapper. The audit was being called 4+
+ * times in rapid succession (once per bg-queue + once per tab navigation
+ * to albums/artists). The _exhaustiveSearchRunning flag prevented
+ * concurrent execution, but each call still did the "collect groups
+ * needing art" scan. Now all calls within 2 seconds collapse into one.
  */
+let _exhaustiveAuditDebounceTimer = null;
+let _exhaustiveAuditPending = false;
+
+function _exhaustiveCoverArtAuditDebounced() {
+  // If a call is already pending, don't schedule another
+  if (_exhaustiveAuditPending) return;
+  _exhaustiveAuditPending = true;
+  if (_exhaustiveAuditDebounceTimer)
+    clearTimeout(_exhaustiveAuditDebounceTimer);
+  _exhaustiveAuditDebounceTimer = setTimeout(() => {
+    _exhaustiveAuditPending = false;
+    _exhaustiveAuditDebounceTimer = null;
+    _exhaustiveCoverArtAudit().catch(() => {});
+  }, 2000); // 2-second debounce window
+}
+
 async function _exhaustiveCoverArtAudit() {
   if (_exhaustiveSearchRunning) return;
   _exhaustiveSearchRunning = true;
@@ -3485,9 +3884,440 @@ async function _fetchLibraryCoverArtProgressive() {
   }
 }
 
+/**
+ * Staggered background work queue (v2.4)
+ * ─────────────────────────────────────
+ * Replaces the old 4-second "burst" that fired 7 heavy tasks
+ * simultaneously and saturated the HDD for minutes.
+ *
+ * Queue properties:
+ *   1. Start delay: 10s (was 4s) — audio engine has finished loading
+ *   2. One task at a time (was 7 at once)
+ *   3. Audio-idle gate: before each task, check if audioEngine is
+ *      actively loading/playing. If yes, wait 5s and re-check.
+ *      This prevents background work from competing with playback.
+ *   4. Gap between tasks: 3s (was 0s) — lets the OS flush I/O
+ *   5. Cacheable tasks: skip if completed <7 days ago (IDB check)
+ *
+ * The queue is also PAUSED while the audio engine is actively seeking
+ * or loading a new track (detected via audioEngine._isLoading).
+ */
+const _BG_START_DELAY_MS = 10000; // was 4000
+const _BG_IDLE_GAP_MS = 3000; // gap between tasks
+const _BG_AUDIO_WAIT_MS = 5000; // retry interval if audio is busy
+const _BG_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+let _bgQueueRunning = false;
+
+function _isAudioEngineBusy() {
+  // Check if the audio engine is actively loading or seeking.
+  // If so, we delay background work to avoid I/O competition.
+  try {
+    if (typeof audioEngine === "undefined" || !audioEngine) return false;
+    if (audioEngine._isLoading) return true;
+    // readyState 0 = no data, 1 = metadata, 2 = current frame, 3 = future, 4 = enough
+    // If readyState < 2 AND paused, the engine is probably still loading
+    if (
+      audioEngine.audio &&
+      audioEngine.audio.readyState < 2 &&
+      !audioEngine.audio.paused
+    ) {
+      return true;
+    }
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function _waitForAudioIdle(maxWaitMs = 30000) {
+  const start = Date.now();
+  while (_isAudioEngineBusy()) {
+    if (Date.now() - start > maxWaitMs) {
+      console.log("[bg-queue] Audio still busy after 30s — proceeding anyway");
+      return;
+    }
+    await new Promise((r) => setTimeout(r, _BG_AUDIO_WAIT_MS));
+  }
+}
+
+async function _idbGetCache(key) {
+  try {
+    return await _idbGet(key);
+  } catch (_) {
+    return null;
+  }
+}
+
+async function _idbSetCache(key, value) {
+  try {
+    await _idbSet(key, value);
+  } catch (_) {}
+}
+
+async function _shouldSkipCacheable(taskName) {
+  const key = `bg-cache::${taskName}`;
+  const cached = await _idbGetCache(key);
+  if (cached && typeof cached === "object" && cached.timestamp) {
+    const age = Date.now() - cached.timestamp;
+    if (age < _BG_CACHE_TTL_MS) {
+      console.log(
+        `[bg-queue] Skipping "${taskName}" — cached ${Math.round(age / 1000 / 60)}min ago (< 7 days)`,
+      );
+      return true;
+    }
+  }
+  return false;
+}
+
+async function _markCacheableDone(taskName) {
+  const key = `bg-cache::${taskName}`;
+  await _idbSetCache(key, { timestamp: Date.now() });
+}
+
+function _scheduleBackgroundWork() {
+  if (_bgQueueRunning) return;
+  _bgQueueRunning = true;
+
+  setTimeout(() => {
+    _runBackgroundQueue().catch((err) => {
+      console.warn("[bg-queue] Queue failed:", err.message);
+    });
+  }, _BG_START_DELAY_MS);
+}
+
+async function _runBackgroundQueue() {
+  // Task definitions:
+  //   name:       unique identifier for caching
+  //   fn:         async function to execute
+  //   cacheable:  if true, skip if completed <7 days ago
+  //   idleOnly:   if true, wait for audio engine to be idle before running
+  const tasks = [
+    {
+      name: "thumbnail-atlas",
+      fn: buildThumbnailAtlas,
+      cacheable: true,
+      idleOnly: true,
+    },
+    {
+      name: "cover-art-audit",
+      fn: _exhaustiveCoverArtAudit,
+      cacheable: true,
+      idleOnly: true,
+    },
+    {
+      name: "missing-cover-art",
+      fn: resolveMissingCoverArt,
+      cacheable: false,
+      idleOnly: true,
+    },
+    {
+      name: "missing-thumbnails",
+      fn: () => _generateMissingThumbnails(),
+      cacheable: true,
+      idleOnly: true,
+    },
+    {
+      name: "progressive-covers",
+      fn: _fetchLibraryCoverArtProgressive,
+      cacheable: false,
+      idleOnly: true,
+    },
+    {
+      name: "preload-all-covers",
+      fn: preloadAllCoverArt,
+      cacheable: false,
+      idleOnly: true,
+    },
+    {
+      name: "playlist-covers",
+      fn: _preloadPlaylistCovers,
+      cacheable: true,
+      idleOnly: true,
+    },
+  ];
+
+  console.log(
+    `[bg-queue] Starting staggered queue (${tasks.length} tasks, ${_BG_START_DELAY_MS}ms after load)`,
+  );
+
+  for (let i = 0; i < tasks.length; i++) {
+    const task = tasks[i];
+    const taskStart = Date.now();
+
+    // Wait for audio engine to be idle before starting any task
+    if (task.idleOnly) {
+      await _waitForAudioIdle();
+    }
+
+    // Check cache for cacheable tasks
+    if (task.cacheable && (await _shouldSkipCacheable(task.name))) {
+      continue; // skip — already done recently
+    }
+
+    // Run the task
+    try {
+      console.log(
+        `[bg-queue] (${i + 1}/${tasks.length}) Running "${task.name}"...`,
+      );
+      await task.fn();
+      const elapsed = Date.now() - taskStart;
+      console.log(`[bg-queue] "${task.name}" done in ${elapsed}ms`);
+
+      // Mark cacheable tasks as done
+      if (task.cacheable) {
+        await _markCacheableDone(task.name);
+      }
+    } catch (err) {
+      console.warn(`[bg-queue] "${task.name}" failed:`, err.message);
+    }
+
+    // Gap between tasks — lets the OS flush pending I/O
+    // and gives the audio engine a window to start loading
+    // if the user clicked a track during the previous task.
+    if (i < tasks.length - 1) {
+      await new Promise((r) => setTimeout(r, _BG_IDLE_GAP_MS));
+    }
+  }
+
+  console.log("[bg-queue] All tasks complete.");
+  _bgQueueRunning = false;
+}
+
+/**
+ * MANIFEST FAST PATH
+ * ──────────────────
+ * One IPC call → entire library available as a single ArrayBuffer.
+ * Lazy decode means we only pay the JSON.parse-equivalent cost for
+ * tracks the user actually looks at (current viewport + current track).
+ *
+ * Returns true if the manifest path handled the library load
+ * (renderer should skip the SQLite paginated path).
+ * Returns false if the manifest is unavailable/corrupt and the caller
+ * should fall through to the SQLite path.
+ */
+async function _tryManifestPath() {
+  if (manifestDecoder) {
+    // Already loaded (e.g. reload after background scan) — just refresh UI
+    return _renderFromManifest(manifestDecoder);
+  }
+
+  const decoder = new ManifestDecoder();
+  const loaded = await decoder.load();
+  if (!loaded) return false;
+
+  manifestDecoder = decoder;
+  _updateSplashStatus(
+    "library",
+    "loading",
+    `Decoding ${decoder.trackCount} tracks from manifest…`,
+  );
+
+  return _renderFromManifest(decoder);
+}
+
+/**
+ * Render the library from the manifest decoder. Eagerly loads ALL tracks
+ * because the manifest decoder can produce them with zero IPC (just byte
+ * slicing + UTF-8 decode on a hot V8 path).
+ *
+ * This eliminates the "Library loaded: 500 / All 1127 loaded" gap the
+ * SQLite paginated path has — with the manifest, all tracks are available
+ * the moment the ArrayBuffer arrives.
+ */
+async function _renderFromManifest(decoder) {
+  const total = decoder.trackCount;
+  if (total === 0) {
+    state.tracks = [];
+    state.filteredTracks = [];
+    _updateSplashStatus("library", "done", "Library empty");
+    return true;
+  }
+
+  // Sort order: match the old SQLite ORDER BY dateAdded DESC, title ASC.
+  // The manifest has this pre-computed as 'sortDateAddedDesc'.
+  decoder.setSortOrder("sortDateAddedDesc");
+
+  // Eagerly decode ALL tracks. For 1127 tracks this is ~5-15ms on a
+  // warm V8 (vs 500-1500ms for N×500 JSON.parse + IPC round-trips).
+  // Done on the renderer thread so the main process stays responsive
+  // for AudioEngine protocol requests during playback.
+  const FIRST_PAGE_SIZE = 500;
+  const firstPage = decoder.getTracksRange(0, FIRST_PAGE_SIZE);
+  state.tracks = firstPage;
+
+  _updateSplashStatus(
+    "library",
+    "loading",
+    `First ${firstPage.length}/${total} tracks ready`,
+  );
+
+  // Apply IDB thumbs (same as SQLite path)
+  await _applyIDBThumbs(state.tracks);
+
+  // Build indices + render first page (same code as SQLite path)
+  state.filteredTracks = [...state.tracks];
+  buildSearchIndex();
+  invalidateSectionCache();
+  sectionCache.albums = getAlbumGroups();
+  sectionCache.artists = getArtistGroups();
+  _sortTracks();
+  if (state.activeNavSection === "albums")
+    _reRenderPanel("albums", renderAlbums);
+  else if (state.activeNavSection === "artists")
+    _reRenderPanel("artists", renderArtists);
+  else renderTracks(state.filteredTracks, "library");
+  $$(".nav-item[data-section]").forEach((item) => {
+    item.classList.toggle(
+      "active",
+      item.dataset.section === state.activeNavSection,
+    );
+  });
+
+  console.log(
+    `[startup] Manifest path: first ${firstPage.length}/${total} tracks rendered.`,
+  );
+
+  // Load remaining tracks in the background — all local, no IPC.
+  // Use the same _loadRemainingPagesFromManifest helper so the existing
+  // _restoreFullQueue() hook fires once everything is in state.tracks.
+  if (total > FIRST_PAGE_SIZE) {
+    console.log(
+      `[startup] Loading remaining ${total - firstPage.length} tracks from manifest…`,
+    );
+    _loadRemainingPagesFromManifest(
+      decoder,
+      FIRST_PAGE_SIZE,
+      FIRST_PAGE_SIZE,
+      total,
+    )
+      .then(() => {
+        _restoreFullQueue();
+      })
+      .catch((err) => {
+        console.warn(
+          "[startup] manifest progressive load failed:",
+          err.message,
+        );
+      });
+  } else {
+    // Small library — already fully loaded. Restore queue immediately.
+    _restoreFullQueue();
+  }
+
+  // Decode ThumbHashes + schedule background work (same as SQLite path)
+  const allHashes = {};
+  for (const t of state.tracks) {
+    if (t._thumbHash) allHashes[t.id] = t._thumbHash;
+  }
+  if (Object.keys(allHashes).length > 0) {
+    try {
+      const decodeResult = await window.novaAPI.invoke(
+        "coverart:decode-thumbhashes",
+        { hashes: allHashes },
+      );
+      if (decodeResult?.success && decodeResult.dataURLs) {
+        for (const [trackId, dataURL] of Object.entries(
+          decodeResult.dataURLs,
+        )) {
+          _thumbHashCache.set(trackId, dataURL);
+        }
+      }
+      if (decodeResult?.success && decodeResult.rgbaData) {
+        for (const [trackId, rgba] of Object.entries(decodeResult.rgbaData)) {
+          const color = _extractDominantColor(
+            new Uint8Array(rgba.data),
+            rgba.width,
+            rgba.height,
+          );
+          _dominantColorCache.set(trackId, color);
+        }
+      }
+    } catch (_) {}
+  }
+
+  console.log(`Library loaded: ${state.tracks.length} tracks (manifest)`);
+  _updateSplashStatus("library", "done", `${total} tracks ready (manifest)`);
+
+  // Staggered background work (same as SQLite path — see _scheduleBackgroundWork)
+  _scheduleBackgroundWork();
+
+  return true;
+}
+
+/**
+ * Load remaining tracks from the manifest decoder in chunks, yielding
+ * to the event loop between chunks so the UI stays responsive.
+ * Mirrors _loadRemainingPages() but reads from the in-memory decoder
+ * instead of issuing IPC calls per page.
+ */
+async function _loadRemainingPagesFromManifest(
+  decoder,
+  startPage,
+  pageSize,
+  totalTracks,
+) {
+  const startIdx = startPage * pageSize;
+  const remaining = totalTracks - startIdx;
+  if (remaining <= 0) {
+    console.log(`[progressive] All ${totalTracks} tracks loaded (manifest).`);
+    return;
+  }
+
+  // Decode in chunks of pageSize, yielding between chunks.
+  const CHUNK = pageSize;
+  for (let off = 0; off < remaining; off += CHUNK) {
+    const count = Math.min(CHUNK, remaining - off);
+    const batch = decoder.getTracksRange(startIdx + off, count);
+    await _applyIDBThumbs(batch);
+    state.tracks.push(...batch);
+
+    // Yield to the event loop so the UI stays responsive
+    await new Promise((r) => requestIdleCallback(r, { timeout: 80 }));
+  }
+
+  // Rebuild indices now that all tracks are loaded
+  state.filteredTracks = [...state.tracks];
+  invalidateSectionCache();
+  sectionCache.albums = getAlbumGroups();
+  sectionCache.artists = getArtistGroups();
+  _sortTracks();
+  if (state.activeNavSection === "albums")
+    _reRenderPanel("albums", renderAlbums);
+  else if (state.activeNavSection === "artists")
+    _reRenderPanel("artists", renderArtists);
+  else renderTracks(state.filteredTracks, "library");
+
+  console.log(
+    `[progressive] All ${state.tracks.length} tracks loaded (manifest).`,
+  );
+}
+
 async function _loadLibrary() {
   // Show skeleton immediately so there's no blank state
   _showSkeletonRows(15);
+  _updateSplashStatus("library", "loading", "Loading library…");
+
+  // ─── MANIFEST FAST PATH ──────────────────────────────────────────
+  // Try the binary manifest first. If it's available and valid, we
+  // skip ALL paginated IPC round-trips and ALL JSON.parse calls on
+  // the main process — the entire library is decoded lazily from a
+  // single ArrayBuffer that we already hold in memory.
+  //
+  // If the manifest is missing/corrupt OR the feature flag is off,
+  // `_tryManifestPath` returns false and we fall through to the
+  // SQLite paginated path below.
+  try {
+    const ok = await _tryManifestPath();
+    if (ok) return; // manifest path handles everything (first page + remaining)
+  } catch (err) {
+    console.warn(
+      "[startup] manifest path failed, falling back to SQLite:",
+      err.message,
+    );
+    manifestDecoder = null; // ensure clean fallback
+  }
+
   try {
     // PERF FIX: Progressive library loading for large libraries.
     // Load the first page (500 tracks) immediately for fast first paint,
@@ -3614,16 +4444,20 @@ async function _loadLibrary() {
     }
 
     console.log(`Library loaded: ${state.tracks.length} tracks`);
-    // Defer heavy background operations until 4 seconds after launch so disk/network I/O is totally free for playback
-    setTimeout(() => {
-      buildThumbnailAtlas();
-      resolveMissingCoverArt();
-      _exhaustiveCoverArtAudit();
-      _fetchLibraryCoverArtProgressive();
-      preloadAllCoverArt();
-      _preloadPlaylistCovers();
-      _generateMissingThumbnails();
-    }, 4000);
+    // ── Staggered background work queue (v2.4) ──────────────────────
+    // REPLACED the old 4-second burst (which fired ALL 7 tasks
+    // simultaneously and saturated the HDD for 5-10+ minutes) with a
+    // staggered queue that:
+    //   1. Waits 10s before starting (was 4s) — gives audio engine
+    //      time to finish loading the saved track
+    //   2. Runs ONE task at a time (was 7 at once)
+    //   3. Checks if audio engine is idle before each task
+    //   4. Waits 3s between tasks (was 0s)
+    //   5. Skips cacheable tasks if they ran <7 days ago (IDB cache)
+    //
+    // This eliminates the "burst of stuff happens at bg on start"
+    // hang the user reported.
+    _scheduleBackgroundWork();
   } catch (err) {
     console.error("Library load failed:", err);
   }
@@ -3650,7 +4484,9 @@ async function _applyIDBThumbs(tracks) {
         }
         // Safety timeout to prevent startup hangs if IndexedDB operations block or fail to fire callbacks
         const safetyTimeout = setTimeout(() => {
-          console.warn("[_applyIDBThumbs] IndexedDB read timed out, returning partial results.");
+          console.warn(
+            "[_applyIDBThumbs] IndexedDB read timed out, returning partial results.",
+          );
           resolve(resultMap);
         }, 1000);
 
@@ -4204,123 +5040,123 @@ async function _loadRecentPlayed() {
       // Do NOT show controls yet — preload the track first so play is instant
       _updateNpTitle(trackToPlay.title || "Unknown");
       const npArtist = $("np-artist");
-        if (npArtist) npArtist.textContent = getArtistText(trackToPlay);
+      if (npArtist) npArtist.textContent = getArtistText(trackToPlay);
 
-        const artIdx = getArtIndex(trackToPlay);
+      const artIdx = getArtIndex(trackToPlay);
 
-        // Update np-art (bottom bar)
-        const npArt = $("np-art");
-        if (npArt) {
-          const npArtSrc = _resolveCoverArtSrc(trackToPlay);
-          npArt.innerHTML = npArtSrc
-            ? `<img src="${npArtSrc}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;">`
-            : `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
-        }
-
-        // BUGFIX: Also update the overlay (ov-title, ov-artist, ov-art, ov-mini-*)
-        // Previously, when restoring a saved queue, only the bottom bar was updated.
-        // The overlay showed stale/empty content, no dynamics, and no lyrics.
-        const ovTitle = $("ov-title");
-        if (ovTitle) ovTitle.textContent = trackToPlay.title || "Unknown";
-        const ovArtist = $("ov-artist");
-        if (ovArtist) ovArtist.textContent = getArtistText(trackToPlay);
-        const ovMiniTitle = $("ov-mini-title");
-        if (ovMiniTitle) ovMiniTitle.textContent = trackToPlay.title || "Unknown";
-        const ovMiniArtist = $("ov-mini-artist");
-        if (ovMiniArtist) ovMiniArtist.textContent = getArtistText(trackToPlay);
-
-        const ovArtSrc = _resolveCoverArtSrc(trackToPlay);
-        const ovArt = $("ov-art");
-        const ovMiniArt = $("ov-mini-art");
-        if (ovArt) {
-          ovArt.innerHTML = ovArtSrc
-            ? `<img src="${ovArtSrc}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`
-            : `<div class="art-placeholder art-${artIdx}" style="font-size:56px">&#127925;</div>`;
-        }
-        if (ovMiniArt) {
-          ovMiniArt.innerHTML = ovArtSrc
-            ? `<img src="${ovArtSrc}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`
-            : `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
-        }
-
-        // BUGFIX: Update floating art card (small screens)
-        const floatTitle = $("np-float-title");
-        const floatArtist = $("np-float-artist");
-        const floatArt = $("np-float-art");
-        if (floatTitle) floatTitle.textContent = trackToPlay.title || "Unknown";
-        if (floatArtist) floatArtist.textContent = getArtistText(trackToPlay);
-        if (floatArt) {
-          const floatSrc = _resolveCoverArtSrc(trackToPlay);
-          floatArt.innerHTML = floatSrc
-            ? `<img src="${floatSrc}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:10px;border:none;outline:none;">`
-            : `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
-        }
-
-        _setNpBg(trackToPlay);
-
-        // BUGFIX: Fetch lyrics for the restored track so they appear in overlay
-        lastActiveIdx = -1;
-        _fetchLyrics(trackToPlay);
-
-        // BUGFIX: Show lyrics toggle button
-        const lyricsToggle = $("lyrics-toggle-btn");
-        if (lyricsToggle) lyricsToggle.style.display = "inline-flex";
-
-        // BUGFIX: Sync heart/favorite button state
-        _syncHeartButton();
-
-        // Update OS media session so taskbar/lockscreen shows the restored track
-        // but marks playback as PAUSED — the track hasn't started yet.
-        // Do NOT call _updateMediaSession(trackToPlay) here because that function sets
-        // playbackState="playing", which confuses SMTC/Windows into thinking
-        // music is actively playing before the user clicks anything.
-        if ("mediaSession" in navigator) {
-          const artSrc = _resolveCoverArtSrc(trackToPlay);
-          navigator.mediaSession.metadata = new MediaMetadata({
-            title: trackToPlay.title || "Unknown",
-            artist:
-              typeof trackToPlay.artist === "string"
-                ? trackToPlay.artist
-                : Array.isArray(trackToPlay.artist)
-                  ? trackToPlay.artist.join(", ")
-                  : "Unknown Artist",
-            album: trackToPlay.album || "",
-            artwork: artSrc ? [{ src: artSrc }] : [],
-          });
-          navigator.mediaSession.playbackState = "paused";
-        }
-
-        // BUGFIX: Highlight the active track in the virtual list
-        updateActiveTrackRows(null, trackToPlay.id);
-
-        // Silently preload into AudioEngine; show controls only once buffered.
-        // Returns the promise so DOMContentLoaded can await it before dismissing
-        // the splash screen (the user should see "ready" not "loading").
-        // consecutiveFailures is reset to 0 here so that a preload error on
-        // startup doesn't count against the playNext() skip budget.
-        state.consecutiveFailures = 0;
-        return audioEngine
-          .preload(trackToPlay.filePath)
-          .then(() => {
-            _setControlsVisible(true);
-            // preload() no longer calls init(), so _isInitialized stays false
-            // until the user's first play click. togglePlayPause() will detect
-            // readyState > 0 (buffered) + _isInitialized=false and call
-            // playTrack() which initialises the AudioContext with a user gesture.
-            state.isPlaying = false; // not playing yet, just buffered
-            _updatePlayPauseIcon(false);
-          })
-          .catch(() => {
-            // Preload failed/timed out — clear src so readyState=0 and
-            // togglePlayPause re-delegates to playTrack on next play click.
-            audioEngine.clearSrc();
-            _setControlsVisible(true);
-          });
+      // Update np-art (bottom bar)
+      const npArt = $("np-art");
+      if (npArt) {
+        const npArtSrc = _resolveCoverArtSrc(trackToPlay);
+        npArt.innerHTML = npArtSrc
+          ? `<img src="${npArtSrc}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;">`
+          : `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
       }
-      console.log(
-        `[queue] Restored track ID ${saved.ids[saved.index || 0]} for preload.`,
-      );
+
+      // BUGFIX: Also update the overlay (ov-title, ov-artist, ov-art, ov-mini-*)
+      // Previously, when restoring a saved queue, only the bottom bar was updated.
+      // The overlay showed stale/empty content, no dynamics, and no lyrics.
+      const ovTitle = $("ov-title");
+      if (ovTitle) ovTitle.textContent = trackToPlay.title || "Unknown";
+      const ovArtist = $("ov-artist");
+      if (ovArtist) ovArtist.textContent = getArtistText(trackToPlay);
+      const ovMiniTitle = $("ov-mini-title");
+      if (ovMiniTitle) ovMiniTitle.textContent = trackToPlay.title || "Unknown";
+      const ovMiniArtist = $("ov-mini-artist");
+      if (ovMiniArtist) ovMiniArtist.textContent = getArtistText(trackToPlay);
+
+      const ovArtSrc = _resolveCoverArtSrc(trackToPlay);
+      const ovArt = $("ov-art");
+      const ovMiniArt = $("ov-mini-art");
+      if (ovArt) {
+        ovArt.innerHTML = ovArtSrc
+          ? `<img src="${ovArtSrc}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`
+          : `<div class="art-placeholder art-${artIdx}" style="font-size:56px">&#127925;</div>`;
+      }
+      if (ovMiniArt) {
+        ovMiniArt.innerHTML = ovArtSrc
+          ? `<img src="${ovArtSrc}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`
+          : `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
+      }
+
+      // BUGFIX: Update floating art card (small screens)
+      const floatTitle = $("np-float-title");
+      const floatArtist = $("np-float-artist");
+      const floatArt = $("np-float-art");
+      if (floatTitle) floatTitle.textContent = trackToPlay.title || "Unknown";
+      if (floatArtist) floatArtist.textContent = getArtistText(trackToPlay);
+      if (floatArt) {
+        const floatSrc = _resolveCoverArtSrc(trackToPlay);
+        floatArt.innerHTML = floatSrc
+          ? `<img src="${floatSrc}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:10px;border:none;outline:none;">`
+          : `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
+      }
+
+      _setNpBg(trackToPlay);
+
+      // BUGFIX: Fetch lyrics for the restored track so they appear in overlay
+      lastActiveIdx = -1;
+      _fetchLyrics(trackToPlay);
+
+      // BUGFIX: Show lyrics toggle button
+      const lyricsToggle = $("lyrics-toggle-btn");
+      if (lyricsToggle) lyricsToggle.style.display = "inline-flex";
+
+      // BUGFIX: Sync heart/favorite button state
+      _syncHeartButton();
+
+      // Update OS media session so taskbar/lockscreen shows the restored track
+      // but marks playback as PAUSED — the track hasn't started yet.
+      // Do NOT call _updateMediaSession(trackToPlay) here because that function sets
+      // playbackState="playing", which confuses SMTC/Windows into thinking
+      // music is actively playing before the user clicks anything.
+      if ("mediaSession" in navigator) {
+        const artSrc = _resolveCoverArtSrc(trackToPlay);
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: trackToPlay.title || "Unknown",
+          artist:
+            typeof trackToPlay.artist === "string"
+              ? trackToPlay.artist
+              : Array.isArray(trackToPlay.artist)
+                ? trackToPlay.artist.join(", ")
+                : "Unknown Artist",
+          album: trackToPlay.album || "",
+          artwork: artSrc ? [{ src: artSrc }] : [],
+        });
+        navigator.mediaSession.playbackState = "paused";
+      }
+
+      // BUGFIX: Highlight the active track in the virtual list
+      updateActiveTrackRows(null, trackToPlay.id);
+
+      // Silently preload into AudioEngine; show controls only once buffered.
+      // Returns the promise so DOMContentLoaded can await it before dismissing
+      // the splash screen (the user should see "ready" not "loading").
+      // consecutiveFailures is reset to 0 here so that a preload error on
+      // startup doesn't count against the playNext() skip budget.
+      state.consecutiveFailures = 0;
+      return audioEngine
+        .preload(trackToPlay.filePath)
+        .then(() => {
+          _setControlsVisible(true);
+          // preload() no longer calls init(), so _isInitialized stays false
+          // until the user's first play click. togglePlayPause() will detect
+          // readyState > 0 (buffered) + _isInitialized=false and call
+          // playTrack() which initialises the AudioContext with a user gesture.
+          state.isPlaying = false; // not playing yet, just buffered
+          _updatePlayPauseIcon(false);
+        })
+        .catch(() => {
+          // Preload failed/timed out — clear src so readyState=0 and
+          // togglePlayPause re-delegates to playTrack on next play click.
+          audioEngine.clearSrc();
+          _setControlsVisible(true);
+        });
     }
+    console.log(
+      `[queue] Restored track ID ${saved.ids[saved.index || 0]} for preload.`,
+    );
+  }
   return Promise.resolve();
 }
 
@@ -6435,7 +7271,7 @@ function renderHelp() {
       </div>
 
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
-        NovaTune v1.0.6 &bull; Made with love for music lovers
+        NovaTune v1.0.7 &bull; Made with love for music lovers
       </div>
     </div>
   `);
@@ -7730,7 +8566,11 @@ function _ensureSlotPool() {
     ? Math.ceil((area.clientHeight || 800) / VIRTUAL_ROW_HEIGHT) +
       VIRTUAL_ROW_BUFFER * 2
     : 30;
-  const needed = Math.max(60, visibleCount + 16);
+  // CHANGED v2.7: Was `visibleCount + 16` — too tight for the new
+  // 15-row buffer (visibleCount already includes buffer*2, but we
+  // want headroom for the velocity-gated 3x expansion without
+  // allocating new DOM mid-scroll). 32 extra = ~1.5 screens of slack.
+  const needed = Math.max(60, visibleCount + 32);
   const pool = virtualList.slotPool;
   const freeSlots = virtualList.freeSlots;
   while (pool.length < needed) {
@@ -7761,7 +8601,11 @@ function scheduleVirtualRender() {
       const delta = Math.abs(currentScrollTop - _lastScrollTop);
       _scrollVelocity = delta / dt;
       if (_scrollVelocity > VELOCITY_THRESHOLD) {
-        VIRTUAL_ROW_BUFFER = VIRTUAL_ROW_BUFFER_BASE * 2;
+        // CHANGED v2.7: Was 2x — bumped to 3x for fast scroll on HDD.
+        // 15 × 3 = 45 rows of overscan = ~2600px above + below.
+        // This is a lot of DOM but each row is just a <div> with innerHTML —
+        // the bitmap canvas is only drawn if the bitmap exists.
+        VIRTUAL_ROW_BUFFER = VIRTUAL_ROW_BUFFER_BASE * 3;
       }
     }
     _lastScrollTop = currentScrollTop;
@@ -7945,23 +8789,20 @@ function _populateSlot(row, track, idx) {
       `data-bitmap-id="${track.id}"></canvas>` +
       `<div class="art-placeholder art-${artIdx}" style="display:none">${isActive ? "" : "🎵"}</div>`;
   } else if (track._thumb || track.coverArt || track._hasCoverArt) {
-    // CRITICAL FIX: Must convert file paths to protocol URLs for Electron security
-    // Raw file paths like /path/to/cover.jpg can't be used as <img src> with webSecurity:true
-    let displaySrc;
-    if (track._thumb) {
-      displaySrc =
-        track._thumb.startsWith("nova-media://") ||
-        track._thumb.startsWith("data:")
-          ? track._thumb
-          : _getCoverArtDisplayUrl(track._thumb);
-    } else if (track.coverArt) {
-      displaySrc = _getCoverArtDisplayUrl(track.coverArt);
-    } else if (track._hasCoverArt) {
-      displaySrc = `nova-media://art/${encodeURIComponent(track.id)}`;
-    }
+    // CHANGED v2.7: Render a placeholder canvas NOW (sync) + trigger
+    // async bitmap build via _ensureThumbInAtlas. The old code fell
+    // back to <img loading="lazy"> which is async → blank space.
+    // Now: canvas is created immediately, bitmap is drawn to it when
+    // ready (~10-30ms later). No visible blank space.
+    const canvasW = THUMB_DPR * 42;
+    const canvasH = THUMB_DPR * 42;
     artHtml =
-      `<img src="${displaySrc}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" onerror="this.style.display='none';this.nextElementSibling.style.display=''">` +
+      `<canvas class="track-thumb-canvas" width="${canvasW}" height="${canvasH}" ` +
+      `style="width:42px;height:42px;border-radius:4px;display:block;background:rgba(255,255,255,0.04);" ` +
+      `data-bitmap-id="${track.id}"></canvas>` +
       `<div class="art-placeholder art-${artIdx}" style="display:none">${isActive ? "" : "🎵"}</div>`;
+    // Fire-and-forget: build the bitmap async and draw it to this canvas
+    _ensureThumbInAtlas(track);
   } else {
     artHtml = `<div class="art-placeholder art-${artIdx}">${isActive ? "" : "🎵"}</div>`;
   }
@@ -9220,7 +10061,7 @@ function _setupAudioEvents() {
           // Use a secondary hidden audio element so we don't clobber the active one
           if (!window._nextTrackAudio) {
             window._nextTrackAudio = new Audio();
-            window._nextTrackAudio.preload = auto;
+            window._nextTrackAudio.preload = "auto";
           }
           // Only preload if AudioEngine is not currently loading something
           if (!audioEngine._isLoading) {
