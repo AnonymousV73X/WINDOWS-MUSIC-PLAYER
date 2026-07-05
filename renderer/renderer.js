@@ -174,6 +174,23 @@ const state = {
 const audioEngine = AudioEngine.getInstance();
 let eqEngine = null;
 
+/**
+ * Get the TOTAL track count (not just what's loaded in state.tracks so far).
+ * During progressive loading, state.tracks may only have 500 tracks while
+ * the full library has 1127. This function returns the correct total by
+ * checking the manifest decoder first, then falling back to state.tracks.length.
+ *
+ * CHANGED v2.8: Was using state.tracks.length directly in renderHome(),
+ * which showed "500 songs in library" during progressive loading instead
+ * of the real total (1127).
+ */
+function _getTotalTrackCount() {
+  if (manifestDecoder && manifestDecoder.isReady) {
+    return manifestDecoder.trackCount;
+  }
+  return state.tracks.length;
+}
+
 // ─── Squiggly Progress (AOSP port) — OffscreenCanvas Worker ────────
 // The wave RAF loop runs in a dedicated Worker via OffscreenCanvas.
 // Main thread never touches the canvas; janky audio callbacks can't drop frames.
@@ -2472,12 +2489,64 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+/**
+ * Toggle the floating nav card (compact popover menu), or fall back to
+ * toggling the full sidebar if the floating card isn't available.
+ *
+ * CHANGED v2.9: The logo click used to call toggleSidebar() directly,
+ * but the user wanted it to toggle the floating menu instead — that's
+ * the compact, app-like popover. On wide screens (>950px) the sidebar
+ * is always visible and there's no floating card, so we fall back to
+ * toggleSidebar() there.
+ */
+function _toggleFloatingNavOrSidebar() {
+  const card = document.getElementById("floating-nav-card");
+  // If the floating card exists and we're on a narrow screen, toggle it
+  if (card && window.innerWidth <= 950) {
+    const isOpen = card.classList.contains("visible");
+    if (isOpen) {
+      // Close
+      card.classList.remove("visible");
+      const trigger = document.getElementById("float-nav-trigger");
+      if (trigger) trigger.classList.remove("nav-open");
+      card.addEventListener(
+        "transitionend",
+        () => {
+          if (!card.classList.contains("visible")) card.style.display = "none";
+        },
+        { once: true },
+      );
+    } else {
+      // Open
+      card.style.display = "flex";
+      requestAnimationFrame(() => card.classList.add("visible"));
+      const trigger = document.getElementById("float-nav-trigger");
+      if (trigger) trigger.classList.add("nav-open");
+    }
+    return;
+  }
+  // Fallback: toggle the full sidebar
+  toggleSidebar();
+}
+
 // ─── Sidebar ──────────────────────────────────────────────────────
 function _wireSidebar() {
   const menuBtn = $("menu-btn");
   if (menuBtn) menuBtn.addEventListener("click", toggleSidebar);
   const overlay = $("sidebar-overlay");
   if (overlay) overlay.addEventListener("click", toggleSidebar);
+
+  // CHANGED v2.9: Click the NovaTune logo/title in the titlebar to
+  // toggle the FLOATING NAV CARD (not the big sidebar). The floating
+  // menu is the compact popover — more app-like than sliding the full
+  // sidebar open. Falls back to toggleSidebar() if the floating card
+  // isn't available (e.g. on wide screens where sidebar is always visible).
+  const titlebarLogo = document.querySelector(".titlebar-logo");
+  if (titlebarLogo)
+    titlebarLogo.addEventListener("click", _toggleFloatingNavOrSidebar);
+  const titlebarName = document.querySelector(".titlebar-name");
+  if (titlebarName)
+    titlebarName.addEventListener("click", _toggleFloatingNavOrSidebar);
 
   const lyricsToggle = $("lyrics-toggle-btn");
   if (lyricsToggle) {
@@ -4703,7 +4772,7 @@ function renderHome() {
       <div class="home-hero-content">
         <div class="section-kicker">NovaTune</div>
         <h2>Your music, ready fast.</h2>
-        <p>${state.tracks.length} songs in library • ${state.playlists.length} ${state.playlists.length === 1 ? "playlist" : "playlists"} • ${totalDuration}</p>
+        <p>${_getTotalTrackCount()} songs in library • ${state.playlists.length} ${state.playlists.length === 1 ? "playlist" : "playlists"} • ${totalDuration}</p>
       </div>
       <button style=" font-family: inherit;
   font-weight: 600!important;
@@ -5703,6 +5772,24 @@ function applyEQPreset(values) {
 
 async function _loadPlaylists() {
   try {
+    // CHANGED v2.8: Merge duplicate playlists (same name, case-insensitive)
+    // BEFORE loading. This handles the case where the user has multiple
+    // "Favorites" playlists from re-installs or imports. The merge is
+    // done on the backend (SQLite transaction) and is idempotent —
+    // if there are no duplicates, it's a no-op.
+    try {
+      const mergeResult = await window.novaAPI.invoke(
+        "playlist:merge-duplicates",
+      );
+      if (mergeResult.success && mergeResult.merged > 0) {
+        console.log(
+          `[playlists] Merged ${mergeResult.merged} duplicate playlists`,
+        );
+      }
+    } catch (mergeErr) {
+      console.warn("Playlist merge failed:", mergeErr);
+    }
+
     const result = await window.novaAPI.invoke("playlist:get-all");
     if (!result.success) return;
     state.playlists = result.playlists || [];
@@ -6454,13 +6541,23 @@ function getAlbumGroups() {
   const groups = new Map();
   for (const track of source) {
     const album = (track.album || "Unknown Album").trim() || "Unknown Album";
-    const artist = getArtistText(track) || "Unknown Artist";
-    const key = `${album.toLowerCase()}::${artist.toLowerCase()}`;
+    // CHANGED v1.0.8: Group by albumArtist (not per-track artist).
+    // The old code used getArtistText(track) which returns the per-track
+    // artist — so albums with featured artists (e.g. "Eminem ft. Dr Dre"
+    // on one track, "Eminem" on others) split into separate cards.
+    // albumArtist is the album-level artist tag that stays consistent
+    // across all tracks on the same album. Falls back to per-track
+    // artist only if albumArtist is missing (some files don't have it).
+    const albumArtist =
+      (track.albumArtist && track.albumArtist.trim()) ||
+      getArtistText(track) ||
+      "Unknown Artist";
+    const key = `${album.toLowerCase()}::${albumArtist.toLowerCase()}`;
     if (!groups.has(key))
       groups.set(key, {
         key,
         album,
-        artist,
+        artist: albumArtist,
         tracks: [],
         coverArt: null,
         year: 0,
@@ -7271,7 +7368,7 @@ function renderHelp() {
       </div>
 
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
-        NovaTune v1.0.7 &bull; Made with love for music lovers
+        NovaTune v1.0.8 &bull; Made with love for music lovers
       </div>
     </div>
   `);
@@ -11073,6 +11170,10 @@ function _createFloatingNavCard() {
   const activeSection = state.activeNavSection || "library";
 
   let html = "";
+  // CHANGED v2.9: Removed the X close button from inside the floating nav card.
+  // The card is closed via the trigger button in the toolbar (which turns
+  // into an X when the card is open) or by clicking the NovaTune logo.
+  // Having two X buttons was redundant and confusing.
   sections.forEach((s) => {
     html += `<button class="fn-btn${s.id === activeSection ? " active" : ""}" data-section="${s.id}" data-label="${s.label}" aria-label="${s.label}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${s.icon}</svg>
@@ -11154,23 +11255,10 @@ function initLeftEdgeHover() {
       state.activeNavSection = section;
       _navigateTo(section);
 
-      // Icon mode: close the popover and clear the trigger's active state
-      if (
-        card.classList.contains("nav-icon") &&
-        card.classList.contains("visible")
-      ) {
-        const trigger = document.getElementById("float-nav-trigger");
-        card.classList.remove("visible");
-        if (trigger) trigger.classList.remove("nav-open");
-        card.addEventListener(
-          "transitionend",
-          () => {
-            if (!card.classList.contains("visible"))
-              card.style.display = "none";
-          },
-          { once: true },
-        );
-      }
+      // CHANGED v2.8→v2.9: Card stays open on navigation. No X button
+      // inside the card anymore — close via the trigger button in the
+      // toolbar (turns into X when card is open) or by clicking the
+      // NovaTune logo.
     });
   });
 

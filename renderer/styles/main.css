@@ -66,7 +66,15 @@
   position: absolute;
   inset: -16px;
   border-radius: 50%;
-  background: radial-gradient(circle, var(--green, #1ed760) 0%, transparent 65%);
+  /* v2.9: Use the user's theme color for the glow. color-mix() lets us
+     add alpha to a CSS variable — supported in Chromium 111+
+     (Electron 28 uses Chromium 122). Falls back to var(--green) at
+     full opacity if color-mix isn't supported. */
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--green, #1ed760) 100%, transparent) 0%,
+    transparent 65%
+  );
   opacity: 0;
   animation: splash-glow 3s ease-in-out infinite;
   pointer-events: none;
@@ -149,18 +157,22 @@
 @keyframes splash-pulse {
   0%, 100% {
     transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(30, 215, 96, 0.4);
+    /* v2.9: Use currentColor so the pulse matches the user's theme color.
+       The dot's border color is set to var(--green) in the loading state,
+       and currentColor inherits that. */
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--green, #1ed760) 40%, transparent);
   }
   50% {
     transform: scale(1.15);
-    box-shadow: 0 0 0 4px rgba(30, 215, 96, 0);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--green, #1ed760) 0%, transparent);
   }
 }
 
 /* Done state: solid green circle with subtle glow */
 .splash-status-row.is-done .splash-status-dot {
   background: var(--green, #1ed760);
-  box-shadow: 0 0 6px rgba(30, 215, 96, 0.5);
+  /* v2.9: Use color-mix() for the glow so it matches the user's theme color */
+  box-shadow: 0 0 6px color-mix(in srgb, var(--green, #1ed760) 50%, transparent);
 }
 
 /* Error state: solid red circle */
@@ -207,7 +219,8 @@
   background: var(--green, #1ed760);
   border-radius: 1px;
   transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 0 8px rgba(30, 215, 96, 0.4);
+  /* v2.9: Use color-mix() for the glow so it matches the user's theme color */
+  box-shadow: 0 0 8px color-mix(in srgb, var(--green, #1ed760) 40%, transparent);
 }
 
 /* ── Splash Keyframes ── */
@@ -336,6 +349,19 @@ body.overlay-visible .titlebar {
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer; /* v2.9: clickable — toggles floating menu */
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.titlebar-logo:hover {
+  transform: scale(1.1);
+  /* v2.9: Use the user's theme color (--green) for the glow instead
+     of hardcoded rgba(30,215,96,...). CSS doesn't let us combine a
+     CSS variable with alpha directly, so we use color-mix() which
+     is supported in Chromium 111+ (Electron 28 uses Chromium 122). */
+  box-shadow: 0 0 8px color-mix(in srgb, var(--green) 50%, transparent);
+}
+.titlebar-name {
+  cursor: pointer; /* v2.9: clickable — toggles floating menu */
 }
 
 .titlebar-logo svg {

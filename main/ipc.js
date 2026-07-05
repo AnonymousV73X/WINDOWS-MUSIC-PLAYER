@@ -620,24 +620,18 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   // We default ON because ultraspeed is the goal, but a corrupt manifest
   // silently falls back to SQLite — see manifestReader.js validation.
   let manifestEnabled = true;
-  if (
-    process.env.NOVATUNE_USE_MANIFEST === "0" ||
-    process.env.NOVATUNE_USE_MANIFEST === "false"
-  ) {
+  if (process.env.NOVATUNE_USE_MANIFEST === "0" ||
+      process.env.NOVATUNE_USE_MANIFEST === "false") {
     manifestEnabled = false;
-  } else if (
-    process.env.NOVATUNE_USE_MANIFEST === "1" ||
-    process.env.NOVATUNE_USE_MANIFEST === "true"
-  ) {
+  } else if (process.env.NOVATUNE_USE_MANIFEST === "1" ||
+             process.env.NOVATUNE_USE_MANIFEST === "true") {
     manifestEnabled = true;
   } else {
     // Env var unset → consult settings.json
     try {
       const settingsForFlag = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
       if (settingsForFlag._useManifest === false) manifestEnabled = false;
-    } catch (_) {
-      /* default ON */
-    }
+    } catch (_) { /* default ON */ }
   }
   ManifestIPC.setFeatureFlag(manifestEnabled);
   console.log(`[manifest] feature flag: ${manifestEnabled ? "ON" : "OFF"}`);
@@ -1142,15 +1136,21 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             // directly to avoid a redundant SQLite round-trip.
             const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
             const fp = settings._combinedFingerprint || "";
-            const result = await ManifestIPC.rebuildManifest(mergedLibrary, fp);
+            const result = await ManifestIPC.rebuildManifest(
+              mergedLibrary,
+              fp,
+            );
             if (result.ok) {
               console.log(
                 `[manifest] rebuilt after scan in ${Date.now() - rebuildStart}ms ` +
-                  `(${result.trackCount} tracks, ${result.size} bytes)`,
+                `(${result.trackCount} tracks, ${result.size} bytes)`,
               );
             }
           } catch (err) {
-            console.warn("[manifest] post-scan rebuild failed:", err.message);
+            console.warn(
+              "[manifest] post-scan rebuild failed:",
+              err.message,
+            );
           }
         });
       }
@@ -1632,9 +1632,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       saveLibrary([]);
       // Drop the manifest too so the renderer falls back to SQLite
       // until the next scan rebuilds it.
-      try {
-        ManifestIPC.deleteManifest();
-      } catch (_) {}
+      try { ManifestIPC.deleteManifest(); } catch (_) {}
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
@@ -2428,6 +2426,142 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
     try {
       return { success: true, playlists: getPlaylists() };
     } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── CHANGED v2.8: Merge duplicate playlists with the same name ──
+  // If the user has multiple playlists named "Favorites" (e.g. from
+  // re-importing, re-installing, or creating duplicates by accident),
+  // this handler merges them into one: keeps the oldest playlist,
+  // moves all tracks from the duplicates into it (deduped), then
+  // deletes the duplicates.
+  //
+  // Called automatically by the renderer on startup via _loadPlaylists().
+  // Also safe to call manually via the UI.
+  ipcMain.handle("playlist:merge-duplicates", async () => {
+    try {
+      const allPlaylists = getPlaylists();
+      if (allPlaylists.length === 0) {
+        return { success: true, merged: 0, message: "No playlists" };
+      }
+
+      // Group by case-insensitive name
+      const groups = new Map(); // lowercaseName → [playlists]
+      for (const p of allPlaylists) {
+        const key = (p.name || "").trim().toLowerCase();
+        if (!key) continue;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(p);
+      }
+
+      let totalMerged = 0;
+      const mergeOperations = [];
+
+      for (const [key, dups] of groups) {
+        if (dups.length < 2) continue; // no duplicates
+
+        // Sort by createdAt ascending — oldest wins
+        dups.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+        const keeper = dups[0];
+        const losers = dups.slice(1);
+
+        // Merge all tracks from losers into keeper (deduped)
+        const keeperTrackSet = new Set(keeper.tracks || []);
+        let addedCount = 0;
+        for (const loser of losers) {
+          for (const trackId of loser.tracks || []) {
+            if (!keeperTrackSet.has(trackId)) {
+              keeperTrackSet.add(trackId);
+              addedCount++;
+            }
+          }
+        }
+
+        keeper.tracks = Array.from(keeperTrackSet);
+        keeper.updatedAt = Date.now();
+
+        mergeOperations.push({
+          keeperId: keeper.id,
+          keeperName: keeper.name,
+          loserIds: losers.map((l) => l.id),
+          addedTracks: addedCount,
+        });
+
+        totalMerged += losers.length;
+      }
+
+      if (mergeOperations.length === 0) {
+        return { success: true, merged: 0, message: "No duplicates found" };
+      }
+
+      // Execute merges in a transaction
+      const tx = db.transaction(() => {
+        for (const op of mergeOperations) {
+          // 1. Move all tracks from losers to keeper
+          const moveStmt = db.prepare(`
+            INSERT OR IGNORE INTO playlist_tracks (playlistId, trackId, position, addedAt)
+            SELECT ?, trackId, position, addedAt
+            FROM playlist_tracks WHERE playlistId = ?
+          `);
+          for (const loserId of op.loserIds) {
+            moveStmt.run(op.keeperId, loserId);
+          }
+
+          // 2. Delete losers' track entries
+          const delTracksStmt = db.prepare(
+            "DELETE FROM playlist_tracks WHERE playlistId = ?",
+          );
+          for (const loserId of op.loserIds) {
+            delTracksStmt.run(loserId);
+          }
+
+          // 3. Delete loser playlists
+          const delPlaylistStmt = db.prepare(
+            "DELETE FROM playlists WHERE id = ?",
+          );
+          for (const loserId of op.loserIds) {
+            delPlaylistStmt.run(loserId);
+          }
+
+          // 4. Update keeper's tracks array in the playlists table
+          // (savePlaylist does this, but we're in a transaction so do it manually)
+          const keeper = getPlaylists().find((p) => p.id === op.keeperId);
+          if (keeper) {
+            // Re-read merged tracks from DB to get the correct order
+            const tracks = db
+              .prepare(
+                "SELECT trackId FROM playlist_tracks WHERE playlistId = ? ORDER BY position, addedAt",
+              )
+              .all(op.keeperId)
+              .map((r) => r.trackId);
+            keeper.tracks = tracks;
+            keeper.updatedAt = Date.now();
+            savePlaylist(keeper);
+          }
+        }
+      });
+      tx();
+
+      // Invalidate cache so next getPlaylists() reads fresh data
+      playlistsCache = null;
+
+      console.log(
+        `[playlist:merge-duplicates] Merged ${totalMerged} duplicate playlists`,
+      );
+      for (const op of mergeOperations) {
+        console.log(
+          `  ✓ "${op.keeperName}": kept ${op.keeperId}, removed ${op.loserIds.length} duplicates, added ${op.addedTracks} tracks`,
+        );
+      }
+
+      return {
+        success: true,
+        merged: totalMerged,
+        operations: mergeOperations,
+      };
+    } catch (err) {
+      console.error("[playlist:merge-duplicates] Error:", err);
       return { success: false, error: err.message };
     }
   });

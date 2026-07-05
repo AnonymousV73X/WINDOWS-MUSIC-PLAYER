@@ -28,6 +28,156 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
+// main/fileLogger.js
+var require_fileLogger = __commonJS({
+  "main/fileLogger.js"(exports2, module2) {
+    "use strict";
+    var fs = require("fs");
+    var path = require("path");
+    var os = require("os");
+    var MAX_LOG_SIZE = 5 * 1024 * 1024;
+    var _logPath = null;
+    var _writeStream = null;
+    var _originalConsole = null;
+    var _initialized = false;
+    function _resolveLogPath() {
+      try {
+        const { app } = require("electron");
+        if (app && typeof app.getPath === "function") {
+          const userData = app.getPath("userData");
+          try {
+            fs.mkdirSync(userData, { recursive: true });
+          } catch (_) {
+          }
+          return path.join(userData, "novatune.log");
+        }
+      } catch (_) {
+      }
+      return path.join(os.tmpdir(), "novatune.log");
+    }
+    function _rotateIfNeeded() {
+      try {
+        if (!fs.existsSync(_logPath)) return;
+        const stats = fs.statSync(_logPath);
+        if (stats.size < MAX_LOG_SIZE) return;
+        if (_writeStream) {
+          try {
+            _writeStream.end();
+          } catch (_) {
+          }
+          _writeStream = null;
+        }
+        const backupPath = _logPath + ".1";
+        try {
+          if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
+          fs.renameSync(_logPath, backupPath);
+        } catch (_) {
+          try {
+            fs.writeFileSync(_logPath, "");
+          } catch (_2) {
+          }
+        }
+      } catch (_) {
+      }
+    }
+    function _openStream() {
+      try {
+        _writeStream = fs.createWriteStream(_logPath, { flags: "a" });
+        _writeStream.on("error", () => {
+        });
+      } catch (err) {
+        _writeStream = null;
+      }
+    }
+    function _formatLine(level, args) {
+      const ts = (/* @__PURE__ */ new Date()).toISOString();
+      const prefix = `[${ts}] [${level}]`;
+      const parts = args.map((arg) => {
+        if (arg instanceof Error) return arg.stack || arg.message;
+        if (typeof arg === "object" && arg !== null) {
+          try {
+            return JSON.stringify(arg);
+          } catch (_) {
+            return String(arg);
+          }
+        }
+        return String(arg);
+      });
+      return `${prefix} ${parts.join(" ")}
+`;
+    }
+    function _writeLog(level, originalFn, args) {
+      try {
+        originalFn.apply(console, args);
+      } catch (_) {
+      }
+      if (!_writeStream) return;
+      const line = _formatLine(level, args);
+      try {
+        _writeStream.write(line);
+        if (Math.random() < 2e-3) _rotateIfNeeded();
+      } catch (_) {
+      }
+    }
+    function initFileLogger(options = {}) {
+      if (_initialized) return;
+      _initialized = true;
+      _logPath = options.logPath || _resolveLogPath();
+      _rotateIfNeeded();
+      _openStream();
+      _originalConsole = {
+        log: console.log.bind(console),
+        warn: console.warn.bind(console),
+        error: console.error.bind(console),
+        info: console.info.bind(console)
+      };
+      console.log = function(...args) {
+        _writeLog("LOG", _originalConsole.log, args);
+      };
+      console.warn = function(...args) {
+        _writeLog("WARN", _originalConsole.warn, args);
+      };
+      console.error = function(...args) {
+        _writeLog("ERROR", _originalConsole.error, args);
+      };
+      console.info = function(...args) {
+        _writeLog("INFO", _originalConsole.info, args);
+      };
+      console.log(
+        "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
+      );
+      console.log(`NovaTune session started at ${(/* @__PURE__ */ new Date()).toISOString()}`);
+      console.log(`Log file: ${_logPath}`);
+      console.log(`Process PID: ${process.pid}`);
+      console.log(`Platform: ${process.platform} ${process.arch}`);
+      console.log(
+        `Electron: ${process.versions.electron}, Node: ${process.versions.node}`
+      );
+      console.log(`Argv: ${process.argv.join(" ")}`);
+      console.log(
+        "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
+      );
+    }
+    function closeFileLogger() {
+      if (!_writeStream) return;
+      try {
+        console.log("NovaTune session ending.");
+        _writeStream.end();
+      } catch (_) {
+      }
+      _writeStream = null;
+    }
+    function getLogPath() {
+      return _logPath;
+    }
+    module2.exports = {
+      initFileLogger,
+      closeFileLogger,
+      getLogPath
+    };
+  }
+});
+
 // node_modules/v8-compile-cache/v8-compile-cache.js
 var require_v8_compile_cache = __commonJS({
   "node_modules/v8-compile-cache/v8-compile-cache.js"(exports2, module2) {
@@ -2360,7 +2510,7 @@ var require_package = __commonJS({
   "package.json"(exports2, module2) {
     module2.exports = {
       name: "novatune",
-      version: "1.0.7",
+      version: "1.0.8",
       description: "NovaTune \u2014 A premium Windows music player with Spotify-dark aesthetics",
       main: "main/main.bundle.js",
       scripts: {
@@ -3254,14 +3404,20 @@ var require_ipc = __commonJS({
               try {
                 const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
                 const fp = settings._combinedFingerprint || "";
-                const result = await ManifestIPC.rebuildManifest(mergedLibrary, fp);
+                const result = await ManifestIPC.rebuildManifest(
+                  mergedLibrary,
+                  fp
+                );
                 if (result.ok) {
                   console.log(
                     `[manifest] rebuilt after scan in ${Date.now() - rebuildStart}ms (${result.trackCount} tracks, ${result.size} bytes)`
                   );
                 }
               } catch (err) {
-                console.warn("[manifest] post-scan rebuild failed:", err.message);
+                console.warn(
+                  "[manifest] post-scan rebuild failed:",
+                  err.message
+                );
               }
             });
           }
@@ -4221,6 +4377,102 @@ var require_ipc = __commonJS({
         try {
           return { success: true, playlists: getPlaylists() };
         } catch (err) {
+          return { success: false, error: err.message };
+        }
+      });
+      ipcMain.handle("playlist:merge-duplicates", async () => {
+        try {
+          const allPlaylists = getPlaylists();
+          if (allPlaylists.length === 0) {
+            return { success: true, merged: 0, message: "No playlists" };
+          }
+          const groups = /* @__PURE__ */ new Map();
+          for (const p of allPlaylists) {
+            const key = (p.name || "").trim().toLowerCase();
+            if (!key) continue;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(p);
+          }
+          let totalMerged = 0;
+          const mergeOperations = [];
+          for (const [key, dups] of groups) {
+            if (dups.length < 2) continue;
+            dups.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+            const keeper = dups[0];
+            const losers = dups.slice(1);
+            const keeperTrackSet = new Set(keeper.tracks || []);
+            let addedCount = 0;
+            for (const loser of losers) {
+              for (const trackId of loser.tracks || []) {
+                if (!keeperTrackSet.has(trackId)) {
+                  keeperTrackSet.add(trackId);
+                  addedCount++;
+                }
+              }
+            }
+            keeper.tracks = Array.from(keeperTrackSet);
+            keeper.updatedAt = Date.now();
+            mergeOperations.push({
+              keeperId: keeper.id,
+              keeperName: keeper.name,
+              loserIds: losers.map((l) => l.id),
+              addedTracks: addedCount
+            });
+            totalMerged += losers.length;
+          }
+          if (mergeOperations.length === 0) {
+            return { success: true, merged: 0, message: "No duplicates found" };
+          }
+          const tx = db.transaction(() => {
+            for (const op of mergeOperations) {
+              const moveStmt = db.prepare(`
+            INSERT OR IGNORE INTO playlist_tracks (playlistId, trackId, position, addedAt)
+            SELECT ?, trackId, position, addedAt
+            FROM playlist_tracks WHERE playlistId = ?
+          `);
+              for (const loserId of op.loserIds) {
+                moveStmt.run(op.keeperId, loserId);
+              }
+              const delTracksStmt = db.prepare(
+                "DELETE FROM playlist_tracks WHERE playlistId = ?"
+              );
+              for (const loserId of op.loserIds) {
+                delTracksStmt.run(loserId);
+              }
+              const delPlaylistStmt = db.prepare(
+                "DELETE FROM playlists WHERE id = ?"
+              );
+              for (const loserId of op.loserIds) {
+                delPlaylistStmt.run(loserId);
+              }
+              const keeper = getPlaylists().find((p) => p.id === op.keeperId);
+              if (keeper) {
+                const tracks = db.prepare(
+                  "SELECT trackId FROM playlist_tracks WHERE playlistId = ? ORDER BY position, addedAt"
+                ).all(op.keeperId).map((r) => r.trackId);
+                keeper.tracks = tracks;
+                keeper.updatedAt = Date.now();
+                savePlaylist(keeper);
+              }
+            }
+          });
+          tx();
+          playlistsCache = null;
+          console.log(
+            `[playlist:merge-duplicates] Merged ${totalMerged} duplicate playlists`
+          );
+          for (const op of mergeOperations) {
+            console.log(
+              `  \u2713 "${op.keeperName}": kept ${op.keeperId}, removed ${op.loserIds.length} duplicates, added ${op.addedTracks} tracks`
+            );
+          }
+          return {
+            success: true,
+            merged: totalMerged,
+            operations: mergeOperations
+          };
+        } catch (err) {
+          console.error("[playlist:merge-duplicates] Error:", err);
           return { success: false, error: err.message };
         }
       });
@@ -5492,6 +5744,8 @@ var require_main = __commonJS({
       protocol,
       net
     } = require("electron");
+    var { initFileLogger, closeFileLogger } = require_fileLogger();
+    initFileLogger();
     var os = require("os");
     var fsSafety = require("fs");
     var pathSafety = require("path");
@@ -5576,15 +5830,40 @@ var require_main = __commonJS({
     ]);
     var gotTheLock = app.requestSingleInstanceLock();
     if (!gotTheLock) {
+      console.log("[single-instance] Another instance has the lock \u2014 quitting.");
       app.quit();
     } else {
       app.on("second-instance", () => {
+        console.log("[single-instance] Second instance launched \u2014 focusing existing window.");
         if (mainWindow) {
           if (mainWindow.isMinimized()) mainWindow.restore();
           mainWindow.focus();
+        } else {
+          console.log("[single-instance] No window exists \u2014 zombie process. Force-exiting.");
+          app.exit(0);
         }
       });
     }
+    var _forceQuitTimer = null;
+    app.on("before-quit", (event) => {
+      console.log("[quit] before-quit received \u2014 starting 3s force-exit timer.");
+      if (_forceQuitTimer) return;
+      _forceQuitTimer = setTimeout(() => {
+        console.warn("[quit] Force-exit timer fired \u2014 process.exit(0).");
+        try {
+          closeFileLogger();
+        } catch (_) {
+        }
+        process.exit(0);
+      }, 3e3);
+    });
+    app.on("will-quit", () => {
+      console.log("[quit] will-quit \u2014 flushing logger.");
+      try {
+        closeFileLogger();
+      } catch (_) {
+      }
+    });
     var mainWindow = null;
     var _thumbGenInFlight = /* @__PURE__ */ new Map();
     var _protocolCache = /* @__PURE__ */ new Map();
@@ -6170,8 +6449,13 @@ var require_main = __commonJS({
       });
     });
     app.on("window-all-closed", () => {
+      console.log("[quit] window-all-closed \u2014 cleaning up SMTC and quitting.");
       if (smtcBridge) {
-        smtcBridge.destroy();
+        try {
+          smtcBridge.destroy();
+        } catch (err) {
+          console.warn("[quit] SMTC destroy failed (ignoring):", err.message);
+        }
         smtcBridge = null;
       }
       if (process.platform !== "darwin") app.quit();

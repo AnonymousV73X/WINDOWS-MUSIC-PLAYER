@@ -28,6 +28,14 @@ const {
   net,
 } = require("electron");
 
+// ─── File Logger (v3.0) ─────────────────────────────────────────────
+// MUST be the first thing initialized — before any other require() —
+// so we capture every log line from the entire app lifecycle. In a
+// packaged exe there's no terminal, so without this all console output
+// vanishes and users have no way to send logs for debugging.
+const { initFileLogger, closeFileLogger } = require("./fileLogger");
+initFileLogger();
+
 // ─── Crash Safety Net ────────────────────────────────────────────────
 // Previously, any synchronous throw during startup (e.g. mkdir failing
 // right after a user manually deleted the app's data folder) crashed the
@@ -131,19 +139,66 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
-// ─── Prevent multiple instances ────────────────────────────────────
+// ─── Prevent multiple instances (v3.0: hardened) ───────────────────
+// CHANGED v3.0: The old code had a zombie-process bug:
+//   1. User closes window → window-all-closed fires → smtcBridge.destroy()
+//      hangs or throws → app.quit() never runs → process stays in Task Manager
+//   2. User relaunches → new process fails to get lock → app.quit() →
+//      second-instance fires on the OLD zombie → old process tries to focus
+//      its destroyed window → nothing visible → user sees nothing
+//
+// Fix:
+//   - In second-instance: if no window exists, the old process is a zombie
+//     → call app.exit(0) to force-kill it (the new instance will retry)
+//   - In window-all-closed: wrap smtcBridge.destroy() in try/catch so it
+//     can never prevent app.quit()
+//   - Add before-quit handler with a 3-second force-exit safety net:
+//     if app.quit() doesn't complete in 3s (something is hanging),
+//     process.exit(0) forces immediate termination
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
+  console.log("[single-instance] Another instance has the lock — quitting.");
   app.quit();
 } else {
   app.on("second-instance", () => {
+    console.log("[single-instance] Second instance launched — focusing existing window.");
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
+    } else {
+      // CHANGED v3.0: No window exists — this process is a zombie (the
+      // window was closed but app.quit() never completed). Force-exit
+      // so the new instance can acquire the lock on its next attempt.
+      console.log("[single-instance] No window exists — zombie process. Force-exiting.");
+      app.exit(0);
     }
   });
 }
+
+// ─── Force-quit safety net (v3.0) ──────────────────────────────────
+// If app.quit() is called but something hangs (SMTC destroy, native
+// module cleanup, pending IPC, etc.), the process stays alive in Task
+// Manager. This timer fires 3 seconds after before-quit and calls
+// process.exit(0) to guarantee termination.
+let _forceQuitTimer = null;
+app.on("before-quit", (event) => {
+  console.log("[quit] before-quit received — starting 3s force-exit timer.");
+  if (_forceQuitTimer) return; // already armed
+  _forceQuitTimer = setTimeout(() => {
+    console.warn("[quit] Force-exit timer fired — process.exit(0).");
+    try { closeFileLogger(); } catch (_) {}
+    process.exit(0);
+  }, 3000);
+  // Allow the timer to keep the process alive (unref would let it exit
+  // early if nothing else is pending — we WANT it to fire)
+});
+
+// Also flush logger on normal quit
+app.on("will-quit", () => {
+  console.log("[quit] will-quit — flushing logger.");
+  try { closeFileLogger(); } catch (_) {}
+});
 
 // ─── Globals ────────────────────────────────────────────────────────
 let mainWindow = null;
@@ -865,8 +920,17 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
+  console.log("[quit] window-all-closed — cleaning up SMTC and quitting.");
+  // CHANGED v3.0: Wrap smtcBridge.destroy() in try/catch. The old code
+  // let any throw from the native SMTC module prevent app.quit() from
+  // running, leaving a zombie process in Task Manager. Now SMTC cleanup
+  // failures are logged but never block quit.
   if (smtcBridge) {
-    smtcBridge.destroy();
+    try {
+      smtcBridge.destroy();
+    } catch (err) {
+      console.warn("[quit] SMTC destroy failed (ignoring):", err.message);
+    }
     smtcBridge = null;
   }
   if (process.platform !== "darwin") app.quit();
