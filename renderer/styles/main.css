@@ -529,6 +529,28 @@ textarea {
   justify-content: center;
 }
 
+.sidebar-help-btn[data-tooltip]:hover::before,
+.sidebar-help-btn[data-tooltip]:hover::after {
+  z-index: 100000;
+}
+.sidebar-help-btn[data-tooltip]::before {
+  bottom: auto;
+  top: calc(100% + 10px);
+  transform: translateX(-50%) translateY(-4px);
+}
+
+.sidebar-help-btn[data-tooltip]::after {
+  bottom: auto;
+  top: calc(100% + 4px);
+  border-top-color: transparent;
+  border-bottom-color: #282828;
+}
+
+.sidebar-help-btn[data-tooltip]:hover::before,
+.sidebar-help-btn[data-tooltip]:hover::after {
+  transform: translateX(-50%) translateY(0);
+}
+
 .sidebar-help-btn svg {
   width: 16px;
   height: 16px;
@@ -538,6 +560,8 @@ textarea {
 .sidebar-help-btn:hover {
   color: var(--text-primary);
 }
+
+
 
 .nav-section {
   padding: 4px 0;
@@ -843,6 +867,7 @@ textarea {
    Add data-tooltip="Your text" to any element to activate. */
 [data-tooltip] {
   position: relative;
+ 
 }
 
 [data-tooltip]::before,
@@ -1091,14 +1116,35 @@ textarea {
   gap: 2px;
   padding-bottom: 8px;
   border-radius: 4px;
+  /* v1.0.9: Hidden by default — only show when the row is .is-playing.
+     Previously the eq-icon was visible (with animating bars) the moment
+     it was inserted, even before audio actually started playing. */
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+/* v1.0.9: Only show the eq-icon when the parent row is playing */
+.track-row.is-playing .eq-icon,
+.playlist-song-row.is-playing .eq-icon {
+  opacity: 1;
 }
 
 .eq-bar {
   width: 3px;
   background: var(--green);
   border-radius: 2px;
+  /* v1.0.9: Animation starts PAUSED. Only runs when the row has
+     .is-playing class. This prevents the "animation active on app
+     launch when nothing is playing" bug. */
   animation: eq-bounce 0.8s ease-in-out infinite alternate;
+  animation-play-state: paused;
   transform-origin: bottom;
+}
+
+/* v1.0.9: Run the animation only when the row is playing */
+.track-row.is-playing .eq-bar,
+.playlist-song-row.is-playing .eq-bar {
+  animation-play-state: running;
 }
 
 .eq-bar:nth-child(1) {
@@ -2874,6 +2920,12 @@ textarea {
   height: 40px;
   border-radius: 6px;
   overflow: hidden;
+  /* v1.0.10: position:relative so the .eq-icon (position:absolute; inset:0)
+     anchors to this thumb container instead of escaping to the row.
+     This matches how .track-thumb works in the main library — the EQ
+     animation should only cover the cover art, not the whole row. */
+  position: relative;
+  flex-shrink: 0;
 }
 
 .playlist-song-thumb img {

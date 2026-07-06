@@ -100,9 +100,14 @@ app.commandLine.appendSwitch(
 app.commandLine.appendSwitch("enable-features", "PlatformHEVCEncoderSupport");
 
 // ─── GPU-Accelerated Image Rendering ──────────────────────────────
-app.commandLine.appendSwitch("enable-gpu-rasterization");
-app.commandLine.appendSwitch("enable-zero-copy");
-app.commandLine.appendSwitch("force-gpu-mem-available-mb", "1024");
+// Gated: forcing these on an unsupported GPU driver can stop Chromium
+// from ever compositing a frame, so ready-to-show never fires and the
+// window stays hidden forever (ghost process, nothing on screen).
+if (process.env.NOVATUNE_GPU_RASTER === "1") {
+  app.commandLine.appendSwitch("enable-gpu-rasterization");
+  app.commandLine.appendSwitch("enable-zero-copy");
+  app.commandLine.appendSwitch("force-gpu-mem-available-mb", "1024");
+}
 app.commandLine.appendSwitch("disk-cache-size", "268435456");
 
 // ─── MIME map for local audio files ────────────────────────────────
@@ -162,7 +167,9 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    console.log("[single-instance] Second instance launched — focusing existing window.");
+    console.log(
+      "[single-instance] Second instance launched — focusing existing window.",
+    );
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
@@ -170,7 +177,9 @@ if (!gotTheLock) {
       // CHANGED v3.0: No window exists — this process is a zombie (the
       // window was closed but app.quit() never completed). Force-exit
       // so the new instance can acquire the lock on its next attempt.
-      console.log("[single-instance] No window exists — zombie process. Force-exiting.");
+      console.log(
+        "[single-instance] No window exists — zombie process. Force-exiting.",
+      );
       app.exit(0);
     }
   });
@@ -187,7 +196,9 @@ app.on("before-quit", (event) => {
   if (_forceQuitTimer) return; // already armed
   _forceQuitTimer = setTimeout(() => {
     console.warn("[quit] Force-exit timer fired — process.exit(0).");
-    try { closeFileLogger(); } catch (_) {}
+    try {
+      closeFileLogger();
+    } catch (_) {}
     process.exit(0);
   }, 3000);
   // Allow the timer to keep the process alive (unref would let it exit
@@ -197,7 +208,9 @@ app.on("before-quit", (event) => {
 // Also flush logger on normal quit
 app.on("will-quit", () => {
   console.log("[quit] will-quit — flushing logger.");
-  try { closeFileLogger(); } catch (_) {}
+  try {
+    closeFileLogger();
+  } catch (_) {}
 });
 
 // ─── Globals ────────────────────────────────────────────────────────
@@ -298,12 +311,33 @@ function createMainWindow() {
     },
   );
 
-  mainWindow.once("ready-to-show", () => {
+  // ─── Multi-signal show() ──────────────────────────────────────────
+  // ready-to-show requires a real composited frame. On some GPU drivers
+  // that never happens even though the renderer is fully alive (it keeps
+  // running JS, just never paints), so ready-to-show silently never fires
+  // and the window stays hidden — a ghost process the user can't see.
+  // Fall back through progressively less-ideal signals so the window is
+  // guaranteed to appear.
+  let _windowShown = false;
+  function _showWindow(reason) {
+    if (_windowShown || !mainWindow || mainWindow.isDestroyed()) return;
+    _windowShown = true;
+    console.log(`[window] show() — triggered by ${reason}`);
     if (isMaximized !== false) {
-      mainWindow.maximize();
+      try {
+        mainWindow.maximize();
+      } catch (_) {}
     }
     mainWindow.show();
+  }
+
+  mainWindow.once("ready-to-show", () => _showWindow("ready-to-show"));
+
+  mainWindow.webContents.once("did-finish-load", () => {
+    setTimeout(() => _showWindow("did-finish-load+500ms"), 500);
   });
+
+  setTimeout(() => _showWindow("5s-hard-fallback"), 5000);
 
   mainWindow.on("close", () => {
     windowState.saveState(mainWindow);
@@ -323,6 +357,15 @@ function createMainWindow() {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
+  });
+
+  app.on("gpu-process-crashed", (event, killed) => {
+    console.error(`[gpu] GPU process crashed! killed=${killed}`);
+    _showWindow("gpu-process-crashed");
+  });
+
+  mainWindow.webContents.on("render-process-gone", (event, details) => {
+    console.error(`[window] render-process-gone: reason=${details.reason}`);
   });
 
   if (isDev) {

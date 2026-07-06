@@ -55,4 +55,3 @@ console.log(
 );
 
 db.close();
-

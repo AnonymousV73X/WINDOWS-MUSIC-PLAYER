@@ -206,32 +206,35 @@ class ManifestWriter {
 
       // Numeric fields
       recordsBuf.writeUInt16LE(Math.min(t.year || 0, 0xffff), off + 78);
-      recordsBuf.writeUInt16LE(
-        Math.min(t.trackNumber || 0, 0xffff),
-        off + 80,
-      );
-      recordsBuf.writeUInt16LE(
-        Math.min(t.discNumber || 0, 0xffff),
-        off + 82,
-      );
+      recordsBuf.writeUInt16LE(Math.min(t.trackNumber || 0, 0xffff), off + 80);
+      recordsBuf.writeUInt16LE(Math.min(t.discNumber || 0, 0xffff), off + 82);
       recordsBuf.writeFloatLE(Number(t.duration) || 0, off + 84);
-      recordsBuf.writeUInt32LE(
-        Math.min(t.bitrate || 0, 0xffffffff),
-        off + 88,
-      );
+      recordsBuf.writeUInt32LE(Math.min(t.bitrate || 0, 0xffffffff), off + 88);
       recordsBuf.writeUInt32LE(
         Math.min(t.sampleRate || 0, 0xffffffff),
         off + 92,
       );
       recordsBuf.writeUInt8(Math.min(t.channels || 2, 0xff), off + 96);
       recordsBuf.writeUInt8(formatToEnum(t.format), off + 97);
-      recordsBuf.writeUInt8(t._hasCoverArt ? 1 : 0, off + 98);
+      recordsBuf.writeUInt8(t._hasCoverArt || t.coverArt ? 1 : 0, off + 98);
       recordsBuf.writeUInt8(0, off + 99); // flags (reserved)
 
       // u64 fields — write as lo+hi (V8 Number is f64, safe up to 2^53)
-      writeU64LE(recordsBuf, off + 100, Math.min(t.fileSize || 0, Number.MAX_SAFE_INTEGER));
-      writeU64LE(recordsBuf, off + 108, Math.min(t.dateAdded || 0, Number.MAX_SAFE_INTEGER));
-      writeU64LE(recordsBuf, off + 116, Math.min(t.dateModified || 0, Number.MAX_SAFE_INTEGER));
+      writeU64LE(
+        recordsBuf,
+        off + 100,
+        Math.min(t.fileSize || 0, Number.MAX_SAFE_INTEGER),
+      );
+      writeU64LE(
+        recordsBuf,
+        off + 108,
+        Math.min(t.dateAdded || 0, Number.MAX_SAFE_INTEGER),
+      );
+      writeU64LE(
+        recordsBuf,
+        off + 116,
+        Math.min(t.dateModified || 0, Number.MAX_SAFE_INTEGER),
+      );
 
       // off+124..127: reserved (already zeroed by Buffer.alloc)
     }
@@ -253,52 +256,40 @@ class ManifestWriter {
 
     // ── 4. Build sort orders ──
     // Precompute all four so the renderer never re-sorts at startup.
-    const sortTitleAsc = buildSortIndices(
-      sorted,
-      (a, b) => {
-        const ta = (a.title || "").toLowerCase();
-        const tb = (b.title || "").toLowerCase();
-        return ta < tb ? -1 : ta > tb ? 1 : 0;
-      },
-    );
-    const sortDateAddedDesc = buildSortIndices(
-      sorted,
-      (a, b) => {
-        const da = a.dateAdded || 0;
-        const db = b.dateAdded || 0;
-        if (db !== da) return db - da;
-        const ta = (a.title || "").toLowerCase();
-        const tb = (b.title || "").toLowerCase();
-        return ta < tb ? -1 : ta > tb ? 1 : 0;
-      },
-    );
-    const sortAlbumAsc = buildSortIndices(
-      sorted,
-      (a, b) => {
-        const aa = (a.album || "").toLowerCase();
-        const bb = (b.album || "").toLowerCase();
-        if (aa !== bb) return aa < bb ? -1 : 1;
-        const da = a.discNumber || 0;
-        const db = b.discNumber || 0;
-        if (da !== db) return da - db;
-        return (a.trackNumber || 0) - (b.trackNumber || 0);
-      },
-    );
-    const sortArtistAsc = buildSortIndices(
-      sorted,
-      (a, b) => {
-        const aa = (a.artist || "").toLowerCase();
-        const bb = (b.artist || "").toLowerCase();
-        if (aa !== bb) return aa < bb ? -1 : 1;
-        const la = (a.album || "").toLowerCase();
-        const lb = (b.album || "").toLowerCase();
-        if (la !== lb) return la < lb ? -1 : 1;
-        const da = a.discNumber || 0;
-        const db = b.discNumber || 0;
-        if (da !== db) return da - db;
-        return (a.trackNumber || 0) - (b.trackNumber || 0);
-      },
-    );
+    const sortTitleAsc = buildSortIndices(sorted, (a, b) => {
+      const ta = (a.title || "").toLowerCase();
+      const tb = (b.title || "").toLowerCase();
+      return ta < tb ? -1 : ta > tb ? 1 : 0;
+    });
+    const sortDateAddedDesc = buildSortIndices(sorted, (a, b) => {
+      const da = a.dateAdded || 0;
+      const db = b.dateAdded || 0;
+      if (db !== da) return db - da;
+      const ta = (a.title || "").toLowerCase();
+      const tb = (b.title || "").toLowerCase();
+      return ta < tb ? -1 : ta > tb ? 1 : 0;
+    });
+    const sortAlbumAsc = buildSortIndices(sorted, (a, b) => {
+      const aa = (a.album || "").toLowerCase();
+      const bb = (b.album || "").toLowerCase();
+      if (aa !== bb) return aa < bb ? -1 : 1;
+      const da = a.discNumber || 0;
+      const db = b.discNumber || 0;
+      if (da !== db) return da - db;
+      return (a.trackNumber || 0) - (b.trackNumber || 0);
+    });
+    const sortArtistAsc = buildSortIndices(sorted, (a, b) => {
+      const aa = (a.artist || "").toLowerCase();
+      const bb = (b.artist || "").toLowerCase();
+      if (aa !== bb) return aa < bb ? -1 : 1;
+      const la = (a.album || "").toLowerCase();
+      const lb = (b.album || "").toLowerCase();
+      if (la !== lb) return la < lb ? -1 : 1;
+      const da = a.discNumber || 0;
+      const db = b.discNumber || 0;
+      if (da !== db) return da - db;
+      return (a.trackNumber || 0) - (b.trackNumber || 0);
+    });
 
     // Sort section: 32-byte header + 4 arrays of u32 (trackCount each)
     // The header stores ABSOLUTE file offsets (not relative to sortOff) so
@@ -326,7 +317,12 @@ class ManifestWriter {
     const sortArraysStart = sortOffPrecomputed + 32;
 
     const sortHeaderBuf = Buffer.alloc(32);
-    const sortArrays = [sortTitleAsc, sortDateAddedDesc, sortAlbumAsc, sortArtistAsc];
+    const sortArrays = [
+      sortTitleAsc,
+      sortDateAddedDesc,
+      sortAlbumAsc,
+      sortArtistAsc,
+    ];
     const sortArraysBuf = Buffer.alloc(trackCount * 4 * 4);
     for (let i = 0; i < 4; i++) {
       // Absolute offset of array i within the file
@@ -334,7 +330,10 @@ class ManifestWriter {
       sortHeaderBuf.writeUInt32LE(absOff, i * 8);
       sortHeaderBuf.writeUInt32LE(trackCount, i * 8 + 4);
       for (let j = 0; j < trackCount; j++)
-        sortArraysBuf.writeUInt32LE(sortArrays[i][j], i * trackCount * 4 + j * 4);
+        sortArraysBuf.writeUInt32LE(
+          sortArrays[i][j],
+          i * trackCount * 4 + j * 4,
+        );
     }
 
     // ── 5. Assemble file ──
@@ -346,9 +345,10 @@ class ManifestWriter {
     // `new Uint32Array(buffer, offset, count)` throws
     // "start offset of Uint32Array should be a multiple of 4".
     const stringsPadding = (4 - (pool.totalLen % 4)) % 4;
-    const stringsBuf = pool.totalLen === 0
-      ? Buffer.alloc(0)
-      : Buffer.concat([pool.toBuffer(), Buffer.alloc(stringsPadding)]);
+    const stringsBuf =
+      pool.totalLen === 0
+        ? Buffer.alloc(0)
+        : Buffer.concat([pool.toBuffer(), Buffer.alloc(stringsPadding)]);
 
     // All section offsets were precomputed above (we needed sortOff
     // before writing the sort header so we could bake absolute offsets
@@ -399,7 +399,14 @@ class ManifestWriter {
 
     // ── 6. Concatenate everything ──
     const file = Buffer.concat(
-      [headerBuf, recordsBuf, stringsBuf, indexBuf, sortHeaderBuf, sortArraysBuf],
+      [
+        headerBuf,
+        recordsBuf,
+        stringsBuf,
+        indexBuf,
+        sortHeaderBuf,
+        sortArraysBuf,
+      ],
       totalSize,
     );
 
@@ -436,7 +443,9 @@ class ManifestWriter {
       await fs.promises.rename(tmpPath, filePath);
     } catch (err) {
       // Some Windows versions fail rename if target exists — fall back to unlink+rename
-      try { await fs.promises.unlink(filePath); } catch (_) {}
+      try {
+        await fs.promises.unlink(filePath);
+      } catch (_) {}
       await fs.promises.rename(tmpPath, filePath);
     }
 
@@ -460,7 +469,9 @@ class ManifestWriter {
     try {
       fs.renameSync(tmpPath, filePath);
     } catch (err) {
-      try { fs.unlinkSync(filePath); } catch (_) {}
+      try {
+        fs.unlinkSync(filePath);
+      } catch (_) {}
       fs.renameSync(tmpPath, filePath);
     }
 
