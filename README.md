@@ -22,7 +22,7 @@
 
 [![Download the latest release](https://img.shields.io/badge/⬇%20Download-NovaTune%20Setup.exe-1ed760?style=for-the-badge&logo=github&logoColor=white)](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases/latest)
 
-> **Prefer a portable build?** Grab `NovaTune-Setup-1.0.9.exe` from the [Releases page](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases) — no installer, just double-click and play. Ensure You download the latest version it has some critical fixes...
+> **Prefer a portable build?** Grab `NovaTune-Setup-1.0.9.exe` from the [Releases page](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases) — no installer, just double-click and play. Ensure You download the latest version it has some critical fixez ... oh b the way this will ook nice with a 14 incher and above i dont know how its gonna look like in smaller screens (i mean in the full screen aspect).
 
 </div>
 
@@ -59,7 +59,7 @@ It is **not** a streaming client. It is **not** a cloud anything. Point it at a 
 |                     |                                                     |
 | ------------------- | --------------------------------------------------- |
 | **App ID**          | `com.novatune.player`                               |
-| **Version**         | 1.0.0                                               |
+| **Version**         | 1.0.9                                               |
 | **License**         | MIT                                                 |
 | **Platform**        | Windows x64 (NSIS installer + portable build)       |
 | **Aesthetic**       | Spotify-dark, Material-You-aware accent system      |
