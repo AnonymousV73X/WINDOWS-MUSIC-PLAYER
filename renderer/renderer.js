@@ -2093,6 +2093,21 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (splash) {
     const MIN_SPLASH_MS = 600;
     const MAX_WAIT_MS = 15000; // hard cap (was 12s)
+    const HARD_MAX_MS = 8000; // outer safety net, independent of the race below
+
+    let _splashForceDismissed = false;
+    const _forceDismissSplash = () => {
+      if (_splashForceDismissed) return;
+      _splashForceDismissed = true;
+      console.warn("[splash] HARD_MAX_MS fired — force-dismissing splash.");
+      splash.classList.add("hidden");
+      setTimeout(() => {
+        try {
+          splash.remove();
+        } catch (_) {}
+      }, 600);
+    };
+    setTimeout(_forceDismissSplash, HARD_MAX_MS);
 
     // Build the "play-ready" promise: resolves when audio is ACTUALLY
     // ready (not just when preload promise resolves).
@@ -2150,6 +2165,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     await Promise.race([playReadyPromise, userInteractPromise, capPromise]);
 
     const dismiss = () => {
+      if (_splashForceDismissed) return;
+      _splashForceDismissed = true;
       splash.classList.add("hidden");
       // Remove from DOM after fade-out transition completes
       setTimeout(() => splash.remove(), 600);
@@ -2187,35 +2204,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     // If the manifest exists and its fpHash matches the saved
     // _combinedFingerprint, the library hasn't changed since the
     // last scan — skip the fingerprint check entirely.
-    try {
-      const manifestInfo = await window.novaAPI.invoke(
-        "library:get-manifest-info",
-      );
-      if (manifestInfo && manifestInfo.available) {
-        const savedFp = state.settings?._combinedFingerprint || "";
-        // The manifest's fpHash is FNV-1a of the combined fingerprint string.
-        // We can't compute FNV-1a in the renderer without importing the
-        // reader, so we just check if the manifest exists AND the saved
-        // fingerprint is non-empty. If both are true, we trust that the
-        // manifest was built after the last scan and skip the check.
-        // The next time the user adds/removes files, they'll trigger a
-        // manual scan or the chokidar watcher will catch it.
-        if (savedFp && manifestInfo.trackCount > 0) {
-          console.log(
-            "[Startup] Manifest exists with saved fingerprint — skipping fingerprint check (fast path).",
-          );
-          _updateSplashStatus(
-            "fingerprint",
-            "done",
-            "Library up to date (manifest)",
-          );
-          return;
-        }
-      }
-    } catch (_) {
-      // Manifest info fetch failed — fall through to fingerprint check
-    }
-
     console.log("[Startup] Checking folder fingerprints...");
     _updateSplashStatus("fingerprint", "loading", "Checking library…");
     try {
@@ -2239,10 +2227,17 @@ document.addEventListener("DOMContentLoaded", async () => {
         await window.novaAPI.invoke("library:scan", folderPath);
       }
       _bustIDBThumbCache();
-      // Reload the manifest decoder so the renderer sees the fresh track list
-      if (manifestDecoder) {
-        await manifestDecoder.reload();
-      }
+      // v1.0.15: Force manifest rebuild + clear decoder so new tracks appear.
+      // The scan handler's setImmediate might not have fired yet.
+      try {
+        await window.novaAPI.invoke("library:rebuild-manifest");
+      } catch (_) {}
+      manifestDecoder = null;
+      thumbnailAtlas.clear();
+      try {
+        await _idbSet("bg-cache::missing-thumbnails", null);
+        await _idbSet("bg-cache::thumbnail-atlas", null);
+      } catch (_) {}
       await _loadLibrary();
       _updateSidebarFolderInfo();
       console.log("[Startup] Background scan complete.");
@@ -3005,6 +3000,12 @@ function _wireAddFolder() {
   });
 
   // Sidebar refresh button
+  // CHANGED v1.0.12: Optimized refresh — if nothing changed (no new
+  // songs), skip the expensive _loadLibrary() reload. The backend now
+  // returns { nothingChanged: true } when all files were cached, and
+  // we skip the library reload + IDB cache bust in that case.
+  // This makes the refresh button instant when users just want to
+  // check for new songs but none were added.
   $("sidebar-refresh-btn")?.addEventListener("click", async (e) => {
     e.stopPropagation();
     const btn = e.currentTarget;
@@ -3016,22 +3017,58 @@ function _wireAddFolder() {
     btn.classList.add("spinning");
     $("scan-progress").style.display = "flex";
     $("scan-progress-bar").style.width = "0%";
-    $("scan-progress-text").textContent = "Refreshing library...";
+    $("scan-progress-text").textContent = "Checking for new songs...";
 
+    let anyChanged = false;
     try {
       for (const folderPath of scanFolders) {
-        await window.novaAPI.invoke("library:scan", folderPath);
+        const result = await window.novaAPI.invoke("library:scan", folderPath);
+        // v1.0.12: If the backend says nothing changed, skip the reload
+        if (result && result.nothingChanged) {
+          console.log(`[Refresh] No changes in ${folderPath}`);
+        } else {
+          anyChanged = true;
+        }
       }
     } catch (err) {
       console.error("[Refresh] Error scanning:", err);
+      anyChanged = true; // err on the side of reloading
     } finally {
       btn.classList.remove("spinning");
       $("scan-progress").style.display = "none";
     }
 
-    _bustIDBThumbCache();
-    await _loadLibrary();
-    _updateSidebarFolderInfo();
+    // v1.0.12: Only reload the library if something actually changed.
+    // When nothingChanged, the library in memory is already correct —
+    // reloading it would just thrash the DOM + virtual list for no reason.
+    if (anyChanged) {
+      _bustIDBThumbCache();
+      // v1.0.15: Clear the manifest decoder + thumbnail atlas so
+      // _loadLibrary() fetches a FRESH manifest with the new tracks.
+      manifestDecoder = null;
+      thumbnailAtlas.clear();
+      // v1.0.15: Invalidate bg-queue cache for thumbnail tasks
+      try {
+        await _idbSet("bg-cache::missing-thumbnails", null);
+        await _idbSet("bg-cache::thumbnail-atlas", null);
+      } catch (_) {}
+      // v1.0.15: Explicitly rebuild the manifest BEFORE reloading.
+      // The backend's scan handler rebuilds via setImmediate — which
+      // fires AFTER the scan IPC returns. So if we fetch the manifest
+      // immediately, we get the OLD one without the new tracks.
+      // Calling library:rebuild-manifest here forces a synchronous
+      // rebuild that completes before we fetch.
+      try {
+        await window.novaAPI.invoke("library:rebuild-manifest");
+      } catch (err) {
+        console.warn("[Refresh] Manifest rebuild failed:", err.message);
+      }
+      await _loadLibrary();
+      _updateSidebarFolderInfo();
+      console.log("[Refresh] Library reloaded (changes detected)");
+    } else {
+      console.log("[Refresh] No changes — skipped library reload");
+    }
   });
 
   // Initialize folder info on load
@@ -4254,12 +4291,7 @@ async function _renderFromManifest(decoder) {
     console.log(
       `[startup] Loading remaining ${total - firstPage.length} tracks from manifest…`,
     );
-    _loadRemainingPagesFromManifest(
-      decoder,
-      FIRST_PAGE_SIZE,
-      FIRST_PAGE_SIZE,
-      total,
-    )
+    _loadRemainingPagesFromManifest(decoder, 1, FIRST_PAGE_SIZE, total)
       .then(() => {
         _restoreFullQueue();
       })
@@ -5464,6 +5496,16 @@ function renderSettings() {
 
     $("scan-progress").style.display = "none";
     _bustIDBThumbCache();
+    // v1.0.15: Force manifest rebuild + clear decoder/atlas for new tracks
+    try {
+      await window.novaAPI.invoke("library:rebuild-manifest");
+    } catch (_) {}
+    manifestDecoder = null;
+    thumbnailAtlas.clear();
+    try {
+      await _idbSet("bg-cache::missing-thumbnails", null);
+      await _idbSet("bg-cache::thumbnail-atlas", null);
+    } catch (_) {}
     await _loadLibrary();
     _reRenderPanel("settings", renderSettings);
   });
@@ -5486,6 +5528,16 @@ function renderSettings() {
 
       if (scanResult.success) {
         _bustIDBThumbCache();
+        // v1.0.15: Force manifest rebuild + clear decoder/atlas for new tracks
+        try {
+          await window.novaAPI.invoke("library:rebuild-manifest");
+        } catch (_) {}
+        manifestDecoder = null;
+        thumbnailAtlas.clear();
+        try {
+          await _idbSet("bg-cache::missing-thumbnails", null);
+          await _idbSet("bg-cache::thumbnail-atlas", null);
+        } catch (_) {}
         await _loadLibrary();
         _reRenderPanel("settings", renderSettings);
       }
@@ -6808,22 +6860,36 @@ async function _generateMissingThumbnails(missIds) {
   }
 }
 
-/** Clear all batch48 thumb entries from IDB and in-memory _thumb fields (called after a library rescan). */
+/**
+ * Clear all thumbnail caches (IDB + in-memory) — called after a library rescan.
+ * CHANGED v1.0.16: Now clears EVERYTHING, not just batch48:: entries.
+ * The old code left protocol-URL cache entries (keyed by artPath) and
+ * thumbHash/dominantColor caches stale — causing new tracks to show
+ * WRONG thumbnails from old tracks after a restart.
+ */
 function _bustIDBThumbCache() {
+  // Clear all in-memory caches
   _thumbnailCache.clear();
+  _thumbHashCache.clear();
+  _dominantColorCache.clear();
+  _artColorCache.clear();
   // Clear in-memory display thumbs so they get re-fetched
   for (const t of state.tracks) delete t._thumb;
+  // Clear the bitmap atlas (in-memory ImageBitmap cache)
+  thumbnailAtlas.clear();
   if (!_idbReady || !_idb) return;
   try {
+    // Clear the ENTIRE IDB store — not just batch48:: entries.
     const tx = _idb.transaction(IDB_STORE, "readwrite");
     const store = tx.objectStore(IDB_STORE);
-    const req = store.openCursor();
-    req.onsuccess = (e) => {
-      const cursor = e.target.result;
-      if (!cursor) return;
-      if (String(cursor.key).startsWith("batch48::")) cursor.delete();
-      cursor.continue();
-    };
+    store.clear();
+  } catch (_) {}
+  // v1.0.16: Also tell the backend to clear its protocol cache.
+  // The main process caches cover art responses by trackId — if this
+  // isn't cleared, nova-media://art/{trackId} returns stale art for
+  // new tracks that happen to reuse an old trackId (same file path).
+  try {
+    window.novaAPI.invoke("coverart:clear-cache");
   } catch (_) {}
 }
 
@@ -7368,7 +7434,7 @@ function renderHelp() {
       </div>
 
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
-        NovaTune v1.0.8 &bull; Made with love for music lovers
+        NovaTune v1.0.9 &bull; Made with love for music lovers
       </div>
     </div>
   `);
@@ -8251,6 +8317,9 @@ async function _generateAndCacheCollage(playlistId, tracks) {
 function _createTrackRow(track, contextQueue) {
   const row = document.createElement("div");
   row.className = "playlist-song-row";
+  // CHANGED v1.0.9: Add data-track-id so updateActiveTrackRows() can
+  // find this row and add the EQ animation when the track is playing.
+  row.dataset.trackId = track.id;
   const thumbDiv = document.createElement("div");
   thumbDiv.className = "playlist-song-thumb";
   // REVFIX v2: Use album art reuse for faster resolution across duplicate albums
@@ -8854,8 +8923,19 @@ function _populateSlot(row, track, idx) {
   const artIdx = getArtIndex(track);
   const isQueue = virtualList.mode === "queue";
 
+  // CHANGED v1.0.11: Add 'is-playing' class when the track is active AND
+  // actually playing. This gates the eq-bar CSS animation (set in v1.0.9).
+  // Without this, the eq-icon HTML is inserted but the bars stay frozen
+  // because .track-row.is-playing .eq-bar { animation-play-state: running }
+  // never applies. Also need this for recycled rows — when a row scrolls
+  // out and back in, _populateSlot rebuilds it, so the is-playing class
+  // must be re-added here, not just in _updatePlayPauseIcon.
+  const isPlaying = isActive && state.isPlaying;
   row.className =
-    "track-row" + (isActive ? " active" : "") + (isQueue ? " queue-row" : "");
+    "track-row" +
+    (isActive ? " active" : "") +
+    (isPlaying ? " is-playing" : "") +
+    (isQueue ? " queue-row" : "");
   row.dataset.trackId = track.id;
   row.dataset.idx = idx;
   if (isQueue) row.dataset.queueIdx = idx;
@@ -9097,33 +9177,42 @@ let _queueDragSrcIdx = -1;
 let _queueDragOverIdx = -1;
 
 function updateActiveTrackRows(previousId, nextId) {
+  // CHANGED v1.0.9: Query BOTH .track-row (virtual list in Library/Queue)
+  // AND .playlist-song-row (album/artist/playlist detail views). The old
+  // code only queried .track-row, so the EQ animation never appeared on
+  // tracks played from album/artist/playlist cards.
+  const rowSelector = (id) =>
+    `.track-row[data-track-id="${CSS.escape(id)}"], .playlist-song-row[data-track-id="${CSS.escape(id)}"]`;
+
   if (previousId) {
-    document
-      .querySelectorAll(`.track-row[data-track-id="${CSS.escape(previousId)}"]`)
-      .forEach((row) => {
-        row.classList.remove("active");
-        const overlay = row.querySelector(".eq-icon");
-        if (overlay) overlay.remove();
-        const placeholder = row.querySelector(".art-placeholder");
-        if (placeholder && !placeholder.textContent.trim())
-          placeholder.innerHTML = "&#127925;";
-      });
+    document.querySelectorAll(rowSelector(previousId)).forEach((row) => {
+      row.classList.remove("active");
+      row.classList.remove("is-playing"); // v1.0.9: gate the CSS animation
+      const overlay = row.querySelector(".eq-icon");
+      if (overlay) overlay.remove();
+      const placeholder = row.querySelector(".art-placeholder");
+      if (placeholder && !placeholder.textContent.trim())
+        placeholder.innerHTML = "&#127925;";
+    });
   }
   if (nextId) {
-    document
-      .querySelectorAll(`.track-row[data-track-id="${CSS.escape(nextId)}"]`)
-      .forEach((row) => {
-        row.classList.add("active");
-        const thumb = row.querySelector(".track-thumb");
-        const placeholder = row.querySelector(".art-placeholder");
-        if (placeholder) placeholder.textContent = "";
-        if (thumb && !thumb.querySelector(".eq-icon")) {
-          thumb.insertAdjacentHTML(
-            "beforeend",
-            '<div class="eq-icon"><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div></div>',
-          );
-        }
-      });
+    document.querySelectorAll(rowSelector(nextId)).forEach((row) => {
+      row.classList.add("active");
+      row.classList.add("is-playing"); // v1.0.9: gate the CSS animation
+      // v1.0.9: Handle both .track-thumb (virtual list) and
+      // .playlist-song-thumb (detail views) as the thumb container
+      const thumb =
+        row.querySelector(".track-thumb") ||
+        row.querySelector(".playlist-song-thumb");
+      const placeholder = row.querySelector(".art-placeholder");
+      if (placeholder) placeholder.textContent = "";
+      if (thumb && !thumb.querySelector(".eq-icon")) {
+        thumb.insertAdjacentHTML(
+          "beforeend",
+          '<div class="eq-icon"><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div></div>',
+        );
+      }
+    });
   }
 }
 
@@ -9148,6 +9237,16 @@ async function playTrack(track) {
     track,
     ...state.recentlyPlayed.filter((t) => t.id !== track.id),
   ].slice(0, 6);
+  // CHANGED v1.0.9: Invalidate the Home panel cache so the "Recently
+  // Played" section updates when the user navigates back to Home.
+  // Without this, _showCached("home", ...) returns the stale cached
+  // panel and the newly played track doesn't appear in the list.
+  _panelDirty["home"] = true;
+  // If the user is currently viewing Home, re-render it immediately
+  // so they see the update without having to navigate away and back.
+  if (state.activeNavSection === "home") {
+    _reRenderPanel("home", renderHome);
+  }
   _setControlsVisible(true);
   if (state.activeNavSection === "library")
     requestAnimationFrame(_updateScrollPill);
@@ -9483,9 +9582,21 @@ function _updatePlayPauseIcon(playing) {
     svg.innerHTML = isActive && playing ? pauseIcon : playIcon;
   });
   // Pause/resume EQ bars
+  // v1.0.9: The CSS now gates the animation behind .is-playing on the
+  // row, so we don't need to set animationPlayState manually. But we
+  // keep this for backward compat with any rows that don't have the
+  // is-playing class yet (e.g. during the brief window between
+  // updateActiveTrackRows and _updatePlayPauseIcon).
   $$(".eq-bar").forEach((b) => {
     b.style.animationPlayState = playing ? "running" : "paused";
   });
+  // v1.0.9: Toggle is-playing on all active rows so the CSS animation
+  // gate works. This covers both .track-row and .playlist-song-row.
+  document
+    .querySelectorAll(".track-row.active, .playlist-song-row.active")
+    .forEach((row) => {
+      row.classList.toggle("is-playing", playing);
+    });
   // Pause/resume EQ icon overlay (dim when paused)
   $$(".eq-icon").forEach((eq) => {
     eq.style.opacity = playing ? "1" : "0.5";
@@ -10045,8 +10156,8 @@ function updateVolumeUi() {
   const volBtn = $("vol-btn");
   if (volBtn) {
     const muted = state.volume === 0;
-    volBtn.setAttribute("data-tooltip", muted ? "Muted" : "Volume");
-    volBtn.setAttribute("aria-label", muted ? "Muted" : "Volume");
+    volBtn.setAttribute("data-tooltip", muted ? "Muted" : "Mute");
+    volBtn.setAttribute("aria-label", muted ? "Muted" : "Mute");
     volBtn.innerHTML = muted
       ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />

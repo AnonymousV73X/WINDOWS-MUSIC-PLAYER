@@ -2129,30 +2129,33 @@ var require_manifest = __commonJS({
             recordsBuf.writeUInt16LE(0, off + 76);
           }
           recordsBuf.writeUInt16LE(Math.min(t.year || 0, 65535), off + 78);
-          recordsBuf.writeUInt16LE(
-            Math.min(t.trackNumber || 0, 65535),
-            off + 80
-          );
-          recordsBuf.writeUInt16LE(
-            Math.min(t.discNumber || 0, 65535),
-            off + 82
-          );
+          recordsBuf.writeUInt16LE(Math.min(t.trackNumber || 0, 65535), off + 80);
+          recordsBuf.writeUInt16LE(Math.min(t.discNumber || 0, 65535), off + 82);
           recordsBuf.writeFloatLE(Number(t.duration) || 0, off + 84);
-          recordsBuf.writeUInt32LE(
-            Math.min(t.bitrate || 0, 4294967295),
-            off + 88
-          );
+          recordsBuf.writeUInt32LE(Math.min(t.bitrate || 0, 4294967295), off + 88);
           recordsBuf.writeUInt32LE(
             Math.min(t.sampleRate || 0, 4294967295),
             off + 92
           );
           recordsBuf.writeUInt8(Math.min(t.channels || 2, 255), off + 96);
           recordsBuf.writeUInt8(formatToEnum(t.format), off + 97);
-          recordsBuf.writeUInt8(t._hasCoverArt ? 1 : 0, off + 98);
+          recordsBuf.writeUInt8(t._hasCoverArt || t.coverArt ? 1 : 0, off + 98);
           recordsBuf.writeUInt8(0, off + 99);
-          writeU64LE(recordsBuf, off + 100, Math.min(t.fileSize || 0, Number.MAX_SAFE_INTEGER));
-          writeU64LE(recordsBuf, off + 108, Math.min(t.dateAdded || 0, Number.MAX_SAFE_INTEGER));
-          writeU64LE(recordsBuf, off + 116, Math.min(t.dateModified || 0, Number.MAX_SAFE_INTEGER));
+          writeU64LE(
+            recordsBuf,
+            off + 100,
+            Math.min(t.fileSize || 0, Number.MAX_SAFE_INTEGER)
+          );
+          writeU64LE(
+            recordsBuf,
+            off + 108,
+            Math.min(t.dateAdded || 0, Number.MAX_SAFE_INTEGER)
+          );
+          writeU64LE(
+            recordsBuf,
+            off + 116,
+            Math.min(t.dateModified || 0, Number.MAX_SAFE_INTEGER)
+          );
         }
         const slotCount = trackCount === 0 ? 16 : nextPow2(trackCount * 2);
         const slotMask = slotCount - 1;
@@ -2165,65 +2168,61 @@ var require_manifest = __commonJS({
             slot = slot + 1 & slotMask;
           indexBuf.writeUInt32LE(i, slot * 4);
         }
-        const sortTitleAsc = buildSortIndices(
-          sorted,
-          (a, b) => {
-            const ta = (a.title || "").toLowerCase();
-            const tb = (b.title || "").toLowerCase();
-            return ta < tb ? -1 : ta > tb ? 1 : 0;
-          }
-        );
-        const sortDateAddedDesc = buildSortIndices(
-          sorted,
-          (a, b) => {
-            const da = a.dateAdded || 0;
-            const db = b.dateAdded || 0;
-            if (db !== da) return db - da;
-            const ta = (a.title || "").toLowerCase();
-            const tb = (b.title || "").toLowerCase();
-            return ta < tb ? -1 : ta > tb ? 1 : 0;
-          }
-        );
-        const sortAlbumAsc = buildSortIndices(
-          sorted,
-          (a, b) => {
-            const aa = (a.album || "").toLowerCase();
-            const bb = (b.album || "").toLowerCase();
-            if (aa !== bb) return aa < bb ? -1 : 1;
-            const da = a.discNumber || 0;
-            const db = b.discNumber || 0;
-            if (da !== db) return da - db;
-            return (a.trackNumber || 0) - (b.trackNumber || 0);
-          }
-        );
-        const sortArtistAsc = buildSortIndices(
-          sorted,
-          (a, b) => {
-            const aa = (a.artist || "").toLowerCase();
-            const bb = (b.artist || "").toLowerCase();
-            if (aa !== bb) return aa < bb ? -1 : 1;
-            const la = (a.album || "").toLowerCase();
-            const lb = (b.album || "").toLowerCase();
-            if (la !== lb) return la < lb ? -1 : 1;
-            const da = a.discNumber || 0;
-            const db = b.discNumber || 0;
-            if (da !== db) return da - db;
-            return (a.trackNumber || 0) - (b.trackNumber || 0);
-          }
-        );
+        const sortTitleAsc = buildSortIndices(sorted, (a, b) => {
+          const ta = (a.title || "").toLowerCase();
+          const tb = (b.title || "").toLowerCase();
+          return ta < tb ? -1 : ta > tb ? 1 : 0;
+        });
+        const sortDateAddedDesc = buildSortIndices(sorted, (a, b) => {
+          const da = a.dateAdded || 0;
+          const db = b.dateAdded || 0;
+          if (db !== da) return db - da;
+          const ta = (a.title || "").toLowerCase();
+          const tb = (b.title || "").toLowerCase();
+          return ta < tb ? -1 : ta > tb ? 1 : 0;
+        });
+        const sortAlbumAsc = buildSortIndices(sorted, (a, b) => {
+          const aa = (a.album || "").toLowerCase();
+          const bb = (b.album || "").toLowerCase();
+          if (aa !== bb) return aa < bb ? -1 : 1;
+          const da = a.discNumber || 0;
+          const db = b.discNumber || 0;
+          if (da !== db) return da - db;
+          return (a.trackNumber || 0) - (b.trackNumber || 0);
+        });
+        const sortArtistAsc = buildSortIndices(sorted, (a, b) => {
+          const aa = (a.artist || "").toLowerCase();
+          const bb = (b.artist || "").toLowerCase();
+          if (aa !== bb) return aa < bb ? -1 : 1;
+          const la = (a.album || "").toLowerCase();
+          const lb = (b.album || "").toLowerCase();
+          if (la !== lb) return la < lb ? -1 : 1;
+          const da = a.discNumber || 0;
+          const db = b.discNumber || 0;
+          if (da !== db) return da - db;
+          return (a.trackNumber || 0) - (b.trackNumber || 0);
+        });
         const stringsOffPrecomputed = recordsOff + recordsBuf.length;
         const indexOffPrecomputed = stringsOffPrecomputed + pool.totalLen;
         const sortOffPrecomputed = indexOffPrecomputed + indexBuf.length;
         const sortArraysStart = sortOffPrecomputed + 32;
         const sortHeaderBuf = Buffer.alloc(32);
-        const sortArrays = [sortTitleAsc, sortDateAddedDesc, sortAlbumAsc, sortArtistAsc];
+        const sortArrays = [
+          sortTitleAsc,
+          sortDateAddedDesc,
+          sortAlbumAsc,
+          sortArtistAsc
+        ];
         const sortArraysBuf = Buffer.alloc(trackCount * 4 * 4);
         for (let i = 0; i < 4; i++) {
           const absOff = sortArraysStart + i * trackCount * 4;
           sortHeaderBuf.writeUInt32LE(absOff, i * 8);
           sortHeaderBuf.writeUInt32LE(trackCount, i * 8 + 4);
           for (let j = 0; j < trackCount; j++)
-            sortArraysBuf.writeUInt32LE(sortArrays[i][j], i * trackCount * 4 + j * 4);
+            sortArraysBuf.writeUInt32LE(
+              sortArrays[i][j],
+              i * trackCount * 4 + j * 4
+            );
         }
         const headerBuf = Buffer.alloc(HEADER_SIZE, 0);
         const stringsPadding = (4 - pool.totalLen % 4) % 4;
@@ -2252,7 +2251,14 @@ var require_manifest = __commonJS({
         headerBuf.writeUInt32LE(sortOff, 40);
         headerBuf.writeUInt32LE(totalSize, 44);
         const file = Buffer.concat(
-          [headerBuf, recordsBuf, stringsBuf, indexBuf, sortHeaderBuf, sortArraysBuf],
+          [
+            headerBuf,
+            recordsBuf,
+            stringsBuf,
+            indexBuf,
+            sortHeaderBuf,
+            sortArraysBuf
+          ],
           totalSize
         );
         const finalFlags = flags | FLAG_SEALED;
@@ -2510,7 +2516,7 @@ var require_package = __commonJS({
   "package.json"(exports2, module2) {
     module2.exports = {
       name: "novatune",
-      version: "1.0.8",
+      version: "1.0.9",
       description: "NovaTune \u2014 A premium Windows music player with Spotify-dark aesthetics",
       main: "main/main.bundle.js",
       scripts: {
@@ -3180,14 +3186,23 @@ var require_ipc = __commonJS({
             useWorker = false;
             workerPool = [];
           }
+          const scanSettings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+          const failedFiles = scanSettings._failedFiles && typeof scanSettings._failedFiles === "object" ? scanSettings._failedFiles : {};
+          const newlyFailedFiles = {};
           const toScan = [];
           for (let i = 0; i < files.length; i++) {
             const file = files[i];
             const existing = existingMap.get(file.filePath);
-            const hasGoodMetadata = existing && existing.artist && existing.artist !== "Unknown Artist" && existing.album && existing.album !== "Unknown Album";
-            const hasCoverArt = existing && (existing._hasCoverArt === true || existing.coverArt && !/base64,\d+/.test(existing.coverArt));
-            if (existing && hasGoodMetadata && existing.dateModified === file.modifiedTime && hasCoverArt && existing.duration > 0) {
-              tracks.push(existing);
+            const failedMtime = failedFiles[file.filePath];
+            const isPreviouslyFailed = failedMtime !== void 0 && failedMtime === file.modifiedTime;
+            if (isPreviouslyFailed) {
+              skippedCount++;
+              continue;
+            }
+            if (existing && existing.dateModified === file.modifiedTime) {
+              if (existing.duration > 0) {
+                tracks.push(existing);
+              }
               skippedCount++;
             } else {
               toScan.push({ file, globalIdx: i });
@@ -3249,6 +3264,7 @@ var require_ipc = __commonJS({
                   console.log(
                     `[library:scan] Skipping 0:00 track: ${file.filePath}`
                   );
+                  newlyFailedFiles[file.filePath] = file.modifiedTime;
                 } else {
                   tracks.push({
                     id: generateTrackId(file.filePath),
@@ -3269,6 +3285,7 @@ var require_ipc = __commonJS({
                     format: metadata.format || path.extname(file.fileName).replace(".", "").toUpperCase(),
                     fileSize: file.fileSize || metadata.fileSize || 0,
                     coverArt: metadata.coverArt || null,
+                    _hasCoverArt: !!metadata.coverArt,
                     dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                     dateModified: file.modifiedTime || Date.now()
                   });
@@ -3311,14 +3328,17 @@ var require_ipc = __commonJS({
                       format: path.extname(file.fileName).replace(".", "").toUpperCase(),
                       fileSize: file.fileSize || 0,
                       coverArt: null,
+                      _hasCoverArt: false,
                       dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                       dateModified: file.modifiedTime || Date.now()
                     });
                   } else {
                     failedCount++;
+                    newlyFailedFiles[file.filePath] = file.modifiedTime;
                   }
                 } catch (_) {
                   failedCount++;
+                  newlyFailedFiles[file.filePath] = file.modifiedTime;
                 }
               }
             }
@@ -3360,17 +3380,51 @@ var require_ipc = __commonJS({
             }
           }
           const mergedLibrary = Array.from(existingMap2.values());
-          const dateRefreshBatch = 50;
-          for (let i = 0; i < mergedLibrary.length; i += dateRefreshBatch) {
-            const batch = mergedLibrary.slice(i, i + dateRefreshBatch);
-            await Promise.all(batch.map((track) => refreshTrackDateAdded(track)));
-            if (i + dateRefreshBatch < mergedLibrary.length) {
-              await new Promise((resolve) => setImmediate(resolve));
+          const nothingChanged = skippedCount === totalFiles && Object.keys(newlyFailedFiles).length === 0 && mergedLibrary.length === existingLibrary2.length;
+          if (nothingChanged) {
+            console.log(
+              `[library:scan] No changes detected \u2014 skipping saveLibrary + dateAdded refresh + manifest rebuild. (${totalFiles} files checked, all cached)`
+            );
+          } else {
+            const dateRefreshBatch = 50;
+            for (let i = 0; i < mergedLibrary.length; i += dateRefreshBatch) {
+              const batch = mergedLibrary.slice(i, i + dateRefreshBatch);
+              await Promise.all(batch.map((track) => refreshTrackDateAdded(track)));
+              if (i + dateRefreshBatch < mergedLibrary.length) {
+                await new Promise((resolve) => setImmediate(resolve));
+              }
             }
+            saveLibrary(mergedLibrary);
           }
-          saveLibrary(mergedLibrary);
           for (const w of workerPool) w.shutdown();
           workerPool = [];
+          if (Object.keys(newlyFailedFiles).length > 0 || !nothingChanged) {
+            try {
+              const freshSettings = readJSON(SETTINGS_FILE, {
+                ...DEFAULT_SETTINGS
+              });
+              const existingFailed = freshSettings._failedFiles && typeof freshSettings._failedFiles === "object" ? freshSettings._failedFiles : {};
+              for (const [fp, mt] of Object.entries(newlyFailedFiles)) {
+                existingFailed[fp] = mt;
+              }
+              const filePaths = new Set(files.map((f) => f.filePath));
+              for (const fp of Object.keys(existingFailed)) {
+                if (!filePaths.has(fp)) delete existingFailed[fp];
+              }
+              freshSettings._failedFiles = existingFailed;
+              writeJSON(SETTINGS_FILE, freshSettings);
+              if (Object.keys(newlyFailedFiles).length > 0) {
+                console.log(
+                  `[library:scan] Recorded ${Object.keys(newlyFailedFiles).length} new failed files (total failed cache: ${Object.keys(existingFailed).length})`
+                );
+              }
+            } catch (err) {
+              console.warn(
+                "[library:scan] Failed to persist _failedFiles:",
+                err.message
+              );
+            }
+          }
           const elapsed = ((Date.now() - startTime) / 1e3).toFixed(1);
           console.log(
             `[library:scan] Done! ${mergedLibrary.length} tracks in library (${tracks.length} scanned/checked, ${skippedCount} skipped/cached, ${failedCount} failed) in ${elapsed}s`
@@ -3386,42 +3440,44 @@ var require_ipc = __commonJS({
             message: `Done! Checked ${tracks.length} tracks (${skippedCount} from cache) in ${elapsed}s`
           });
           let latestFingerprint = null;
-          try {
-            const fp = await _computeFolderFingerprint([folderPath]);
-            latestFingerprint = fp;
-            const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
-            settings._scanFingerprints = settings._scanFingerprints || {};
-            settings._scanFingerprints[folderPath] = fp;
-            const allFps = settings._scanFingerprints;
-            const combined = Object.keys(allFps).sort().map((k) => `${k}=${allFps[k]}`).join("|");
-            settings._combinedFingerprint = combined;
-            writeJSON(SETTINGS_FILE, settings);
-          } catch (_) {
+          if (!nothingChanged) {
+            try {
+              const fp = await _computeFolderFingerprint([folderPath]);
+              latestFingerprint = fp;
+              const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+              settings._scanFingerprints = settings._scanFingerprints || {};
+              settings._scanFingerprints[folderPath] = fp;
+              const allFps = settings._scanFingerprints;
+              const combined = Object.keys(allFps).sort().map((k) => `${k}=${allFps[k]}`).join("|");
+              settings._combinedFingerprint = combined;
+              writeJSON(SETTINGS_FILE, settings);
+            } catch (_) {
+            }
           }
-          if (ManifestIPC.isFeatureFlagEnabled()) {
+          if (ManifestIPC.isFeatureFlagEnabled() && !nothingChanged) {
             const rebuildStart = Date.now();
             setImmediate(async () => {
               try {
                 const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
                 const fp = settings._combinedFingerprint || "";
-                const result = await ManifestIPC.rebuildManifest(
-                  mergedLibrary,
-                  fp
-                );
+                const result = await ManifestIPC.rebuildManifest(mergedLibrary, fp);
                 if (result.ok) {
                   console.log(
                     `[manifest] rebuilt after scan in ${Date.now() - rebuildStart}ms (${result.trackCount} tracks, ${result.size} bytes)`
                   );
                 }
               } catch (err) {
-                console.warn(
-                  "[manifest] post-scan rebuild failed:",
-                  err.message
-                );
+                console.warn("[manifest] post-scan rebuild failed:", err.message);
               }
             });
           }
-          return { success: true, tracks: mergedLibrary, newTracks: tracks.length };
+          return {
+            success: true,
+            tracks: mergedLibrary,
+            newTracks: tracks.length,
+            nothingChanged
+            // v1.0.12: renderer uses this to skip _loadLibrary()
+          };
         } catch (err) {
           console.error("[library:scan] Error:", err);
           sendProgress(mainWindow, {
@@ -5796,9 +5852,11 @@ var require_main = __commonJS({
       "BackgroundTracing,PaintHolding"
     );
     app.commandLine.appendSwitch("enable-features", "PlatformHEVCEncoderSupport");
-    app.commandLine.appendSwitch("enable-gpu-rasterization");
-    app.commandLine.appendSwitch("enable-zero-copy");
-    app.commandLine.appendSwitch("force-gpu-mem-available-mb", "1024");
+    if (process.env.NOVATUNE_GPU_RASTER === "1") {
+      app.commandLine.appendSwitch("enable-gpu-rasterization");
+      app.commandLine.appendSwitch("enable-zero-copy");
+      app.commandLine.appendSwitch("force-gpu-mem-available-mb", "1024");
+    }
     app.commandLine.appendSwitch("disk-cache-size", "268435456");
     var AUDIO_MIME = {
       ".mp3": "audio/mpeg",
@@ -5834,12 +5892,16 @@ var require_main = __commonJS({
       app.quit();
     } else {
       app.on("second-instance", () => {
-        console.log("[single-instance] Second instance launched \u2014 focusing existing window.");
+        console.log(
+          "[single-instance] Second instance launched \u2014 focusing existing window."
+        );
         if (mainWindow) {
           if (mainWindow.isMinimized()) mainWindow.restore();
           mainWindow.focus();
         } else {
-          console.log("[single-instance] No window exists \u2014 zombie process. Force-exiting.");
+          console.log(
+            "[single-instance] No window exists \u2014 zombie process. Force-exiting."
+          );
           app.exit(0);
         }
       });
@@ -5938,12 +6000,24 @@ var require_main = __commonJS({
           );
         }
       );
-      mainWindow.once("ready-to-show", () => {
+      let _windowShown = false;
+      function _showWindow(reason) {
+        if (_windowShown || !mainWindow || mainWindow.isDestroyed()) return;
+        _windowShown = true;
+        console.log(`[window] show() \u2014 triggered by ${reason}`);
         if (isMaximized !== false) {
-          mainWindow.maximize();
+          try {
+            mainWindow.maximize();
+          } catch (_) {
+          }
         }
         mainWindow.show();
+      }
+      mainWindow.once("ready-to-show", () => _showWindow("ready-to-show"));
+      mainWindow.webContents.once("did-finish-load", () => {
+        setTimeout(() => _showWindow("did-finish-load+500ms"), 500);
       });
+      setTimeout(() => _showWindow("5s-hard-fallback"), 5e3);
       mainWindow.on("close", () => {
         windowState.saveState(mainWindow);
       });
@@ -5959,6 +6033,13 @@ var require_main = __commonJS({
       mainWindow.webContents.setWindowOpenHandler(({ url }) => {
         shell.openExternal(url);
         return { action: "deny" };
+      });
+      app.on("gpu-process-crashed", (event, killed) => {
+        console.error(`[gpu] GPU process crashed! killed=${killed}`);
+        _showWindow("gpu-process-crashed");
+      });
+      mainWindow.webContents.on("render-process-gone", (event, details) => {
+        console.error(`[window] render-process-gone: reason=${details.reason}`);
       });
       if (isDev) {
         mainWindow.webContents.openDevTools({ mode: "detach" });

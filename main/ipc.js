@@ -620,18 +620,24 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   // We default ON because ultraspeed is the goal, but a corrupt manifest
   // silently falls back to SQLite — see manifestReader.js validation.
   let manifestEnabled = true;
-  if (process.env.NOVATUNE_USE_MANIFEST === "0" ||
-      process.env.NOVATUNE_USE_MANIFEST === "false") {
+  if (
+    process.env.NOVATUNE_USE_MANIFEST === "0" ||
+    process.env.NOVATUNE_USE_MANIFEST === "false"
+  ) {
     manifestEnabled = false;
-  } else if (process.env.NOVATUNE_USE_MANIFEST === "1" ||
-             process.env.NOVATUNE_USE_MANIFEST === "true") {
+  } else if (
+    process.env.NOVATUNE_USE_MANIFEST === "1" ||
+    process.env.NOVATUNE_USE_MANIFEST === "true"
+  ) {
     manifestEnabled = true;
   } else {
     // Env var unset → consult settings.json
     try {
       const settingsForFlag = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
       if (settingsForFlag._useManifest === false) manifestEnabled = false;
-    } catch (_) { /* default ON */ }
+    } catch (_) {
+      /* default ON */
+    }
   }
   ManifestIPC.setFeatureFlag(manifestEnabled);
   console.log(`[manifest] feature flag: ${manifestEnabled ? "ON" : "OFF"}`);
@@ -837,28 +843,54 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       }
 
       // Split files into cached (skip) and needing parse
+      // CHANGED v1.0.13: Relaxed the cache check. The old code required
+      // ALL of: good metadata + cover art + duration > 0 + mtime match.
+      // If ANY failed, the file was re-parsed — even if the file hadn't
+      // changed. This caused files with missing cover art or 0:00
+      // duration (corrupt metadata) to be re-parsed EVERY refresh,
+      // which also prevented the nothingChanged fast path from triggering.
+      //
+      // CHANGED v1.0.14: Added a "failed files" cache. Files that
+      // previously returned 0:00 duration (corrupt/unsupported, e.g.
+      // YouTube video rips renamed to .mp3) are remembered in
+      // settings._failedFiles and skipped on future scans. This prevents
+      // the 107s refresh the user reported — 5 corrupt files were being
+      // re-parsed every time, each taking ~20s (worker crash + retry).
+      // Now they're skipped instantly.
+      //
+      // The failed cache stores { filePath: mtime }. If the file's mtime
+      // changes (user replaced the corrupt file with a good one), we
+      // re-try it.
+      const scanSettings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+      const failedFiles =
+        scanSettings._failedFiles &&
+        typeof scanSettings._failedFiles === "object"
+          ? scanSettings._failedFiles
+          : {};
+      const newlyFailedFiles = {}; // files that fail THIS scan
+
       const toScan = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const existing = existingMap.get(file.filePath);
-        const hasGoodMetadata =
-          existing &&
-          existing.artist &&
-          existing.artist !== "Unknown Artist" &&
-          existing.album &&
-          existing.album !== "Unknown Album";
-        const hasCoverArt =
-          existing &&
-          (existing._hasCoverArt === true ||
-            (existing.coverArt && !/base64,\d+/.test(existing.coverArt)));
-        if (
-          existing &&
-          hasGoodMetadata &&
-          existing.dateModified === file.modifiedTime &&
-          hasCoverArt &&
-          existing.duration > 0
-        ) {
-          tracks.push(existing);
+
+        // Check if this file previously failed (0:00 duration)
+        const failedMtime = failedFiles[file.filePath];
+        const isPreviouslyFailed =
+          failedMtime !== undefined && failedMtime === file.modifiedTime;
+
+        if (isPreviouslyFailed) {
+          // File previously returned 0:00 and hasn't changed → skip.
+          // Don't re-parse, don't add to tracks. Count as skipped so
+          // nothingChanged can trigger.
+          skippedCount++;
+          continue;
+        }
+
+        if (existing && existing.dateModified === file.modifiedTime) {
+          if (existing.duration > 0) {
+            tracks.push(existing);
+          }
           skippedCount++;
         } else {
           toScan.push({ file, globalIdx: i });
@@ -932,6 +964,8 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
               console.log(
                 `[library:scan] Skipping 0:00 track: ${file.filePath}`,
               );
+              // v1.0.14: Record this file as failed so we skip it next time
+              newlyFailedFiles[file.filePath] = file.modifiedTime;
             } else {
               tracks.push({
                 id: generateTrackId(file.filePath),
@@ -956,6 +990,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   path.extname(file.fileName).replace(".", "").toUpperCase(),
                 fileSize: file.fileSize || metadata.fileSize || 0,
                 coverArt: metadata.coverArt || null,
+                _hasCoverArt: !!metadata.coverArt,
                 dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                 dateModified: file.modifiedTime || Date.now(),
               });
@@ -1002,14 +1037,19 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                     .toUpperCase(),
                   fileSize: file.fileSize || 0,
                   coverArt: null,
+                  _hasCoverArt: false,
                   dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                   dateModified: file.modifiedTime || Date.now(),
                 });
               } else {
                 failedCount++;
+                // v1.0.14: Record as failed
+                newlyFailedFiles[file.filePath] = file.modifiedTime;
               }
             } catch (_) {
               failedCount++;
+              // v1.0.14: Record as failed
+              newlyFailedFiles[file.filePath] = file.modifiedTime;
             }
           }
         }
@@ -1068,24 +1108,91 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       }
 
       const mergedLibrary = Array.from(existingMap2.values());
-      // PERF FIX: Refresh dateAdded during scans (not at startup).
-      // This is the right place: files are already being accessed,
-      // and the scan runs in the background with progress reporting.
-      // Do it asynchronously to avoid blocking the event loop.
-      const dateRefreshBatch = 50;
-      for (let i = 0; i < mergedLibrary.length; i += dateRefreshBatch) {
-        const batch = mergedLibrary.slice(i, i + dateRefreshBatch);
-        await Promise.all(batch.map((track) => refreshTrackDateAdded(track)));
-        // Yield to event loop between batches
-        if (i + dateRefreshBatch < mergedLibrary.length) {
-          await new Promise((resolve) => setImmediate(resolve));
+
+      // CHANGED v1.0.12: Fast path — if nothing changed (all files
+      // were cached/skipped AND no tracks were removed), skip the
+      // expensive saveLibrary + refreshTrackDateAdded + manifest rebuild.
+      // This makes the refresh button instant when the user just wants
+      // to check for new songs but none were added.
+      //
+      // The old code ALWAYS did:
+      //   1. saveLibrary → DELETE FROM tracks + re-INSERT all 1127 rows
+      //   2. refreshTrackDateAdded → 1127 stat() calls
+      //   3. Manifest rebuild (setImmediate after saveLibrary)
+      // Even when 0 files changed, this took 5-30s on HDD.
+      //
+      // Now: if skippedCount === totalFiles AND the library size is
+      // unchanged, we skip all three steps and return immediately.
+      // v1.0.14: nothingChanged is true when ALL files were skipped
+      // (cached or previously-failed), no NEW failures occurred, and
+      // the library size is unchanged. This means the refresh was
+      // purely a "check for new songs" with no actual changes.
+      const nothingChanged =
+        skippedCount === totalFiles &&
+        Object.keys(newlyFailedFiles).length === 0 &&
+        mergedLibrary.length === existingLibrary2.length;
+
+      if (nothingChanged) {
+        console.log(
+          `[library:scan] No changes detected — skipping saveLibrary + dateAdded refresh + manifest rebuild. (${totalFiles} files checked, all cached)`,
+        );
+      } else {
+        // PERF FIX: Refresh dateAdded during scans (not at startup).
+        // This is the right place: files are already being accessed,
+        // and the scan runs in the background with progress reporting.
+        // Do it asynchronously to avoid blocking the event loop.
+        const dateRefreshBatch = 50;
+        for (let i = 0; i < mergedLibrary.length; i += dateRefreshBatch) {
+          const batch = mergedLibrary.slice(i, i + dateRefreshBatch);
+          await Promise.all(batch.map((track) => refreshTrackDateAdded(track)));
+          // Yield to event loop between batches
+          if (i + dateRefreshBatch < mergedLibrary.length) {
+            await new Promise((resolve) => setImmediate(resolve));
+          }
         }
+        saveLibrary(mergedLibrary);
       }
-      saveLibrary(mergedLibrary);
 
       // Clean up worker pool
       for (const w of workerPool) w.shutdown();
       workerPool = [];
+
+      // v1.0.14: Persist failed files to settings so they're skipped
+      // on future scans. Merge newly failed files with existing ones.
+      // Also prune entries for files that no longer exist (user deleted them).
+      if (Object.keys(newlyFailedFiles).length > 0 || !nothingChanged) {
+        try {
+          const freshSettings = readJSON(SETTINGS_FILE, {
+            ...DEFAULT_SETTINGS,
+          });
+          const existingFailed =
+            freshSettings._failedFiles &&
+            typeof freshSettings._failedFiles === "object"
+              ? freshSettings._failedFiles
+              : {};
+          // Merge new failures
+          for (const [fp, mt] of Object.entries(newlyFailedFiles)) {
+            existingFailed[fp] = mt;
+          }
+          // Prune entries for files no longer on disk
+          const filePaths = new Set(files.map((f) => f.filePath));
+          for (const fp of Object.keys(existingFailed)) {
+            if (!filePaths.has(fp)) delete existingFailed[fp];
+          }
+          freshSettings._failedFiles = existingFailed;
+          writeJSON(SETTINGS_FILE, freshSettings);
+          if (Object.keys(newlyFailedFiles).length > 0) {
+            console.log(
+              `[library:scan] Recorded ${Object.keys(newlyFailedFiles).length} new failed files (total failed cache: ${Object.keys(existingFailed).length})`,
+            );
+          }
+        } catch (err) {
+          console.warn(
+            "[library:scan] Failed to persist _failedFiles:",
+            err.message,
+          );
+        }
+      }
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       console.log(
@@ -1104,30 +1211,34 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       });
 
       // Save fingerprint so next startup can skip the scan if nothing changed
+      // CHANGED v1.0.12: Skip fingerprint computation when nothingChanged —
+      // the fingerprint is unchanged and recomputing it requires a full
+      // stat-walk of all files (~30-60s on HDD). This is the single
+      // biggest speedup for the refresh button.
       let latestFingerprint = null;
-      try {
-        const fp = await _computeFolderFingerprint([folderPath]);
-        latestFingerprint = fp;
-        const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
-        settings._scanFingerprints = settings._scanFingerprints || {};
-        settings._scanFingerprints[folderPath] = fp;
-        // Persist the combined fingerprint string for the manifest's fpHash
-        // (concatenation of all folder fingerprints, deterministic order)
-        const allFps = settings._scanFingerprints;
-        const combined = Object.keys(allFps)
-          .sort()
-          .map((k) => `${k}=${allFps[k]}`)
-          .join("|");
-        settings._combinedFingerprint = combined;
-        writeJSON(SETTINGS_FILE, settings);
-      } catch (_) {}
+      if (!nothingChanged) {
+        try {
+          const fp = await _computeFolderFingerprint([folderPath]);
+          latestFingerprint = fp;
+          const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+          settings._scanFingerprints = settings._scanFingerprints || {};
+          settings._scanFingerprints[folderPath] = fp;
+          // Persist the combined fingerprint string for the manifest's fpHash
+          // (concatenation of all folder fingerprints, deterministic order)
+          const allFps = settings._scanFingerprints;
+          const combined = Object.keys(allFps)
+            .sort()
+            .map((k) => `${k}=${allFps[k]}`)
+            .join("|");
+          settings._combinedFingerprint = combined;
+          writeJSON(SETTINGS_FILE, settings);
+        } catch (_) {}
+      }
 
       // ── Rebuild binary manifest so next startup reads ONE file ──
-      // Fire-and-forget: the user's scan is already complete (success
-      // returned), and the manifest rebuild is a ~50-200ms job for a
-      // 1000-track library. If it fails, the next startup falls back
-      // to SQLite — no user-visible disruption.
-      if (ManifestIPC.isFeatureFlagEnabled()) {
+      // CHANGED v1.0.12: Skip manifest rebuild when nothingChanged —
+      // the manifest is already up to date.
+      if (ManifestIPC.isFeatureFlagEnabled() && !nothingChanged) {
         const rebuildStart = Date.now();
         setImmediate(async () => {
           try {
@@ -1136,26 +1247,25 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             // directly to avoid a redundant SQLite round-trip.
             const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
             const fp = settings._combinedFingerprint || "";
-            const result = await ManifestIPC.rebuildManifest(
-              mergedLibrary,
-              fp,
-            );
+            const result = await ManifestIPC.rebuildManifest(mergedLibrary, fp);
             if (result.ok) {
               console.log(
                 `[manifest] rebuilt after scan in ${Date.now() - rebuildStart}ms ` +
-                `(${result.trackCount} tracks, ${result.size} bytes)`,
+                  `(${result.trackCount} tracks, ${result.size} bytes)`,
               );
             }
           } catch (err) {
-            console.warn(
-              "[manifest] post-scan rebuild failed:",
-              err.message,
-            );
+            console.warn("[manifest] post-scan rebuild failed:", err.message);
           }
         });
       }
 
-      return { success: true, tracks: mergedLibrary, newTracks: tracks.length };
+      return {
+        success: true,
+        tracks: mergedLibrary,
+        newTracks: tracks.length,
+        nothingChanged, // v1.0.12: renderer uses this to skip _loadLibrary()
+      };
     } catch (err) {
       console.error("[library:scan] Error:", err);
       sendProgress(mainWindow, {
@@ -1632,7 +1742,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       saveLibrary([]);
       // Drop the manifest too so the renderer falls back to SQLite
       // until the next scan rebuilds it.
-      try { ManifestIPC.deleteManifest(); } catch (_) {}
+      try {
+        ManifestIPC.deleteManifest();
+      } catch (_) {}
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
