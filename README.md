@@ -22,7 +22,7 @@
 
 [![Download the latest release](https://img.shields.io/badge/⬇%20Download-NovaTune%20Setup.exe-1ed760?style=for-the-badge&logo=github&logoColor=white)](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases/latest)
 
-> **Prefer a portable build?** Grab `NovaTune-Portable-1.0.0.exe` from the [Releases page](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases) — no installer, just double-click and play.
+> **Prefer a portable build?** Grab `NovaTune-Setup-1.0.9.exe` from the [Releases page](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases) — no installer, just double-click and play. Ensure You download the latest version it has some critical fixes...
 
 </div>
 
