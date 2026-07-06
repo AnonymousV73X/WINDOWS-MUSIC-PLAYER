@@ -59,7 +59,7 @@ It is **not** a streaming client. It is **not** a cloud anything. Point it at a 
 |                     |                                                     |
 | ------------------- | --------------------------------------------------- |
 | **App ID**          | `com.novatune.player`                               |
-| **Version**         | 1.0.0                                               |
+| **Version**         | 1.0.9                                               |
 | **License**         | MIT                                                 |
 | **Platform**        | Windows x64 (NSIS installer + portable build)       |
 | **Aesthetic**       | Spotify-dark, Material-You-aware accent system      |
