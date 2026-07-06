@@ -14,8 +14,6 @@
 [![Electron](https://img.shields.io/badge/Electron-28-47848F?style=flat-square)]()
 [![Made with love](https://img.shields.io/badge/made%20with-%E2%99%A5-ff4d6d?style=flat-square)]()
 
-<!-- Replace with your own logo / hero banner — recommended 1200×400 -->
-
 <img src="assets/icons/icon.png" alt="NovaTune" width="120" height="120" />
 
 ### Download
