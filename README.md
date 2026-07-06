@@ -8,7 +8,7 @@
 
 *Built for music lovers who were abandoned by every player Microsoft shipped.*
 
-[![Version](https://img.shields.io/badge/version-1.0.0-1ed760?style=flat-square)](./package.json)
+[![Version](https://img.shields.io/badge/version-1.0.9-1ed760?style=flat-square)](./package.json)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?style=flat-square)]()
 [![License](https://img.shields.io/badge/license-MIT-1ed760?style=flat-square)](./LICENSE)
 [![Electron](https://img.shields.io/badge/Electron-28-47848F?style=flat-square)]()
