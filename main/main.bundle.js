@@ -6530,16 +6530,19 @@ var require_main = __commonJS({
       });
     });
     app.on("window-all-closed", () => {
-      console.log("[quit] window-all-closed \u2014 cleaning up SMTC and quitting.");
-      if (smtcBridge) {
-        try {
-          smtcBridge.destroy();
-        } catch (err) {
-          console.warn("[quit] SMTC destroy failed (ignoring):", err.message);
-        }
-        smtcBridge = null;
-      }
+      console.log("[quit] window-all-closed \u2014 quitting, SMTC cleanup deferred.");
       if (process.platform !== "darwin") app.quit();
+      if (smtcBridge) {
+        const bridge = smtcBridge;
+        smtcBridge = null;
+        setImmediate(() => {
+          try {
+            bridge.destroy();
+          } catch (err) {
+            console.warn("[quit] SMTC destroy failed (ignoring):", err.message);
+          }
+        });
+      }
     });
     app.on("web-contents-created", (event, contents) => {
       contents.on("will-navigate", (event2, navigationUrl) => {

@@ -4297,9 +4297,19 @@ async function _renderFromManifest(decoder) {
       })
       .catch((err) => {
         console.warn(
-          "[startup] manifest progressive load failed:",
+          "[startup] manifest progressive load failed, falling back to SQLite pagination:",
           err.message,
         );
+        _loadRemainingPages(1, FIRST_PAGE_SIZE, total)
+          .then(() => {
+            _restoreFullQueue();
+          })
+          .catch((fallbackErr) => {
+            console.warn(
+              "[startup] SQLite pagination fallback also failed:",
+              fallbackErr.message,
+            );
+          });
       });
   } else {
     // Small library — already fully loaded. Restore queue immediately.

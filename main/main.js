@@ -963,20 +963,27 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
-  console.log("[quit] window-all-closed — cleaning up SMTC and quitting.");
-  // CHANGED v3.0: Wrap smtcBridge.destroy() in try/catch. The old code
-  // let any throw from the native SMTC module prevent app.quit() from
-  // running, leaving a zombie process in Task Manager. Now SMTC cleanup
-  // failures are logged but never block quit.
-  if (smtcBridge) {
-    try {
-      smtcBridge.destroy();
-    } catch (err) {
-      console.warn("[quit] SMTC destroy failed (ignoring):", err.message);
-    }
-    smtcBridge = null;
-  }
+  console.log("[quit] window-all-closed — quitting, SMTC cleanup deferred.");
+  // CHANGED: app.quit() now fires FIRST and synchronously, before touching
+  // smtcBridge. The old order called smtcBridge.destroy() before app.quit(),
+  // so if destroy() ever blocked the main thread (native call hang, not just
+  // a throw — try/catch cannot save you from a hang), app.quit() was never
+  // reached, before-quit never fired, and the 3s force-exit timer never
+  // armed — leaving a zombie process in Task Manager. Now quit is requested
+  // immediately, arming the force-exit safety net regardless of what SMTC
+  // cleanup does. Destroy is deferred to setImmediate so it can't gate quit.
   if (process.platform !== "darwin") app.quit();
+  if (smtcBridge) {
+    const bridge = smtcBridge;
+    smtcBridge = null;
+    setImmediate(() => {
+      try {
+        bridge.destroy();
+      } catch (err) {
+        console.warn("[quit] SMTC destroy failed (ignoring):", err.message);
+      }
+    });
+  }
 });
 
 app.on("web-contents-created", (event, contents) => {
