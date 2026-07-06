@@ -947,7 +947,7 @@ MIT License — see [LICENSE](./LICENSE) for the full text.
 
 <div align="center">
 
-**NovaTune v1.0.0 • Made with love for music lovers**
+**NovaTune v1.0.9 • Made with love for music lovers**
 
 *If NovaTune brings you joy, star the repo and tell a friend.*
 
