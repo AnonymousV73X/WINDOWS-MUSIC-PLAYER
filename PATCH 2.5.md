@@ -2,7 +2,7 @@
 
 Based on the v2.4 log analysis. Five surgical fixes — no architectural changes.
 
-## What was wrong (from v2.4 log)
+## What was wrong (from v2.4 log...)
 
 | Issue | Impact | Root cause |
 |-------|--------|------------|
