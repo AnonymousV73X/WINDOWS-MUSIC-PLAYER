@@ -78,14 +78,31 @@ class MetadataWorker {
   /**
    * Read full metadata from a file in the worker thread.
    * @param {string} filePath
+   * @param {Map<string, string>} [knownArtists] - v1.1.5: Optional Map of
+   *   lowercased artist names -> original-cased names. Serialized as a plain
+   *   object for postMessage (Maps don't survive structured clone reliably),
+   *   then rehydrated as a Map in the worker thread.
    * @returns {Promise<Object>}
    */
-  readMetadata(filePath) {
+  readMetadata(filePath, knownArtists) {
     this._ensureWorker();
     const taskId = ++this._taskId;
+    // v1.1.5: Serialize Map -> plain object for postMessage.
+    let knownArtistsObj = null;
+    if (knownArtists && knownArtists.size > 0) {
+      knownArtistsObj = {};
+      for (const [k, v] of knownArtists) {
+        knownArtistsObj[k] = v;
+      }
+    }
     return new Promise((resolve, reject) => {
       this._pending.set(taskId, { resolve, reject });
-      this._worker.postMessage({ type: "readMetadata", filePath, taskId });
+      this._worker.postMessage({
+        type: "readMetadata",
+        filePath,
+        taskId,
+        knownArtists: knownArtistsObj,
+      });
     });
   }
 

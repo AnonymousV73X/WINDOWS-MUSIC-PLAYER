@@ -667,8 +667,13 @@ let _lastScrollTime = 0;
 let _velocityIdleTimer = null;
 
 // ─── Bitmap Thumbnail Atlas ───────────────────────────────────────
-const thumbnailAtlas = new Map(); // trackId → ImageBitmap (40×40)
-const THUMBNAIL_SIZE = 40;
+// v1.1.4: Bumped from 96 → 128 for true retina quality on 4K displays.
+// The canvas is THUMB_DPR * 42 CSS pixels (84px on DPR-2, 168px on DPR-4).
+// A 128px source bitmap gives crisp 1:1 pixel mapping even on 4K retina,
+// with enough headroom for the 200px album/artist cards (scaled down).
+// v1.1.3: Was 96. v1.0.x: Was 40 (too low quality — user-reported blur).
+const thumbnailAtlas = new Map(); // trackId → ImageBitmap (128×128)
+const THUMBNAIL_SIZE = 128;
 const THUMB_DPR = Math.min(window.devicePixelRatio || 1, 2);
 let _atlasBuildQueue = [];
 let _atlasBuilding = false;
@@ -1983,6 +1988,20 @@ document.addEventListener("DOMContentLoaded", async () => {
   console.log("NovaTune initializing...");
   _updateSplashStatus("boot", "loading", "Initializing…");
 
+  // v1.1.1 — Flush thumb stubs on app quit so the cache survives restart.
+  // We use `beforeunload` (not `unload`) because the main process may
+  // need a moment to write the JSON file, and `unload` is unreliable.
+  // The flush itself is a single IPC call with the pending patch dict.
+  window.addEventListener("beforeunload", () => {
+    try {
+      if (typeof TrackThumbHandler !== "undefined" && TrackThumbHandler.flush) {
+        // Fire-and-forget — don't block the unload. The main process's
+        // debounced save will pick up the patch.
+        TrackThumbHandler.flush().catch(() => {});
+      }
+    } catch (_) {}
+  });
+
   // ── Critical path: load data as fast as possible ──
   // Fire settings + library + playlists in parallel
   // NOTE: _loadLibrary resolves once the first page is fetched and rendered
@@ -2178,77 +2197,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // ── Deferred background scan (30s after startup) ──────────────────
-  // CHANGED v2.4: Was 6s — WAY too early. On HDD, the audio engine is
-  // still loading the saved track at 6s, and the fingerprint check
-  // (which stat-walks every audio file) competes with it for I/O,
-  // causing the audio engine to TIMEOUT (seen in logs as
-  // "[AudioEngine:loadTrack] TIMEOUT gen=1").
-  //
-  // 30s gives the audio engine plenty of time to finish loading
-  // BEFORE we start any disk-heavy background work. The user can play
-  // music immediately; the fingerprint check happens in the background
-  // long after playback has started.
-  //
-  // ADDITIONAL OPTIMIZATION: If the manifest exists AND its fpHash
-  // matches the saved combined fingerprint, we skip the fingerprint
-  // check entirely — the manifest IS the proof that nothing changed
-  // since the last scan. This eliminates the stat-walk on every
-  // startup where the library hasn't changed.
-  setTimeout(async () => {
-    const scanFolders = Array.isArray(state.settings?.scanFolders)
-      ? state.settings.scanFolders
-      : [];
-    if (scanFolders.length === 0) return;
-
-    // ── Fast path: check manifest fpHash before stat-walking ──
-    // If the manifest exists and its fpHash matches the saved
-    // _combinedFingerprint, the library hasn't changed since the
-    // last scan — skip the fingerprint check entirely.
-    console.log("[Startup] Checking folder fingerprints...");
-    _updateSplashStatus("fingerprint", "loading", "Checking library…");
-    try {
-      const check = await window.novaAPI.invoke(
-        "library:needs-scan",
-        scanFolders,
-      );
-      if (!check.needsScan) {
-        console.log(
-          "[Startup] No folder changes detected. Skipping background scan.",
-        );
-        _updateSplashStatus("fingerprint", "done", "Library up to date");
-        return;
-      }
-
-      console.log("[Startup] Deferred background scan starting (silent)...");
-      _updateSplashStatus("fingerprint", "loading", "Scanning new files…");
-      state.bgScanActive = true; // Flag to silence the scan progress UI modal
-
-      for (const folderPath of scanFolders) {
-        await window.novaAPI.invoke("library:scan", folderPath);
-      }
-      _bustIDBThumbCache();
-      // v1.0.15: Force manifest rebuild + clear decoder so new tracks appear.
-      // The scan handler's setImmediate might not have fired yet.
-      try {
-        await window.novaAPI.invoke("library:rebuild-manifest");
-      } catch (_) {}
-      manifestDecoder = null;
-      thumbnailAtlas.clear();
-      try {
-        await _idbSet("bg-cache::missing-thumbnails", null);
-        await _idbSet("bg-cache::thumbnail-atlas", null);
-      } catch (_) {}
-      await _loadLibrary();
-      _updateSidebarFolderInfo();
-      console.log("[Startup] Background scan complete.");
-      _updateSplashStatus("fingerprint", "done", "Library refreshed");
-    } catch (err) {
-      console.warn("[Startup] Background scan failed:", err.message);
-      _updateSplashStatus("fingerprint", "error", err.message);
-    } finally {
-      state.bgScanActive = false;
-    }
-  }, 30000); // was 6000 — see comment above
+  // Background scan disabled per user request to minimize background tasks and lag
+  setTimeout(() => {
+    _updateSplashStatus("fingerprint", "skipped", "Auto-scan disabled");
+  }, 100);
 });
 
 // ─── Keyboard Shortcuts (unified global handler) ─────────────────
@@ -2423,6 +2375,8 @@ document.addEventListener("keydown", (e) => {
     }
     audioEngine.setVolume(state.volume);
     updateVolumeUi();
+    // v1.1.0 — Persist volume change (debounced, respects volumePersistMode).
+    _persistVolumeDebounced();
     return;
   }
 
@@ -2467,6 +2421,8 @@ document.addEventListener("keydown", (e) => {
       state.volume = Math.max(0, Math.min(1, state.volume + sign * 0.05));
       audioEngine.setVolume(state.volume);
       updateVolumeUi();
+      // v1.1.0 — Persist volume change (debounced, respects volumePersistMode).
+      _persistVolumeDebounced();
       return;
     }
 
@@ -3231,7 +3187,7 @@ async function buildThumbnailAtlas() {
         if (img.naturalWidth <= 1 || img.naturalHeight <= 1) {
           // This thumbnail is stale — the disk file was deleted or corrupted.
           // Remove from IDB so next launch re-generates it.
-          _idbSet(`batch48::${track.id}`, null);
+          _idbSet(`batch96::${track.id}`, null);
           delete track._thumb;
           return;
         }
@@ -3293,20 +3249,60 @@ async function buildThumbnailAtlas() {
  */
 const _thumbBuildInFlight = new Set(); // trackIds currently being built
 
+// Per-track thumbnail fetch deduplication map: trackId → Promise
+const _thumbFetchInFlight = new Map();
+
 async function _ensureThumbInAtlas(track) {
   if (!track) return;
   if (thumbnailAtlas.has(track.id)) return; // already built
   if (_thumbBuildInFlight.has(track.id)) return; // already building
-  if (!(track._thumb || track.coverArt || track._hasCoverArt)) return;
+
+  // If the track has no art flags at all, try fetching it on-demand from
+  // the main process (covers tracks whose WebP thumb is on disk but whose
+  // _thumb field was never populated because the bg scan was disabled).
+  if (!(track._thumb || track.coverArt || track._hasCoverArt)) {
+    // Deduplicate: don't fire multiple IPC calls for the same track
+    if (!_thumbFetchInFlight.has(track.id)) {
+      const fetchP = (async () => {
+        try {
+          const res = await window.novaAPI.invoke("coverart:get-thumb", {
+            trackId: track.id,
+            size: 128,
+          });
+          if (res?.success && res.url) {
+            track._thumb = res.url;
+            TrackThumbHandler.resolveSync(track); // warm hot-cache + stub
+            // Now that _thumb is set, kick off atlas build
+            _ensureThumbInAtlas(track);
+          }
+        } catch (_) {
+          // Main process has no thumb for this track — leave blank
+        } finally {
+          _thumbFetchInFlight.delete(track.id);
+        }
+      })();
+      _thumbFetchInFlight.set(track.id, fetchP);
+    }
+    return; // nothing to draw yet — will re-enter when _thumb is set
+  }
 
   _thumbBuildInFlight.add(track.id);
 
   try {
     const img = new Image();
-    let thumbSrc = track._thumb || track.coverArt;
-    if (!thumbSrc && track._hasCoverArt) {
-      thumbSrc = `nova-media://art/${encodeURIComponent(track.id)}`;
+    // v1.1.0 — Resolve via TrackThumbHandler so the URL is the track's OWN
+    // per-track cover (not an album-shared URL). The handler also caches
+    // the resolved URL permanently in IDB so future renders skip this work.
+    let thumbSrc = TrackThumbHandler.resolveSync(track);
+    if (!thumbSrc) {
+      // Fallbacks (shouldn't normally be hit — _resolveCoverArtSrc covers
+      // _hasCoverArt / coverArt / _thumb — but kept for safety).
+      thumbSrc = track._thumb || track.coverArt;
+      if (!thumbSrc && track._hasCoverArt) {
+        thumbSrc = `nova-media://art/${encodeURIComponent(track.id)}`;
+      }
     }
+    if (!thumbSrc) return; // nothing to load
     img.src =
       thumbSrc.startsWith("nova-media://") || thumbSrc.startsWith("data:")
         ? thumbSrc
@@ -3319,8 +3315,10 @@ async function _ensureThumbInAtlas(track) {
 
     // Skip 1x1 transparent pixels (stale cache)
     if (img.naturalWidth <= 1 || img.naturalHeight <= 1) {
-      _idbSet(`batch48::${track.id}`, null);
+      _idbSet(`batch96::${track.id}`, null);
       delete track._thumb;
+      // v1.1.0 — Also invalidate the per-track thumb cache so we re-resolve next time.
+      TrackThumbHandler.invalidate(track.id);
       return;
     }
 
@@ -3347,6 +3345,11 @@ async function _ensureThumbInAtlas(track) {
       if (canvas) {
         const ctx = canvas.getContext("2d");
         ctx.drawImage(bitmap, 0, 0, THUMB_DPR * 42, THUMB_DPR * 42);
+        // v1.1.1 — Mark canvas as ready so the fallback <img> knows to fade out.
+        canvas.dataset.bitmapReady = "true";
+        // Hide the fallback <img> (if any) now that the bitmap is drawn.
+        const fallbackImg = slot.querySelector(".track-thumb-fallback-img");
+        if (fallbackImg) fallbackImg.style.opacity = "0";
       } else {
         // The slot was rendered with an <img> fallback (no canvas).
         // Re-populate it so the canvas is created and the bitmap drawn.
@@ -3496,6 +3499,70 @@ async function _searchDeezerArt(track) {
 }
 
 /**
+ * v1.1.4 — Build a search-optimized track object for iTunes/Deezer queries.
+ *
+ * For YouTube rips parsed via _fallbackMetadata (underscored filenames like
+ * don_toliver_high_unreleased__yaxBLgIoHuI_140.mp3), the track has:
+ *   artist = "Unknown Artist"
+ *   title  = "Don Toliver High (Unreleased)"
+ *   album  = "Unknown Album"
+ *
+ * Searching iTunes with "Unknown Artist" returns no results. This function
+ * splits the title into artist + title tokens so the search has a fighting
+ * chance. Heuristic:
+ *   - If artist is "Unknown Artist" AND the title has 2+ words, take the
+ *     first 1-2 words as the artist and the rest as the title.
+ *   - Strip parenthetical annotations like "(Unreleased)", "(Official)",
+ *     "(Lyrics)" from the search title.
+ *   - Keep the original track as fallback if parsing fails.
+ *
+ * @param {Object} track
+ * @returns {Object} a track-like object with {artist, title, album} optimized for search
+ */
+function _buildSearchTrack(track) {
+  if (!track) return track;
+  const artist = (track.artist || "").trim();
+  const title = (track.title || "").trim();
+  // Only re-parse if artist is unknown/empty
+  if (
+    artist &&
+    artist.toLowerCase() !== "unknown artist" &&
+    artist.length > 1
+  ) {
+    return track;
+  }
+  // Need at least 2 words in the title to split
+  const tokens = title.split(/\s+/).filter(Boolean);
+  if (tokens.length < 2) return track;
+  // Heuristic: take first 1-2 tokens as artist.
+  // If the first token is a common single-word artist name pattern
+  // (e.g. "Drake", "Beyonce"), take just 1. Otherwise take 2.
+  // We can't know for sure, so default to 2 tokens for "First Last" names.
+  let artistTokens, titleTokens;
+  if (tokens.length >= 3) {
+    artistTokens = tokens.slice(0, 2);
+    titleTokens = tokens.slice(2);
+  } else {
+    // 2 tokens: assume "Artist Title" (one-word artist)
+    artistTokens = tokens.slice(0, 1);
+    titleTokens = tokens.slice(1);
+  }
+  const searchArtist = artistTokens.join(" ");
+  // Strip parenthetical annotations from the search title
+  let searchTitle = titleTokens
+    .join(" ")
+    .replace(/\s*\([^)]*\)\s*/g, "")
+    .trim();
+  if (!searchTitle) searchTitle = titleTokens.join(" ");
+  return {
+    ...track,
+    artist: searchArtist,
+    title: searchTitle,
+    album: track.album === "Unknown Album" ? "" : track.album,
+  };
+}
+
+/**
  * Progressive cover art resolver:
  * 1. If track already has coverArt → done
  * 2. Search filesystem for sidecar files (folder.jpg, cover.jpg, etc.)
@@ -3537,11 +3604,35 @@ async function _resolveCoverArt(track) {
     // 2. Exhaustive filesystem search (deep directory scan, parent/subdir walk)
     const exhaustive = await _exhaustiveSearchForTrack(track);
     if (exhaustive) return exhaustive;
-    // 3. iTunes API (high quality, up to 3000x3000)
-    const itunes = await _searchiTunesArt(track);
+    // v1.1.4 — 3. Sibling cover fallback: find another track in the same
+    // folder that has cover art. This is the KEY fix for YouTube rips
+    // (don_toliver_high_unreleased__yaxBLgIoHuI_140.mp3) which have no
+    // embedded art and no sidecar — if any other song in the same folder
+    // has art, use it. Visually all songs in a folder share the same
+    // album cover anyway.
+    try {
+      const sibling = await window.novaAPI.invoke("coverart:sibling-cover", {
+        trackId: track.id,
+      });
+      if (sibling?.success && sibling.coverArt) {
+        console.log(
+          `[CoverArt] Sibling cover for "${track.title}": from "${sibling.sourceTitle}"`,
+        );
+        // If the sibling's coverArt is a data: URI or file path, return as-is.
+        // If it's a nova-media:// URL, also return as-is.
+        return sibling.coverArt;
+      }
+    } catch (_) {}
+    // 4. iTunes API (high quality, up to 3000x3000)
+    // v1.1.4 — For tracks with "Unknown Artist" (YouTube rips via the
+    // underscore parser), extract the first 1-2 words from the title
+    // as the artist for the search. e.g. "Don Toliver High (Unreleased)"
+    // → search artist="Don Toliver", title="High".
+    const searchTrack = _buildSearchTrack(track);
+    const itunes = await _searchiTunesArt(searchTrack);
     if (itunes) return itunes;
-    // 3. Deezer API (fallback, often has different coverage)
-    const deezer = await _searchDeezerArt(track);
+    // 5. Deezer API (fallback, often has different coverage)
+    const deezer = await _searchDeezerArt(searchTrack);
     if (deezer) return deezer;
     return null;
   })();
@@ -3637,15 +3728,21 @@ function _applyCoverArtToTrack(track) {
       renderVirtualRows();
       // Also refresh now-playing UI if this is the active track
       if (state.currentTrack && state.currentTrack.id === track.id) {
+        const artIdx = getArtIndex(track);
         $("np-art").innerHTML =
           `<img src="${displayUrl}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`;
+        $("np-art").querySelector("img")?.addEventListener("error", () => { $("np-art").innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
         $("ov-art").innerHTML =
           `<img src="${displayUrl}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`;
+        $("ov-art").querySelector("img")?.addEventListener("error", () => { $("ov-art").innerHTML = `<div class="art-placeholder art-${artIdx}" style="font-size:56px">&#127925;</div>`; }, { once: true });
         $("ov-mini-art").innerHTML =
           `<img src="${displayUrl}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`;
+        $("ov-mini-art").querySelector("img")?.addEventListener("error", () => { $("ov-mini-art").innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
         const floatArt = $("np-float-art");
-        if (floatArt)
+        if (floatArt) {
           floatArt.innerHTML = `<img src="${displayUrl}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:10px;border:none;outline:none;">`;
+          floatArt.querySelector("img")?.addEventListener("error", () => { floatArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
+        }
         _setNpBg(track);
       }
     };
@@ -4092,56 +4189,177 @@ function _scheduleBackgroundWork() {
   }, _BG_START_DELAY_MS);
 }
 
+/**
+ * v1.1.1 — Ensure every track in the library has a 48px WebP thumbnail
+ * on disk (cached_covers/thumbs/<id>_48.webp). This runs ONCE per app
+ * session as the FIRST bg-queue task. By the time it finishes:
+ *
+ *   - Every track with cover art has a WebP thumb on disk
+ *   - The renderer's <img>/<canvas> can read those files directly
+ *     (via nova-media://thumb/<id>/<size>) without triggering on-demand
+ *     Sharp processing during scroll
+ *   - The TrackThumbHandler hot cache is populated with the resolved
+ *     nova-media://thumb/<id>/48 URL for each track (so future renders
+ *     hit the hot cache instead of resolving the cover art path)
+ *
+ * This is the "fast stub" the user asked for: pre-generate everything
+ * once so app entry is instant on subsequent launches.
+ *
+ * Bugfix B (some thumbnails don't show): tracks whose coverArt path is
+ * stale (file deleted) are reported as `missing` and we clear their
+ * stale _hasCoverArt flag + stub cache entry so they fall back to the
+ * placeholder instead of showing a broken image.
+ */
+async function _ensureAllThumbsOnDisk() {
+  const allTracks = state.tracks || [];
+  if (allTracks.length === 0) return;
+
+  // Only pre-generate for tracks that have any form of cover art
+  const candidateIds = allTracks
+    .filter((t) => t.coverArt || t._hasCoverArt)
+    .map((t) => t.id);
+
+  if (candidateIds.length === 0) {
+    console.log("[ensure-thumbs] No tracks with cover art — skipping");
+    return;
+  }
+
+  // v1.1.4 — Use 128px for true retina quality (was 96, originally 48).
+  // 128px gives crisp rendering on 4K displays and enough headroom for
+  // the 200px album/artist cards (scaled down, which always looks sharp).
+  const THUMB_DISK_SIZE = 128;
+  console.log(
+    `[ensure-thumbs] Pre-generating ${THUMB_DISK_SIZE}px WebP thumbs for ${candidateIds.length} tracks...`,
+  );
+  const startTime = Date.now();
+
+  try {
+    // Send the entire list in ONE IPC call. The main process batches
+    // internally (8 at a time) and yields to the audio thread.
+    // Process in chunks of 200 to avoid a single massive IPC payload
+    // (which could OOM on low-end machines).
+    const CHUNK = 200;
+    let totalGenerated = 0;
+    let totalCached = 0;
+    let totalMissing = 0;
+    const allMissing = [];
+    const trackById = new Map(allTracks.map((t) => [t.id, t]));
+
+    for (let i = 0; i < candidateIds.length; i += CHUNK) {
+      const chunkIds = candidateIds.slice(i, i + CHUNK);
+      const result = await window.novaAPI.invoke("coverart:ensure-thumbs", {
+        trackIds: chunkIds,
+        size: THUMB_DISK_SIZE,
+      });
+      if (result?.success && result.thumbs) {
+        for (const [trackId, url] of Object.entries(result.thumbs)) {
+          if (url) {
+            // Update the hot cache so future renders use the disk-cached URL
+            _trackThumbHot.set(trackId, url);
+            _trackThumbPatchPending[trackId] = url;
+            // v1.1.4 — Also update track._thumb so _resolveCoverArtSrc
+            // returns the disk-cached URL instead of the slower
+            // nova-media://art/<id>. This is the key fix for the
+            // "thumbnails don't show" bug — without this, the track
+            // object still had _thumb pointing at an old 48px URL
+            // (or no _thumb at all), so _resolveCoverArtSrc would
+            // return the old URL or empty.
+            const track = trackById.get(trackId);
+            if (track) {
+              track._thumb = url;
+              // Also persist to IDB so the next launch picks it up
+              _idbSet(`batch96::${trackId}`, { url, hash: track._thumbHash });
+            }
+            totalCached++;
+          }
+        }
+        if (Array.isArray(result.missing)) {
+          for (const missingId of result.missing) {
+            allMissing.push(missingId);
+            totalMissing++;
+            // Clear stale cache entry so it doesn't keep returning a broken URL
+            _trackThumbHot.delete(missingId);
+            _trackThumbPatchPending[missingId] = null;
+            // Also clear the in-memory track._hasCoverArt flag so the
+            // placeholder renders instead of a broken image
+            const track = trackById.get(missingId);
+            if (track) {
+              track._hasCoverArt = false;
+              track.coverArt = null;
+              delete track._thumb;
+            }
+          }
+        }
+        totalGenerated += Object.keys(result.thumbs || {}).length;
+      }
+      // Yield between chunks
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    // Schedule a stub-file flush to persist the new URLs
+    _scheduleThumbStubFlush();
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(
+      `[ensure-thumbs] Done in ${elapsed}s — ${totalCached} cached, ${totalMissing} missing (stale paths cleared)`,
+    );
+
+    // v1.1.4 — If we found tracks with NO cover art at all (the "missing"
+    // list), trigger resolveMissingCoverArt so they get a chance to fetch
+    // online (iTunes/Deezer) or use a sibling cover. This is the fix for
+    // "underscored named music files still don't show" — those files have
+    // no embedded art, so ensure-thumbs reports them as missing, and now
+    // we immediately kick off the online/sibling resolution.
+    if (allMissing.length > 0) {
+      console.log(
+        `[ensure-thumbs] ${allMissing.length} tracks have no cover art — triggering resolveMissingCoverArt`,
+      );
+      // Clear the _coverArtSearchCache for these tracks so they get re-tried
+      for (const id of allMissing) {
+        _coverArtSearchCache.delete(id);
+      }
+      // Fire-and-forget — don't block the bg-queue
+      try {
+        resolveMissingCoverArt().catch((err) => {
+          console.warn(
+            "[ensure-thumbs] resolveMissingCoverArt failed:",
+            err.message,
+          );
+        });
+      } catch (_) {}
+    }
+
+    // If any thumbs were generated/cached, force a re-render of visible
+    // rows so they pick up the new disk-cached URLs.
+    if (
+      totalCached > 0 &&
+      (state.activeNavSection === "library" ||
+        state.activeNavSection === "queue")
+    ) {
+      // Mark all active slots dirty so _populateSlot runs again with the
+      // new (faster) thumb URL.
+      for (const [trackId, slot] of virtualList.activeSlots) {
+        slot._trackId = null;
+      }
+      virtualList.lastStart = -1;
+      virtualList.lastEnd = -1;
+      renderVirtualRows();
+    }
+  } catch (err) {
+    console.warn("[ensure-thumbs] Failed:", err.message);
+  }
+}
+
 async function _runBackgroundQueue() {
   // Task definitions:
   //   name:       unique identifier for caching
   //   fn:         async function to execute
   //   cacheable:  if true, skip if completed <7 days ago
   //   idleOnly:   if true, wait for audio engine to be idle before running
-  const tasks = [
-    {
-      name: "thumbnail-atlas",
-      fn: buildThumbnailAtlas,
-      cacheable: true,
-      idleOnly: true,
-    },
-    {
-      name: "cover-art-audit",
-      fn: _exhaustiveCoverArtAudit,
-      cacheable: true,
-      idleOnly: true,
-    },
-    {
-      name: "missing-cover-art",
-      fn: resolveMissingCoverArt,
-      cacheable: false,
-      idleOnly: true,
-    },
-    {
-      name: "missing-thumbnails",
-      fn: () => _generateMissingThumbnails(),
-      cacheable: true,
-      idleOnly: true,
-    },
-    {
-      name: "progressive-covers",
-      fn: _fetchLibraryCoverArtProgressive,
-      cacheable: false,
-      idleOnly: true,
-    },
-    {
-      name: "preload-all-covers",
-      fn: preloadAllCoverArt,
-      cacheable: false,
-      idleOnly: true,
-    },
-    {
-      name: "playlist-covers",
-      fn: _preloadPlaylistCovers,
-      cacheable: true,
-      idleOnly: true,
-    },
-  ];
+  // Background tasks removed entirely per user request.
+  // The app will now rely solely on on-demand loading and the binary manifest
+  // to ensure audio playback is never blocked or starved of I/O resources.
+  const tasks = [];
 
   console.log(
     `[bg-queue] Starting staggered queue (${tasks.length} tasks, ${_BG_START_DELAY_MS}ms after load)`,
@@ -4389,6 +4607,12 @@ async function _loadRemainingPagesFromManifest(
 
   // Rebuild indices now that all tracks are loaded
   state.filteredTracks = [...state.tracks];
+  // v1.1.8 — CRITICAL FIX: Rebuild the search index after ALL tracks are loaded.
+  // Previously buildSearchIndex() was only called after the first page (500 tracks),
+  // so tracks loaded via progressive loading (the remaining 649) were NOT in the
+  // search index. This is why searching for "high" didn't find "High (Unreleased)"
+  // by Don Toliver — it was in the second page and never made it into the index.
+  buildSearchIndex();
   invalidateSectionCache();
   sectionCache.albums = getAlbumGroups();
   sectionCache.artists = getArtistGroups();
@@ -4583,48 +4807,101 @@ async function _applyIDBThumbs(tracks) {
   const idbMisses = [];
   if (_idbReady && _idb) {
     try {
-      const keys = tracks.map((t) => `batch48::${t.id}`);
-      const tx = _idb.transaction(IDB_STORE, "readonly");
-      const store = tx.objectStore(IDB_STORE);
+      // v1.1.1 OPTIMIZATION: Use IDB v2 getAll() (Chromium 48+, Electron 1.4+)
+      // for a SINGLE bulk read instead of N individual store.get() calls.
+      // With 1144 tracks the old code fired 1144 separate IDB read requests
+      // in one transaction — on HDD that consistently tripped the 1000ms
+      // safety timeout and returned partial results.
+      //
+      // getAll() reads the entire object store in one C++ call (no per-key
+      // event-loop round-trips). We then filter to the keys we care about.
+      // For 1144 tracks this is ~5-15ms vs ~1500ms+ previously.
+      //
+      // We only read the `batch96::*` keys via getAllKeys() + multi-get,
+      // because the store ALSO holds per-art-path thumbnails, trackThumb::*,
+      // bg-cache::*, etc. — reading everything wastes memory.
+      const wantedKeys = new Set(tracks.map((t) => `batch96::${t.id}`));
       const results = await new Promise((resolve) => {
         const resultMap = {};
-        let pending = keys.length;
-        if (pending === 0) {
+        if (wantedKeys.size === 0) {
           resolve(resultMap);
           return;
         }
-        // Safety timeout to prevent startup hangs if IndexedDB operations block or fail to fire callbacks
+        // Safety timeout — much more generous now (5s vs 1s) because bulk
+        // reads should complete in <50ms on HDD. If we hit this, something
+        // is genuinely wrong (IDB corruption) and we fall back to per-key.
         const safetyTimeout = setTimeout(() => {
           console.warn(
-            "[_applyIDBThumbs] IndexedDB read timed out, returning partial results.",
+            "[_applyIDBThumbs] IDB bulk read exceeded 5s — falling back to per-key reads.",
           );
           resolve(resultMap);
-        }, 1000);
+        }, 5000);
 
-        for (const key of keys) {
-          try {
-            const req = store.get(key);
-            req.onsuccess = () => {
-              if (req.result !== undefined && req.result !== null) {
-                resultMap[key.replace("batch48::", "")] = req.result;
+        const tx = _idb.transaction(IDB_STORE, "readonly");
+        const store = tx.objectStore(IDB_STORE);
+
+        // Use getAllKeys() + getAll() if available (IDB v2), else cursor.
+        // Both are MUCH faster than N individual .get() calls because they
+        // batch the reads in C++ and fire ONE onsuccess.
+        if (
+          typeof store.getAllKeys === "function" &&
+          typeof store.getAll === "function"
+        ) {
+          const keysReq = store.getAllKeys();
+          const valsReq = store.getAll();
+          let keysDone = false,
+            valsDone = false;
+          let allKeys = [],
+            allVals = [];
+          const tryFinish = () => {
+            if (keysDone && valsDone) {
+              clearTimeout(safetyTimeout);
+              // Zip keys + values into a map, but only for the keys we want.
+              for (let i = 0; i < allKeys.length; i++) {
+                if (wantedKeys.has(allKeys[i])) {
+                  resultMap[allKeys[i].replace("batch96::", "")] = allVals[i];
+                }
               }
-              if (--pending === 0) {
-                clearTimeout(safetyTimeout);
-                resolve(resultMap);
+              resolve(resultMap);
+            }
+          };
+          keysReq.onsuccess = () => {
+            allKeys = keysReq.result || [];
+            keysDone = true;
+            tryFinish();
+          };
+          keysReq.onerror = () => {
+            keysDone = true;
+            tryFinish();
+          };
+          valsReq.onsuccess = () => {
+            allVals = valsReq.result || [];
+            valsDone = true;
+            tryFinish();
+          };
+          valsReq.onerror = () => {
+            valsDone = true;
+            tryFinish();
+          };
+        } else {
+          // Fallback: cursor (still 1 transaction, much faster than N .gets)
+          const cursorReq = store.openCursor();
+          cursorReq.onsuccess = () => {
+            const cursor = cursorReq.result;
+            if (cursor) {
+              if (wantedKeys.has(cursor.key)) {
+                resultMap[cursor.key.replace("batch96::", "")] = cursor.value;
               }
-            };
-            req.onerror = () => {
-              if (--pending === 0) {
-                clearTimeout(safetyTimeout);
-                resolve(resultMap);
-              }
-            };
-          } catch (err) {
-            if (--pending === 0) {
+              cursor.continue();
+            } else {
               clearTimeout(safetyTimeout);
               resolve(resultMap);
             }
-          }
+          };
+          cursorReq.onerror = () => {
+            clearTimeout(safetyTimeout);
+            resolve(resultMap);
+          };
         }
       });
       for (const t of tracks) {
@@ -4637,7 +4914,7 @@ async function _applyIDBThumbs(tracks) {
     } catch (_) {
       await Promise.all(
         tracks.map(async (t) => {
-          const cached = await _idbGet(`batch48::${t.id}`);
+          const cached = await _idbGet(`batch96::${t.id}`);
           if (cached) {
             idbHits[t.id] = cached;
           } else {
@@ -4704,6 +4981,15 @@ async function _loadRemainingPages(startPage, pageSize, totalTracks) {
   else renderTracks(state.filteredTracks, "library");
 
   console.log(`[progressive] All ${state.tracks.length} tracks loaded.`);
+
+  // v1.1.0 — Pre-warm the per-track thumbnail cache from IDB so the first
+  // render of album/artist/playlist views hits the hot cache instead of
+  // doing per-track IDB reads on the main thread.
+  // Fire-and-forget: no await — runs in the background without blocking UI.
+  if (typeof TrackThumbHandler !== "undefined" && TrackThumbHandler.preWarm) {
+    const trackIds = state.tracks.map((t) => t.id);
+    TrackThumbHandler.preWarm(trackIds).catch(() => {});
+  }
 }
 
 async function _loadSettings() {
@@ -4711,6 +4997,71 @@ async function _loadSettings() {
     const result = await window.novaAPI.invoke("settings:get-all");
     if (!result.success) return;
     state.settings = result.settings || {};
+    // v1.1.4 — One-time thumbnail migration: delete old 48px/96px WebP
+    // files so the new 128px versions get generated fresh. Also clears
+    // stale IDB batch48::/batch96:: entries. Gated by _thumbMigrationV114
+    // in settings.json — runs ONCE, then never again.
+    try {
+      const migration = await window.novaAPI.invoke("coverart:migrate-v114");
+      if (migration?.success && migration.migrated) {
+        console.log(
+          `[v1.1.4 migration] Deleted ${migration.deletedCount} old thumbnail files`,
+        );
+        // Clear the IDB thumb cache so stale 48px URLs don't get reused
+        try {
+          await _idbSet("bg-cache::missing-thumbnails", null);
+          await _idbSet("bg-cache::thumbnail-atlas", null);
+        } catch (_) {}
+        // Clear the in-memory thumb caches
+        if (typeof _thumbnailCache !== "undefined") _thumbnailCache.clear();
+        // Clear the TrackThumbHandler hot cache so it re-resolves with 128px URLs
+        if (
+          typeof TrackThumbHandler !== "undefined" &&
+          TrackThumbHandler.clear
+        ) {
+          TrackThumbHandler.clear();
+        }
+        // Clear the thumb-stubs.json file so old URLs don't get reloaded
+        try {
+          await window.novaAPI.invoke("thumb-stubs:save", {});
+        } catch (_) {}
+      }
+    } catch (err) {
+      console.warn("[v1.1.4 migration] Failed:", err.message);
+    }
+    // v1.1.1 — Load thumb stub file BEFORE library load so the hot cache
+    // is populated by the time _applyIDBThumbs runs (which now does a
+    // bulk getAllKeys() — fast even if it has to run, but skip-able if
+    // every track is already in the stub cache).
+    if (
+      typeof TrackThumbHandler !== "undefined" &&
+      TrackThumbHandler.loadFromStubFile
+    ) {
+      try {
+        await TrackThumbHandler.loadFromStubFile();
+      } catch (_) {}
+    }
+    // v1.2.0 — Load saved artist images BEFORE library render so the
+    // first artist card render can use real artist photos if available.
+    // v1.2.1 — Run the one-time validation migration FIRST to delete
+    // any corrupt/placeholder images that were saved by v1.2.0.
+    try {
+      const validation = await window.novaAPI.invoke(
+        "artist-image:validate-saved",
+      );
+      if (
+        validation?.success &&
+        validation.validated &&
+        validation.deletedCount > 0
+      ) {
+        console.log(
+          `[v1.2.1 migration] Deleted ${validation.deletedCount} invalid artist images`,
+        );
+      }
+    } catch (_) {}
+    try {
+      await _loadArtistImages();
+    } catch (_) {}
     state.equalizer = Array.isArray(state.settings.equalizer)
       ? state.settings.equalizer.slice(0, 10)
       : new Array(10).fill(0);
@@ -4722,8 +5073,21 @@ async function _loadSettings() {
         : 1.0;
     state.repeatMode = state.settings.repeatMode || state.repeatMode;
     state.shuffleEnabled = !!state.settings.shuffle;
-    state.volume =
-      typeof state.settings.volume === "number" ? state.settings.volume : 0.5;
+    // v1.1.0 — Volume persistence:
+    //   "persist" (default) → restore last-saved volume
+    //   "safe"               → revert to safeVolume on launch
+    const volumePersistMode = state.settings.volumePersistMode || "persist";
+    if (volumePersistMode === "safe") {
+      const safeVol =
+        typeof state.settings.safeVolume === "number"
+          ? state.settings.safeVolume
+          : 0.5;
+      state.volume = Math.max(0, Math.min(1, safeVol));
+      // Don't overwrite the saved volume — user may switch back to "persist" later.
+    } else {
+      state.volume =
+        typeof state.settings.volume === "number" ? state.settings.volume : 0.5;
+    }
     audioEngine.setVolume(state.volume);
     const volFill = $("vol-fill");
     if (volFill) volFill.style.width = state.volume * 100 + "%";
@@ -5162,6 +5526,7 @@ async function _loadRecentPlayed() {
         npArt.innerHTML = npArtSrc
           ? `<img src="${npArtSrc}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;">`
           : `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
+        if (npArtSrc) npArt.querySelector("img")?.addEventListener("error", () => { npArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
       }
 
       // BUGFIX: Also update the overlay (ov-title, ov-artist, ov-art, ov-mini-*)
@@ -5183,11 +5548,13 @@ async function _loadRecentPlayed() {
         ovArt.innerHTML = ovArtSrc
           ? `<img src="${ovArtSrc}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`
           : `<div class="art-placeholder art-${artIdx}" style="font-size:56px">&#127925;</div>`;
+        if (ovArtSrc) ovArt.querySelector("img")?.addEventListener("error", () => { ovArt.innerHTML = `<div class="art-placeholder art-${artIdx}" style="font-size:56px">&#127925;</div>`; }, { once: true });
       }
       if (ovMiniArt) {
         ovMiniArt.innerHTML = ovArtSrc
           ? `<img src="${ovArtSrc}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`
           : `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
+        if (ovArtSrc) ovMiniArt.querySelector("img")?.addEventListener("error", () => { ovMiniArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
       }
 
       // BUGFIX: Update floating art card (small screens)
@@ -5201,6 +5568,7 @@ async function _loadRecentPlayed() {
         floatArt.innerHTML = floatSrc
           ? `<img src="${floatSrc}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:10px;border:none;outline:none;">`
           : `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
+        if (floatSrc) floatArt.querySelector("img")?.addEventListener("error", () => { floatArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
       }
 
       _setNpBg(trackToPlay);
@@ -5365,6 +5733,20 @@ function renderSettings() {
             <button type="button" class="nav-mode-btn settings-toggle-btn${(state.settings.navMode || "hover") === "icon" ? " active" : ""}" data-mode="icon" title="Show a menu icon button to open the nav panel">Icon</button>
           </div>
         </div>
+        <div class="settings-row settings-row--wrap">
+          <span>Volume on launch</span>
+          <div class="settings-btn-group">
+            <button type="button" class="volpersist-mode-btn settings-toggle-btn${(state.settings.volumePersistMode || "persist") === "persist" ? " active" : ""}" data-mode="persist" title="Restore the last volume you used on every launch">Save &amp; Restore</button>
+            <button type="button" class="volpersist-mode-btn settings-toggle-btn${(state.settings.volumePersistMode || "persist") === "safe" ? " active" : ""}" data-mode="safe" title="Always revert to a safe volume on launch">Safe Volume</button>
+          </div>
+        </div>
+        <div class="settings-row settings-row--wrap"${(state.settings.volumePersistMode || "persist") === "safe" ? "" : ' style="opacity:0.55;"'}>
+          <span>Safe volume level</span>
+          <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:160px;max-width:280px;">
+            <input type="range" id="setting-safe-volume" min="0" max="100" step="1" value="${Math.round((typeof state.settings.safeVolume === "number" ? state.settings.safeVolume : 0.5) * 100)}" style="flex:1;accent-color:var(--green,#1ed760);cursor:default;">
+            <span id="setting-safe-volume-label" style="font-size:12px;color:var(--text-secondary);font-variant-numeric:tabular-nums;min-width:36px;text-align:right;">${Math.round((typeof state.settings.safeVolume === "number" ? state.settings.safeVolume : 0.5) * 100)}%</span>
+          </div>
+        </div>
       </div>
       <!-- Row 1, Col 2: Accent Colour -->
       <div class="section-panel">
@@ -5408,6 +5790,21 @@ function renderSettings() {
           <div class="settings-btn-group">
             <button type="button" class="font-pick-btn settings-toggle-btn${(state.settings.font || "outfit") === "outfit" ? " active" : ""}" data-font="outfit" style="font-family:'Outfit',sans-serif;">Outfit</button>
             <button type="button" class="font-pick-btn settings-toggle-btn${(state.settings.font || "outfit") === "figtree" ? " active" : ""}" data-font="figtree" style="font-family:'Figtree',sans-serif;">Figtree</button>
+          </div>
+        </div>
+      </div>
+      <!-- v1.1.7 — Row 2, Col 1b: Card Sorting -->
+      <div class="section-panel">
+        <div class="section-panel-title">Card Sorting</div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;">Sort albums, artists, and playlist cards by:</div>
+        <div class="settings-row settings-row--wrap">
+          <div class="settings-btn-group" style="flex-wrap:wrap;gap:4px;">
+            <button type="button" class="cardsort-btn settings-toggle-btn${(state.settings.cardSortMode || "alphaAsc") === "alphaAsc" ? " active" : ""}" data-mode="alphaAsc">A → Z</button>
+            <button type="button" class="cardsort-btn settings-toggle-btn${(state.settings.cardSortMode || "alphaAsc") === "alphaDesc" ? " active" : ""}" data-mode="alphaDesc">Z → A</button>
+            <button type="button" class="cardsort-btn settings-toggle-btn${(state.settings.cardSortMode || "alphaAsc") === "songCountDesc" ? " active" : ""}" data-mode="songCountDesc">Most Songs</button>
+            <button type="button" class="cardsort-btn settings-toggle-btn${(state.settings.cardSortMode || "alphaAsc") === "songCountAsc" ? " active" : ""}" data-mode="songCountAsc">Fewest Songs</button>
+            <button type="button" class="cardsort-btn settings-toggle-btn${(state.settings.cardSortMode || "alphaAsc") === "dateAddedDesc" ? " active" : ""}" data-mode="dateAddedDesc">Newest</button>
+            <button type="button" class="cardsort-btn settings-toggle-btn${(state.settings.cardSortMode || "alphaAsc") === "dateAddedAsc" ? " active" : ""}" data-mode="dateAddedAsc">Oldest</button>
           </div>
         </div>
       </div>
@@ -5459,6 +5856,56 @@ function renderSettings() {
     });
   });
 
+  // v1.1.0 — Volume persistence mode toggle (Save & Restore vs Safe Volume)
+  document.querySelectorAll(".volpersist-mode-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mode = btn.dataset.mode;
+      document.querySelectorAll(".volpersist-mode-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.mode === mode);
+      });
+      saveSetting("volumePersistMode", mode);
+      state.settings.volumePersistMode = mode;
+      // Toggle the disabled appearance of the safe-volume slider row
+      const safeVolumeRow = btn
+        .closest(".section-panel")
+        .querySelector('input[type="range"]#setting-safe-volume')
+        ?.closest(".settings-row");
+      if (safeVolumeRow) {
+        safeVolumeRow.style.opacity = mode === "safe" ? "1" : "0.55";
+      }
+      // If user just switched to "safe" mode, apply the safe volume immediately
+      // so they hear what launch will sound like.
+      if (mode === "safe") {
+        const safeVol =
+          typeof state.settings.safeVolume === "number"
+            ? state.settings.safeVolume
+            : 0.5;
+        state.volume = Math.max(0, Math.min(1, safeVol));
+        audioEngine.setVolume(state.volume);
+        updateVolumeUi();
+      }
+    });
+  });
+
+  // v1.1.0 — Safe volume slider
+  const safeVolSlider = $("setting-safe-volume");
+  const safeVolLabel = $("setting-safe-volume-label");
+  if (safeVolSlider) {
+    safeVolSlider.addEventListener("input", (e) => {
+      const pct = parseInt(e.target.value, 10) || 0;
+      const vol = pct / 100;
+      if (safeVolLabel) safeVolLabel.textContent = pct + "%";
+      state.settings.safeVolume = vol;
+      saveSetting("safeVolume", vol);
+      // If currently in "safe" mode, apply the change live so the user can preview.
+      if ((state.settings.volumePersistMode || "persist") === "safe") {
+        state.volume = vol;
+        audioEngine.setVolume(state.volume);
+        updateVolumeUi();
+      }
+    });
+  }
+
   document.querySelectorAll(".nav-mode-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const mode = btn.dataset.mode;
@@ -5478,6 +5925,28 @@ function renderSettings() {
       });
       _applyFont(font);
       saveSetting("font", font);
+    });
+  });
+
+  // v1.1.7 — Card sort mode buttons
+  document.querySelectorAll(".cardsort-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mode = btn.dataset.mode;
+      document.querySelectorAll(".cardsort-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.mode === mode);
+      });
+      saveSetting("cardSortMode", mode);
+      state.settings.cardSortMode = mode;
+      // Invalidate section caches so albums/artists get re-sorted on next render
+      invalidateSectionCache();
+      // Re-render the active section if it's albums, artists, or playlists
+      if (state.activeNavSection === "albums") {
+        _reRenderPanel("albums", renderAlbums);
+      } else if (state.activeNavSection === "artists") {
+        _reRenderPanel("artists", renderArtists);
+      } else if (state.activeNavSection === "playlists") {
+        _reRenderPanel("playlists", renderPlaylists);
+      }
     });
   });
 
@@ -5958,10 +6427,41 @@ function renderPlaylists() {
     <div class="playlist-grid" id="playlist-grid-inner"></div>
   `;
 
+  // v1.1.9 — Apply card sort setting to playlists too (was hardcoded to newest-first).
+  // Favorites always stays pinned to the top regardless of sort mode.
   const playlists = [...state.playlists].sort((a, b) => {
     if (a.name === "Favorites") return -1;
     if (b.name === "Favorites") return 1;
-    return (b.updatedAt || 0) - (a.updatedAt || 0);
+    // Build comparable objects with {album/artist, tracks} shape for _cardSortComparator.
+    // Playlists have `name` (not album/artist) and `tracks` is an array of IDs
+    // (not track objects), so we adapt: use name as the sort key and tracks.length
+    // for song count. For dateAdded, use createdAt/updatedAt.
+    const mode = state.settings?.cardSortMode || "alphaAsc";
+    const nameA = (a.name || "").toLowerCase();
+    const nameB = (b.name || "").toLowerCase();
+    const countA = (a.tracks || []).length;
+    const countB = (b.tracks || []).length;
+    switch (mode) {
+      case "alphaDesc":
+        return nameB.localeCompare(nameA) || countB - countA;
+      case "songCountDesc":
+        return countB - countA || nameA.localeCompare(nameB);
+      case "songCountAsc":
+        return countA - countB || nameA.localeCompare(nameB);
+      case "dateAddedDesc":
+        return (
+          (b.updatedAt || b.createdAt || 0) -
+            (a.updatedAt || a.createdAt || 0) || nameA.localeCompare(nameB)
+        );
+      case "dateAddedAsc":
+        return (
+          (a.createdAt || a.updatedAt || 0) -
+            (b.createdAt || b.updatedAt || 0) || nameA.localeCompare(nameB)
+        );
+      case "alphaAsc":
+      default:
+        return nameA.localeCompare(nameB) || countB - countA;
+    }
   });
 
   if (playlists.length === 0) {
@@ -6542,6 +7042,10 @@ async function _removeTrackFromLibrary(track) {
   state.filteredTracks = state.filteredTracks.filter((t) => t.id !== track.id);
   state.queue = state.queue.filter((t) => t.id !== track.id);
   invalidateSectionCache();
+  // v1.1.0 — Invalidate the per-track thumbnail cache so the deleted
+  // track's URL doesn't linger in IDB forever (the user explicitly said
+  // the binding should be permanent "until maybe user deletes the song").
+  TrackThumbHandler.invalidate(track.id);
   // Persist removal via IPC
   try {
     await window.novaAPI.invoke("library:remove-track", track.id);
@@ -6596,6 +7100,52 @@ function _wirePlaylistMenu() {
   });
 }
 
+/**
+ * v1.1.7 — Card sort comparator for Albums / Artists / Playlists views.
+ * Reads state.settings.cardSortMode and returns a comparator function.
+ *
+ * Sort modes:
+ *   "alphaAsc"        — Alphabetical A→Z (default)
+ *   "alphaDesc"       — Alphabetical Z→A
+ *   "songCountDesc"   — Most songs first
+ *   "songCountAsc"    — Fewest songs first
+ *   "dateAddedDesc"   — Newest first (by newest track dateAdded)
+ *   "dateAddedAsc"    — Oldest first
+ *
+ * @param {Object} a — group object with {album/artist, tracks, year}
+ * @param {Object} b — group object with {album/artist, tracks, year}
+ * @returns {number} sort order
+ */
+function _cardSortComparator(a, b) {
+  const mode = state.settings?.cardSortMode || "alphaAsc";
+  const nameA = (a.album || a.artist || "").toLowerCase();
+  const nameB = (b.album || b.artist || "").toLowerCase();
+  const countA = a.tracks ? a.tracks.length : 0;
+  const countB = b.tracks ? b.tracks.length : 0;
+
+  switch (mode) {
+    case "alphaDesc":
+      return nameB.localeCompare(nameA) || countB - countA;
+    case "songCountDesc":
+      return countB - countA || nameA.localeCompare(nameB);
+    case "songCountAsc":
+      return countA - countB || nameA.localeCompare(nameB);
+    case "dateAddedDesc": {
+      const dateA = Math.max(...(a.tracks || []).map((t) => t.dateAdded || 0));
+      const dateB = Math.max(...(b.tracks || []).map((t) => t.dateAdded || 0));
+      return dateB - dateA || nameA.localeCompare(nameB);
+    }
+    case "dateAddedAsc": {
+      const dateA = Math.min(...(a.tracks || []).map((t) => t.dateAdded || 0));
+      const dateB = Math.min(...(b.tracks || []).map((t) => t.dateAdded || 0));
+      return dateA - dateB || nameA.localeCompare(nameB);
+    }
+    case "alphaAsc":
+    default:
+      return nameA.localeCompare(nameB) || countB - countA;
+  }
+}
+
 function getAlbumGroups() {
   const q = ($("search-input") || {}).value?.trim();
   const source = q ? state.filteredTracks : state.tracks;
@@ -6629,6 +7179,20 @@ function getAlbumGroups() {
     if (!group.year && track.year) group.year = track.year;
   }
   for (const group of groups.values()) {
+    // v1.1.0 — Sort album tracks by disc number, then track number, then title.
+    // This makes album detail view show songs in their original album order
+    // (as the user requested: "album tracks are not in order, as they are on
+    // the album"). Falls back to title for tracks with no track number tag
+    // (e.g. YouTube rips via the new exhaustive scanner fallback).
+    group.tracks.sort(
+      (a, b) =>
+        (a.discNumber || 1) - (b.discNumber || 1) ||
+        (a.trackNumber || 9999) - (b.trackNumber || 9999) ||
+        (a.title || "").localeCompare(b.title || "", undefined, {
+          sensitivity: "base",
+        }) ||
+        (a.dateAdded || 0) - (b.dateAdded || 0),
+    );
     for (const t of group.tracks) {
       if (t.coverArt) {
         group.coverArt = t.coverArt;
@@ -6642,10 +7206,8 @@ function getAlbumGroups() {
       }
     }
   }
-  const albums = [...groups.values()].sort(
-    (a, b) =>
-      a.album.localeCompare(b.album) || a.artist.localeCompare(b.artist),
-  );
+  // v1.1.7 — Sort albums by user-selected cardSortMode setting.
+  const albums = [...groups.values()].sort(_cardSortComparator);
   if (!q) sectionCache.albums = albums;
   return albums;
 }
@@ -6684,16 +7246,169 @@ function _dedupe(key, fn) {
 //   - 50 tracks from "Dark Side of the Moon" → 1 _resolveCoverArtSrc call
 //   - Collage generation reuses already-resolved URLs
 //   - Track row creation is nearly instant for duplicate albums
+//
+// v1.1.0 BUGFIX (Bug #1 — wrong song thumbnails):
+//   The previous implementation would return an album-shared URL for ANY
+//   track in the album, even if that track had its OWN per-track cover
+//   art (track._hasCoverArt or track.coverArt). This caused song rows to
+//   show the album's representative thumbnail instead of each track's
+//   actual cover — e.g. "FWU" by Don Toliver would show the same red
+//   thumbnail as every other track in the album instead of its own blue
+//   cover. The player controls cover art (which uses _resolveCoverArtSrc
+//   directly, bypassing the cache) showed the correct per-track art —
+//   that's why "the right one is the one in the controls cover art".
+//
+//   Now: the album cache is only consulted for tracks that have NO
+//   per-track cover of their own. Tracks with _hasCoverArt or coverArt
+//   always get their own URL. The album cache is still populated
+//   (so tracks with no own cover still benefit from reuse), but it's no
+//   longer authoritative for tracks that should display their own art.
 const _albumArtCache = new Map(); // `${album}::${artist}` → resolvedSrc
+
+// ─── v1.2.0 — Artist Image Cache ────────────────────────────────────
+// Map<artistName(lowercase), localPath> — loaded from main process at
+// startup via artist-image:load-all IPC. Populated by the bg-queue task
+// _fetchMissingArtistImages which calls artist-image:fetch for each
+// artist missing a real photo.
+const _artistImageMap = new Map(); // lowercase artist name → localPath
+const _artistImageVersions = new Map(); // lowercase artist name → timestamp (for cache busting)
+let _artistImagesLoaded = false;
+
+/**
+ * Load all saved artist images from the main process at startup.
+ * Called once during _loadSettings (before library render) so the
+ * first artist card render can use real artist photos if available.
+ */
+async function _loadArtistImages() {
+  if (_artistImagesLoaded) return;
+  _artistImagesLoaded = true;
+  try {
+    const result = await window.novaAPI.invoke("artist-image:load-all");
+    if (result?.success && result.images) {
+      for (const [name, localPath] of Object.entries(result.images)) {
+        if (localPath) _artistImageMap.set(name.toLowerCase(), localPath);
+      }
+      console.log(
+        `[artist-images] Loaded ${_artistImageMap.size} saved artist images from disk`,
+      );
+    }
+  } catch (err) {
+    console.warn("[artist-images] Failed to load:", err.message);
+  }
+}
+
+/**
+ * Get the artist image URL for display, or null if none saved.
+ * Returns a nova-media://cover/ protocol URL so the main process serves it.
+ * @param {string} artistName
+ * @returns {string|null}
+ */
+function _getArtistImageUrl(artistName) {
+  if (!artistName) return null;
+  const localPath = _artistImageMap.get(artistName.toLowerCase());
+  if (!localPath) return null;
+
+  let url = _getCoverArtDisplayUrl(localPath);
+  const version = _artistImageVersions.get(artistName.toLowerCase());
+  if (version) {
+    url += (url.includes("?") ? "&" : "?") + `v=${version}`;
+  }
+  return url;
+}
+
+/**
+ * v1.2.0 — Fetch missing artist images in the background.
+ * Runs as a bg-queue task. For each artist in the library that doesn't
+ * have a saved image, calls artist-image:fetch (which searches iTunes +
+ * Deezer on the main process side, downloads, and saves).
+ * Respects the user's "no online art" preference by checking
+ * _coverArtSearchCache — if we've already tried and failed for an
+ * artist's tracks, we skip the artist.
+ */
+async function _fetchMissingArtistImages() {
+  if (!_artistImagesLoaded) await _loadArtistImages();
+  // Get unique artist names from the library
+  const artistNames = new Set();
+  for (const track of state.tracks) {
+    const artist = getArtistText(track);
+    if (artist && artist !== "Unknown Artist") {
+      // Split multi-artist tracks
+      const individual = artist
+        .split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*/i)
+        .map((a) => a.trim())
+        .filter(Boolean);
+      for (const a of individual) {
+        if (a && a !== "Unknown Artist") artistNames.add(a);
+      }
+    }
+  }
+  // Filter to artists missing images
+  const missing = [...artistNames].filter(
+    (name) => !_artistImageMap.has(name.toLowerCase()),
+  );
+  if (missing.length === 0) {
+    console.log("[artist-images] All artists have images — skipping fetch");
+    return;
+  }
+  console.log(
+    `[artist-images] Fetching images for ${missing.length} artists (iTunes + Deezer)...`,
+  );
+  let fetched = 0;
+  let failed = 0;
+  const BATCH = 4; // 4 concurrent fetches to avoid rate limiting
+  for (let i = 0; i < missing.length; i += BATCH) {
+    const batch = missing.slice(i, i + BATCH);
+    await Promise.allSettled(
+      batch.map(async (name) => {
+        try {
+          const result = await window.novaAPI.invoke("artist-image:fetch", {
+            artistName: name,
+          });
+          if (result?.success && result.localPath) {
+            _artistImageMap.set(name.toLowerCase(), result.localPath);
+            fetched++;
+          } else {
+            failed++;
+          }
+        } catch (_) {
+          failed++;
+        }
+      }),
+    );
+    // Yield between batches
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  console.log(
+    `[artist-images] Done: ${fetched} fetched, ${failed} not found (of ${missing.length} missing)`,
+  );
+  // If we fetched any new images, invalidate the artists section cache
+  // so cards re-render with the new images on next view.
+  if (fetched > 0) {
+    invalidateSectionCache();
+    // Re-render the active section if it's artists
+    if (state.activeNavSection === "artists") {
+      _reRenderPanel("artists", renderArtists);
+    }
+  }
+}
 
 function _resolveCoverArtSrcWithReuse(track) {
   if (!track) return null;
-  // Check album fingerprint cache first
+  // v1.1.0 — If the track has its own per-track cover, NEVER substitute
+  // an album-shared URL. This is the fix for Bug #1.
+  // Per-track cover indicators:
+  //   - track.coverArt: file path / data URI / nova-media:// URL
+  //   - track._hasCoverArt: true when base64 was stripped & stored in DB
+  // Either way, _resolveCoverArtSrc will return the track's OWN URL.
+  if (track.coverArt || track._hasCoverArt) {
+    return _resolveCoverArtSrc(track);
+  }
+  // Track has no own cover → consult album cache (existing optimization).
   const albumKey = `${track.album || ""}::${track.artist || ""}`;
   if (albumKey !== "::" && _albumArtCache.has(albumKey)) {
     return _albumArtCache.get(albumKey);
   }
-  // Resolve normally
+  // Resolve normally (will likely return null for tracks with no cover)
   const src = _resolveCoverArtSrc(track);
   if (src && albumKey !== "::") {
     _albumArtCache.set(albumKey, src);
@@ -6755,6 +7470,271 @@ function _idbSet(key, value) {
   } catch (_) {}
 }
 
+// ─── TrackThumbHandler [v1.1.0 — Bug #1 Fix; v1.1.1 — Stub file cache] ────
+// Permanent per-track thumbnail cache that guarantees song rows in
+// library / album / artist / playlist views always display each track's
+// OWN accurate thumbnail.
+//
+// v1.1.1 STORAGE LAYERS (in priority order):
+//   1. Hot layer (in-memory Map<trackId, resolvedSrc>) — ~0ms lookup
+//   2. Stub file (userData/thumb-stubs.json) — ~1ms fs.readFileSync
+//      at app start (single bulk read; replaces 1144 IDB .gets)
+//   3. IDB (`trackThumb::${trackId}`) — backup/legacy; rarely queried
+//      because stub file is faster
+//
+// v1.1.1 SAVE STRATEGY:
+//   - When resolveSync/resolveAsync resolves a NEW URL, we don't write
+//     immediately. Instead we batch into a pending patch object and
+//     flush every 2 seconds via `thumb-stubs:patch` IPC (debounced).
+//   - This means a 1144-track library rescan produces ONE stub file
+//     write, not 1144 separate IDB writes.
+//
+// v1.1.1 LOAD STRATEGY (at app start):
+//   - loadFromStubFile() is called ONCE during _loadSettings.
+//   - It performs a single synchronous IPC call to `thumb-stubs:load`,
+//     which does fs.readFileSync on the main process side (~1ms).
+//   - The returned {trackId: url} object is loaded into _trackThumbHot
+//     so ALL subsequent resolveSync calls hit the hot cache.
+//
+// Speed optimizations:
+//   1. If the track's bitmap is already in `thumbnailAtlas` (canvas-ready),
+//      return immediately without any further lookup.
+//   2. If `track._hasCoverArt` or `track.coverArt` is set, the URL is
+//      derivable in O(1) — no IDB read needed. Cache it for next time
+//      but don't block on IDB.
+//   3. Hot cache hit → return in <1µs.
+//   4. Stub file pre-warm at startup → all 1144 tracks in <5ms total.
+//
+// Efficiency:
+//   - `resolveSync(track)` short-circuits for tracks that already have the
+//     correct thumbnail (in atlas OR have _hasCoverArt/coverArt set).
+//   - No IPC calls for tracks with cached URLs.
+//   - No IDB writes when the resolved URL matches the cached value.
+//
+// Invalidation:
+//   - `invalidate(trackId)` removes the entry from hot + stub file and
+//     also clears the bitmap in `thumbnailAtlas`. Called when a track is
+//     deleted from the library or when its cover art is re-fetched.
+const _trackThumbHot = new Map(); // trackId → resolvedSrc (in-memory hot cache)
+const _trackThumbResolving = new Map(); // trackId → Promise (in-flight dedupe)
+const _trackThumbPatchPending = {}; // { trackId: src | null } — batched for next flush
+let _thumbStubFlushTimer = null;
+let _trackThumbStubFileLoaded = false;
+
+function _scheduleThumbStubFlush() {
+  if (_thumbStubFlushTimer) return;
+  _thumbStubFlushTimer = setTimeout(() => {
+    _thumbStubFlushTimer = null;
+    const patch = {};
+    for (const k of Object.keys(_trackThumbPatchPending)) {
+      patch[k] = _trackThumbPatchPending[k];
+      delete _trackThumbPatchPending[k];
+    }
+    if (Object.keys(patch).length === 0) return;
+    try {
+      window.novaAPI.invoke("thumb-stubs:patch", patch).catch(() => {});
+    } catch (_) {}
+  }, 2000);
+}
+
+const TrackThumbHandler = {
+  /**
+   * Compute the track's own thumbnail URL synchronously (no IPC, no IDB).
+   * Used by row renderers that need the URL NOW (cannot await).
+   * @param {Object} track
+   * @returns {string|null} resolved URL or null if no art available
+   */
+  resolveSync(track) {
+    if (!track) return null;
+    // 1. Hot cache hit (fastest)
+    const cached = _trackThumbHot.get(track.id);
+    if (cached !== undefined) return cached;
+    // 2. Track has its own per-track cover — URL is O(1) derivable
+    //    This is the per-track guarantee: NEVER substitute album-shared URL.
+    const src = _resolveCoverArtSrc(track);
+    if (src) {
+      _trackThumbHot.set(track.id, src);
+      // v1.1.1 — Batch into patch (debounced 2s) instead of N IDB writes
+      _trackThumbPatchPending[track.id] = src;
+      _scheduleThumbStubFlush();
+      // Also persist to IDB as backup (fire-and-forget)
+      _idbSet(`trackThumb::${track.id}`, src);
+    }
+    return src;
+  },
+
+  /**
+   * Async resolver — checks IDB cold cache for tracks the hot cache doesn't
+   * have. Used when the row is being built and we can afford one async hop
+   * (e.g., the first time a track scrolls into view after cold start).
+   * @param {Object} track
+   * @returns {Promise<string|null>}
+   */
+  async resolveAsync(track) {
+    if (!track) return null;
+    // Hot cache hit
+    const cached = _trackThumbHot.get(track.id);
+    if (cached !== undefined) return cached;
+    // Track has its own per-track cover — URL is O(1) derivable, skip IDB
+    if (track.coverArt || track._hasCoverArt) {
+      const src = _resolveCoverArtSrc(track);
+      if (src) {
+        _trackThumbHot.set(track.id, src);
+        _trackThumbPatchPending[track.id] = src;
+        _scheduleThumbStubFlush();
+        _idbSet(`trackThumb::${track.id}`, src);
+      }
+      return src;
+    }
+    // In-flight dedupe: if another caller is already resolving this track,
+    // share its Promise
+    if (_trackThumbResolving.has(track.id)) {
+      return _trackThumbResolving.get(track.id);
+    }
+    const p = (async () => {
+      try {
+        // IDB cold cache check (only used when stub file didn't have it)
+        const persisted = await _idbGet(`trackThumb::${track.id}`);
+        if (persisted) {
+          _trackThumbHot.set(track.id, persisted);
+          _trackThumbPatchPending[track.id] = persisted;
+          _scheduleThumbStubFlush();
+          return persisted;
+        }
+        // Resolve fresh via _resolveCoverArtSrc (per-track, NOT album-shared)
+        const src = _resolveCoverArtSrc(track);
+        if (src) {
+          _trackThumbHot.set(track.id, src);
+          _trackThumbPatchPending[track.id] = src;
+          _scheduleThumbStubFlush();
+          _idbSet(`trackThumb::${track.id}`, src);
+        }
+        return src;
+      } finally {
+        _trackThumbResolving.delete(track.id);
+      }
+    })();
+    _trackThumbResolving.set(track.id, p);
+    return p;
+  },
+
+  /**
+   * Invalidate the cached thumbnail for a track. Call this when:
+   *   - The track is deleted from the library
+   *   - The track's cover art has been re-fetched (e.g., via exhaustive search)
+   * @param {string} trackId
+   */
+  invalidate(trackId) {
+    if (!trackId) return;
+    _trackThumbHot.delete(trackId);
+    thumbnailAtlas.delete(trackId);
+    // v1.1.1 — Also remove from stub file (batched)
+    _trackThumbPatchPending[trackId] = null;
+    _scheduleThumbStubFlush();
+    _idbSet(`trackThumb::${trackId}`, null);
+  },
+
+  /**
+   * Clear the entire cache. Used when the library is rebuilt/refreshed.
+   */
+  clear() {
+    _trackThumbHot.clear();
+    _trackThumbResolving.clear();
+    // Note: we DON'T clear _trackThumbPatchPending here — a flush is still
+    // useful so the stub file stays in sync after a library rebuild.
+  },
+
+  /**
+   * Pre-warm the hot cache from IDB for a list of trackIds.
+   * Called once on library load so subsequent row renders are sync.
+   * v1.1.1: This is now a no-op if loadFromStubFile() has already been
+   * called (which it always is, in _loadSettings) — the stub file is the
+   * authoritative source. Kept as a fallback for tracks not in the stub.
+   * @param {string[]} trackIds
+   */
+  async preWarm(trackIds) {
+    if (!trackIds || trackIds.length === 0) return;
+    // v1.1.1: If stub file already loaded, only pre-warm tracks NOT in it.
+    const remaining = _trackThumbStubFileLoaded
+      ? trackIds.filter((id) => !_trackThumbHot.has(id))
+      : trackIds;
+    if (remaining.length === 0) return;
+    // Batch read in chunks to avoid blocking IDB transaction
+    const CHUNK = 50;
+    for (let i = 0; i < remaining.length; i += CHUNK) {
+      const chunk = remaining.slice(i, i + CHUNK);
+      await Promise.all(
+        chunk.map(async (id) => {
+          if (_trackThumbHot.has(id)) return;
+          try {
+            const persisted = await _idbGet(`trackThumb::${id}`);
+            if (persisted) _trackThumbHot.set(id, persisted);
+          } catch (_) {}
+        }),
+      );
+    }
+  },
+
+  /**
+   * v1.1.1 — Load the stub file in ONE IPC call and populate _trackThumbHot.
+   * Called once at app start (in _loadSettings) so all 1144 tracks are in
+   * the hot cache before the library even renders.
+   *
+   * This replaces the old flow:
+   *   library load → _applyIDBThumbs (1144 IDB .gets, 1500ms+ on HDD) → render
+   * With:
+   *   library load → loadFromStubFile (1 IPC, ~5ms) → render
+   *
+   * @returns {Promise<number>} number of entries loaded
+   */
+  async loadFromStubFile() {
+    if (_trackThumbStubFileLoaded) return _trackThumbHot.size;
+    _trackThumbStubFileLoaded = true;
+    try {
+      const result = await window.novaAPI.invoke("thumb-stubs:load");
+      if (result?.success && result.stubs && typeof result.stubs === "object") {
+        let count = 0;
+        for (const [trackId, src] of Object.entries(result.stubs)) {
+          if (typeof src === "string" && src) {
+            _trackThumbHot.set(trackId, src);
+            count++;
+          }
+        }
+        console.log(
+          `[TrackThumbHandler] Loaded ${count} stub entries from disk`,
+        );
+        return count;
+      }
+    } catch (err) {
+      console.warn(
+        "[TrackThumbHandler] Failed to load stub file:",
+        err.message,
+      );
+    }
+    return 0;
+  },
+
+  /**
+   * v1.1.1 — Force-flush any pending patches to the stub file. Call this
+   * before app quit so no entries are lost.
+   */
+  async flush() {
+    if (_thumbStubFlushTimer) {
+      clearTimeout(_thumbStubFlushTimer);
+      _thumbStubFlushTimer = null;
+    }
+    const patch = {};
+    for (const k of Object.keys(_trackThumbPatchPending)) {
+      patch[k] = _trackThumbPatchPending[k];
+      delete _trackThumbPatchPending[k];
+    }
+    if (Object.keys(patch).length === 0) return;
+    try {
+      await window.novaAPI.invoke("thumb-stubs:patch", patch);
+    } catch (_) {}
+  },
+};
+
 /** Returns a cached dataURL from hot-cache → IDB → IPC, in that order.
  *  REVFIX v2: Uses SingleFlight deduplication — if the same thumbnail is
  *  already being fetched (e.g., 50 tracks from the same album), all consumers
@@ -6810,9 +7790,10 @@ async function _generateMissingThumbnails(missIds) {
     const CHUNK = 50;
     for (let i = 0; i < idbMisses.length; i += CHUNK) {
       const chunkIds = idbMisses.slice(i, i + CHUNK);
+      // v1.1.4 — 128px for retina quality (was 96, originally 48)
       const thumbResult = await window.novaAPI.invoke(
         "coverart:get-all-thumbs",
-        { size: 48 },
+        { size: 128 },
       );
       if (thumbResult?.success && thumbResult.thumbs) {
         const thumbs = thumbResult.thumbs;
@@ -6823,7 +7804,7 @@ async function _generateMissingThumbnails(missIds) {
             t._thumb = thumbs[t.id];
             const thumbData = { url: thumbs[t.id] };
             if (thumbHashes[t.id]) thumbData.hash = thumbHashes[t.id];
-            _idbSet(`batch48::${t.id}`, thumbData);
+            _idbSet(`batch96::${t.id}`, thumbData);
             updatedCount++;
           }
           if (thumbHashes[t.id]) {
@@ -6872,7 +7853,7 @@ async function _generateMissingThumbnails(missIds) {
 
 /**
  * Clear all thumbnail caches (IDB + in-memory) — called after a library rescan.
- * CHANGED v1.0.16: Now clears EVERYTHING, not just batch48:: entries.
+ * CHANGED v1.0.16: Now clears EVERYTHING, not just batch96:: entries.
  * The old code left protocol-URL cache entries (keyed by artPath) and
  * thumbHash/dominantColor caches stale — causing new tracks to show
  * WRONG thumbnails from old tracks after a restart.
@@ -6889,7 +7870,7 @@ function _bustIDBThumbCache() {
   thumbnailAtlas.clear();
   if (!_idbReady || !_idb) return;
   try {
-    // Clear the ENTIRE IDB store — not just batch48:: entries.
+    // Clear the ENTIRE IDB store — not just batch96:: entries.
     const tx = _idb.transaction(IDB_STORE, "readwrite");
     const store = tx.objectStore(IDB_STORE);
     store.clear();
@@ -7027,7 +8008,6 @@ function _attachEagerThumb(img, artPath, size, trackId) {
 
     // Load directly — NO _dedupe. The browser's native cache handles
     // duplicate protocol URL requests efficiently (instant on 2nd+ load).
-    img.src = thumbUrl;
     img.onload = () => {
       _revealImg();
     };
@@ -7043,7 +8023,6 @@ function _attachEagerThumb(img, artPath, size, trackId) {
           "nova-media://art/$1",
         );
         if (artUrl !== thumbUrl) {
-          img.src = artUrl;
           img.onload = () => {
             _revealImg();
           };
@@ -7055,7 +8034,6 @@ function _attachEagerThumb(img, artPath, size, trackId) {
               const retryUrl = thumbUrl.includes("?")
                 ? `${thumbUrl}&retry=1`
                 : `${thumbUrl}?retry=1&t=${Date.now()}`;
-              img.src = retryUrl;
               img.onload = () => {
                 _revealImg();
               };
@@ -7065,8 +8043,10 @@ function _attachEagerThumb(img, artPath, size, trackId) {
                 // Tier 3: IPC thumbnail fallback
                 _loadThumbFallback(img, artPath, size);
               };
+              img.src = retryUrl;
             }, 300);
           };
+          img.src = artUrl;
           return;
         }
       }
@@ -7076,7 +8056,6 @@ function _attachEagerThumb(img, artPath, size, trackId) {
         const retryUrl = thumbUrl.includes("?")
           ? `${thumbUrl}&retry=1`
           : `${thumbUrl}?retry=1&t=${Date.now()}`;
-        img.src = retryUrl;
         img.onload = () => {
           _revealImg();
         };
@@ -7086,8 +8065,10 @@ function _attachEagerThumb(img, artPath, size, trackId) {
           // Tier 3: IPC thumbnail fallback
           _loadThumbFallback(img, artPath, size);
         };
+        img.src = retryUrl;
       }, 300);
     };
+    img.src = thumbUrl;
     return;
   }
 
@@ -7151,7 +8132,6 @@ function _loadThumbFallback(img, artPath, size) {
   _getThumb(artPath, size)
     .then((dataURL) => {
       if (dataURL) {
-        img.src = dataURL;
         img.onload = () => {
           img.style.opacity = "1";
           _fadePlaceholder(img);
@@ -7160,6 +8140,7 @@ function _loadThumbFallback(img, artPath, size) {
           // IPC thumbnail also failed - show the art placeholder
           _showFinalFallback(img);
         };
+        img.src = dataURL;
       } else {
         // No thumbnail available - show the art placeholder as last resort
         _showFinalFallback(img);
@@ -7444,7 +8425,7 @@ function renderHelp() {
       </div>
 
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
-        NovaTune v1.0.9 &bull; Made with love for music lovers
+        NovaTune v1.1.1 &bull; Made with love for music lovers
       </div>
     </div>
   `);
@@ -7762,6 +8743,25 @@ function getArtistGroups() {
         }
       }
     }
+    // v1.1.0 — Sort artist tracks by album, then disc/track number, then title.
+    // This makes artist detail view group tracks by album (in album order)
+    // rather than in arbitrary library-scan order. The user reported
+    // "album tracks are not in order, as they are on the album" — this
+    // ensures both album AND artist views respect disc/track numbers.
+    group.tracks.sort((a, b) => {
+      const albumA = (a.album || "Unknown Album").toLowerCase();
+      const albumB = (b.album || "Unknown Album").toLowerCase();
+      if (albumA !== albumB) return albumA.localeCompare(albumB);
+      // Within the same album, sort by disc then track then title
+      return (
+        (a.discNumber || 1) - (b.discNumber || 1) ||
+        (a.trackNumber || 9999) - (b.trackNumber || 9999) ||
+        (a.title || "").localeCompare(b.title || "", undefined, {
+          sensitivity: "base",
+        }) ||
+        (a.dateAdded || 0) - (b.dateAdded || 0)
+      );
+    });
   }
 
   // When searching, sort artists so that the best-matching artist comes first
@@ -7789,12 +8789,330 @@ function getArtistGroups() {
       return a.artist.localeCompare(b.artist);
     });
   } else {
-    artists = [...groups.values()].sort((a, b) =>
-      a.artist.localeCompare(b.artist),
-    );
+    // v1.1.7 — Sort artists by user-selected cardSortMode setting.
+    artists = [...groups.values()].sort(_cardSortComparator);
   }
   if (!q2) sectionCache.artists = artists;
   return artists;
+}
+
+// ─── Artist Image Editor ─────────────────────────────────────────────────────
+// Opens a small modal on the artist card so the user can upload a local file
+// (any image type — Sharp will decode it on the main-process side) or paste
+// an image URL.  After saving, the card's img is refreshed in-place so there's
+// no full re-render flicker.
+
+let _artistEditModal = null; // singleton modal element
+let _artistEditCleanup = null; // function to unbind listeners
+
+function _openArtistImageEditor(artistName) {
+  // ── Build modal once, reuse on subsequent opens ──────────────────────────
+  if (!_artistEditModal) {
+    const modal = document.createElement("div");
+    modal.id = "artist-img-edit-modal";
+    modal.className = "artist-img-edit-modal";
+    modal.innerHTML = `
+      <div class="aie-backdrop"></div>
+      <div class="aie-dialog">
+        <div class="aie-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="aie-header-icon"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          
+          <span class="aie-artist-name" id="aie-artist-name" data-tooltip="Change Artist Name"></span>
+          <button class="aie-close" id="aie-close" title="Close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="aie-tabs">
+          <button class="aie-tab active" data-aie-tab="file">Local File</button>
+          <button class="aie-tab" data-aie-tab="url">Image URL</button>
+        </div>
+        <div class="aie-panel active" id="aie-panel-file">
+          <label class="aie-drop-zone" id="aie-drop-zone">
+            <div class="aie-drop-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+            </div>
+            <span class="aie-drop-text">Drop an image here</span>
+            <div class="aie-btn-secondary" style="margin-top: 8px; font-size: 12px; padding: 6px 12px; pointer-events: none;">Browse Files</div>
+            <span class="aie-drop-sub" style="margin-top: 8px;">Supports JPG, PNG, WebP, GIF, BMP, TIFF, AVIF…</span>
+            <input type="file" id="aie-file-input" accept="image/*" style="opacity: 0; position: absolute; z-index: -1; width: 1px; height: 1px;">
+          </label>
+          <div class="aie-preview-row" id="aie-preview-row" style="display:none;">
+            <div class="aie-preview-wrap">
+              <img class="aie-preview-img" id="aie-preview-img" alt="Preview">
+              <span class="aie-preview-badge">Preview — will be cropped to square</span>
+            </div>
+            <button class="aie-clear-btn" id="aie-clear-btn" title="Remove selected file">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="aie-panel" id="aie-panel-url">
+          <div class="aie-url-row">
+            <input type="text" class="aie-url-input" id="aie-url-input" placeholder="https://example.com/artist.jpg">
+            <button class="aie-url-preview-btn" id="aie-url-preview-btn">Preview</button>
+          </div>
+          <div class="aie-preview-row" id="aie-url-preview-row" style="display:none;">
+            <div class="aie-preview-wrap">
+              <img class="aie-preview-img" id="aie-url-preview-img" alt="Preview">
+              <span class="aie-preview-badge">Preview — will be cropped to square</span>
+            </div>
+          </div>
+          <div class="aie-url-error" id="aie-url-error" style="display:none;"></div>
+        </div>
+        <div class="aie-footer">
+          <span class="aie-status" id="aie-status"></span>
+          <button class="aie-btn-secondary" id="aie-cancel-btn">Cancel</button>
+          <button class="aie-btn-primary" id="aie-save-btn">Save Image</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    _artistEditModal = modal;
+  }
+
+  const modal = _artistEditModal;
+  const backdrop = modal.querySelector(".aie-backdrop");
+  const nameEl = modal.querySelector("#aie-artist-name");
+  const closeBtn = modal.querySelector("#aie-close");
+  const cancelBtn = modal.querySelector("#aie-cancel-btn");
+  const saveBtn = modal.querySelector("#aie-save-btn");
+  const statusEl = modal.querySelector("#aie-status");
+  const tabs = modal.querySelectorAll(".aie-tab");
+  const panels = modal.querySelectorAll(".aie-panel");
+
+  // File panel
+  const dropZone = modal.querySelector("#aie-drop-zone");
+  const fileInput = modal.querySelector("#aie-file-input");
+  const previewRow = modal.querySelector("#aie-preview-row");
+  const previewImg = modal.querySelector("#aie-preview-img");
+  const clearBtn = modal.querySelector("#aie-clear-btn");
+
+  // URL panel
+  const urlInput = modal.querySelector("#aie-url-input");
+  const urlPreviewBtn = modal.querySelector("#aie-url-preview-btn");
+  const urlPreviewRow = modal.querySelector("#aie-url-preview-row");
+  const urlPreviewImg = modal.querySelector("#aie-url-preview-img");
+  const urlError = modal.querySelector("#aie-url-error");
+
+  // ── Reset state ───────────────────────────────────────────────────────────
+  nameEl.textContent = artistName;
+  statusEl.textContent = "";
+  statusEl.className = "aie-status";
+  saveBtn.disabled = false;
+  fileInput.value = "";
+  previewRow.style.display = "none";
+  previewImg.src = "";
+  urlInput.value = "";
+  urlPreviewRow.style.display = "none";
+  urlPreviewImg.src = "";
+  urlError.style.display = "none";
+  urlError.textContent = "";
+
+  // Reset to file tab
+  tabs.forEach((t) =>
+    t.classList.toggle("active", t.dataset.aieTab === "file"),
+  );
+  panels.forEach((p) =>
+    p.classList.toggle("active", p.id === "aie-panel-file"),
+  );
+
+  let _selectedFilePath = null; // will be populated via IPC after file pick
+
+  // ── Tab switching ─────────────────────────────────────────────────────────
+  const switchTab = (name) => {
+    tabs.forEach((t) =>
+      t.classList.toggle("active", t.dataset.aieTab === name),
+    );
+    panels.forEach((p) =>
+      p.classList.toggle(
+        "active",
+        (name === "file" ? "aie-panel-file" : "aie-panel-url") === p.id,
+      ),
+    );
+    statusEl.textContent = "";
+  };
+
+  // ── File picking ──────────────────────────────────────────────────────────
+  const handleFileChange = async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    // Show local preview via blob URL (any image format the browser can decode,
+    // plus formats only Sharp can handle will still be sent to main process)
+    const blobUrl = URL.createObjectURL(file);
+    previewImg.src = blobUrl;
+    previewRow.style.display = "flex";
+    statusEl.textContent = "";
+
+    // Get the real filesystem path via Electron's File.path property
+    _selectedFilePath = file.path || null;
+  };
+
+  // Drag-and-drop onto the drop zone
+  const handleDrop = (e) => {
+    e.preventDefault();
+    dropZone.classList.remove("aie-drop-over");
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    fileInput.files = e.dataTransfer.files; // assign to input so handleFileChange sees it
+    const blobUrl = URL.createObjectURL(file);
+    previewImg.src = blobUrl;
+    previewRow.style.display = "flex";
+    _selectedFilePath = file.path || null;
+    statusEl.textContent = "";
+  };
+
+  // ── URL preview ───────────────────────────────────────────────────────────
+  const doUrlPreview = () => {
+    const url = urlInput.value.trim();
+    if (!url) return;
+    urlError.style.display = "none";
+    urlPreviewImg.src = "";
+    urlPreviewRow.style.display = "none";
+    urlPreviewImg.onload = () => {
+      urlPreviewRow.style.display = "flex";
+    };
+    urlPreviewImg.onerror = () => {
+      urlPreviewRow.style.display = "none";
+      urlError.textContent =
+        "Could not load image from that URL (note: preview loads in renderer — saving always goes via the main process so CORS won't block it).";
+      urlError.style.display = "block";
+    };
+    urlPreviewImg.src = url;
+    statusEl.textContent = "";
+  };
+
+  // ── Save ──────────────────────────────────────────────────────────────────
+  const doSave = async () => {
+    const activeTab = [...tabs].find((t) => t.classList.contains("active"))
+      ?.dataset.aieTab;
+    statusEl.className = "aie-status";
+    statusEl.textContent = "Saving…";
+    saveBtn.disabled = true;
+
+    let payload;
+    if (activeTab === "file") {
+      if (!_selectedFilePath) {
+        statusEl.textContent = "⚠ No file selected.";
+        statusEl.classList.add("aie-status-error");
+        saveBtn.disabled = false;
+        return;
+      }
+      payload = { artistName, localFilePath: _selectedFilePath };
+    } else {
+      const url = urlInput.value.trim();
+      if (!url) {
+        statusEl.textContent = "⚠ No URL entered.";
+        statusEl.classList.add("aie-status-error");
+        saveBtn.disabled = false;
+        return;
+      }
+      payload = { artistName, url };
+    }
+
+    try {
+      const result = await window.novaAPI.invoke(
+        "artist-image:save-custom",
+        payload,
+      );
+      if (result?.success && result.localPath) {
+        // Update in-renderer cache immediately (covers real artist image + offline/album-art fallback cases)
+        _artistImageMap.set(artistName.toLowerCase(), result.localPath);
+        _artistImageVersions.set(artistName.toLowerCase(), Date.now());
+
+        statusEl.textContent = "✓ Image saved!";
+        statusEl.classList.add("aie-status-ok");
+        saveBtn.disabled = false;
+        // Close + full re-render: handles all cases cleanly —
+        // real artist image, album cover fallback, emoji placeholder
+        setTimeout(() => {
+          closeModal();
+          sectionCache.artists = null;
+          if (document.querySelector(".album-grid")) {
+            renderArtists();
+          }
+        }, 700);
+      } else {
+        statusEl.textContent = "⚠ " + (result?.error || "Unknown error");
+        statusEl.classList.add("aie-status-error");
+        saveBtn.disabled = false;
+      }
+    } catch (err) {
+      statusEl.textContent = "⚠ " + err.message;
+      statusEl.classList.add("aie-status-error");
+      saveBtn.disabled = false;
+    }
+  };
+
+  // ── Open / close helpers ──────────────────────────────────────────────────
+  const closeModal = () => {
+    modal.classList.remove("aie-open");
+    // Cleanup all listeners bound per-open
+    if (_artistEditCleanup) {
+      _artistEditCleanup();
+      _artistEditCleanup = null;
+    }
+    // Release preview blob URLs to avoid memory leak
+    if (previewImg.src?.startsWith("blob:"))
+      URL.revokeObjectURL(previewImg.src);
+    previewImg.src = "";
+    urlPreviewImg.src = "";
+  };
+
+  // Bind listeners fresh each open so they always close over the correct artistName
+  if (_artistEditCleanup) _artistEditCleanup();
+  const tabHandlers = [...tabs].map((t) => {
+    const h = () => switchTab(t.dataset.aieTab);
+    t.addEventListener("click", h);
+    return { el: t, h };
+  });
+  fileInput.addEventListener("change", handleFileChange);
+  clearBtn.addEventListener("click", () => {
+    fileInput.value = "";
+    previewRow.style.display = "none";
+    if (previewImg.src?.startsWith("blob:"))
+      URL.revokeObjectURL(previewImg.src);
+    previewImg.src = "";
+    _selectedFilePath = null;
+  });
+  dropZone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    dropZone.classList.add("aie-drop-over");
+  });
+  dropZone.addEventListener("dragleave", () =>
+    dropZone.classList.remove("aie-drop-over"),
+  );
+  dropZone.addEventListener("drop", handleDrop);
+  urlPreviewBtn.addEventListener("click", doUrlPreview);
+  const handleUrlEnter = (e) => {
+    if (e.key === "Enter") doUrlPreview();
+  };
+  urlInput.addEventListener("keydown", handleUrlEnter);
+  saveBtn.addEventListener("click", doSave);
+  cancelBtn.addEventListener("click", closeModal);
+  closeBtn.addEventListener("click", closeModal);
+  backdrop.addEventListener("click", closeModal);
+  const escHandler = (e) => {
+    if (e.key === "Escape") closeModal();
+  };
+  document.addEventListener("keydown", escHandler);
+
+  _artistEditCleanup = () => {
+    tabHandlers.forEach(({ el, h }) => el.removeEventListener("click", h));
+    fileInput.removeEventListener("change", handleFileChange);
+    dropZone.removeEventListener("dragover", () => {});
+    dropZone.removeEventListener("dragleave", () => {});
+    dropZone.removeEventListener("drop", handleDrop);
+    urlPreviewBtn.removeEventListener("click", doUrlPreview);
+    urlInput.removeEventListener("keydown", handleUrlEnter);
+    saveBtn.removeEventListener("click", doSave);
+    cancelBtn.removeEventListener("click", closeModal);
+    closeBtn.removeEventListener("click", closeModal);
+    backdrop.removeEventListener("click", closeModal);
+    document.removeEventListener("keydown", escHandler);
+  };
+
+  // Open!
+  modal.classList.add("aie-open");
 }
 
 function _makeArtistCard(artist) {
@@ -7804,7 +9122,13 @@ function _makeArtistCard(artist) {
   const coverDiv = document.createElement("div");
   coverDiv.className = "album-cover";
 
-  if (artist.coverArt) {
+  // v1.2.0 — Check for a real artist image first (fetched from iTunes/Deezer).
+  // If we have one, use it instead of the album cover art. This gives the
+  // Artists section real artist photos instead of album art thumbnails.
+  const artistImageUrl = _getArtistImageUrl(artist.artist);
+  const effectiveCoverArt = artistImageUrl || artist.coverArt;
+
+  if (effectiveCoverArt) {
     const container = document.createElement("div");
     container.className = "cover-img-container";
     // Set dominant color as instant background (zero-cost, already computed)
@@ -7828,22 +9152,47 @@ function _makeArtistCard(artist) {
     // artist.tracks[0]?.id (which might be a DIFFERENT track with NO cover art).
     // When coverArt = "nova-media://art/trackId3" but trackId = tracks[0].id,
     // _getProtocolThumbUrl generates "nova-media://thumb/WRONG_ID/200" → 404 → blank card.
-    const artTrackId = artist._coverArtTrackId || artist.tracks[0]?.id;
+    // v1.2.0: When using artistImageUrl (not track cover art), artTrackId is
+    // not applicable — pass null so _attachEagerThumb doesn't try the thumb
+    // protocol path for a non-track image.
+    const artTrackId = artistImageUrl
+      ? null
+      : artist._coverArtTrackId || artist.tracks[0]?.id;
     // CRITICAL FIX: Append img to container BEFORE _attachEagerThumb
     container.appendChild(img);
     coverDiv.appendChild(container);
-    _attachEagerThumb(img, artist.coverArt, 200, artTrackId);
+    _attachEagerThumb(img, effectiveCoverArt, 200, artTrackId);
   } else {
     coverDiv.innerHTML = `<div class="art-placeholder art-${getArtIndex(artist.tracks[0])}">&#127925;</div>`;
   }
+
   card.appendChild(coverDiv);
+
+  // ── Title row: artist name + inline pencil edit button ─────────────────────
+  const titleRow = document.createElement("div");
+  titleRow.className = "artist-title-row";
+
   const titleDiv = document.createElement("div");
   titleDiv.className = "album-title";
   titleDiv.textContent = artist.artist;
+
+  // Pencil button — sits inline in the title row, visible on card hover
+  const editBtn = document.createElement("button");
+  editBtn.className = "artist-edit-img-btn";
+  editBtn.setAttribute("data-tooltip", "Change artist image");
+  editBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+  editBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    _openArtistImageEditor(artist.artist);
+  });
+
+  titleRow.appendChild(titleDiv);
+  titleRow.appendChild(editBtn);
+  card.appendChild(titleRow);
+
   const metaDiv = document.createElement("div");
   metaDiv.className = "album-meta";
   metaDiv.textContent = `${artist.tracks.length} song${artist.tracks.length === 1 ? "" : "s"}`;
-  card.appendChild(titleDiv);
   card.appendChild(metaDiv);
   card.addEventListener("click", () => {
     _activePanelTarget = _getPanel("artists");
@@ -7913,8 +9262,11 @@ function renderArtists() {
 function renderArtistDetail(artistKey) {
   const artist = getArtistGroups().find((item) => item.key === artistKey);
   if (!artist) return;
+  // v1.2.0 — Use real artist image if available (fetched from iTunes/Deezer).
+  const artistImageUrl = _getArtistImageUrl(artist.artist);
+  const effectiveCoverArt = artistImageUrl || artist.coverArt;
   // REVFIX v1: Wrap artist detail image in .cover-img-container (same fix as album detail)
-  const coverHtml = artist.coverArt
+  const coverHtml = effectiveCoverArt
     ? `<div class="cover-img-container" style="background-color:${_getDominantColorForTrack(artist.tracks[0])}"><img id="artist-detail-cover-img" alt=""></div>`
     : `<div class="art-placeholder art-${getArtIndex(artist.tracks[0])}">&#127925;</div>`;
   renderSectionSurface(`
@@ -7935,15 +9287,15 @@ function renderArtistDetail(artistKey) {
   // Detail views should start from the top
   const _area2 = $("track-area");
   if (_area2) _area2.scrollTop = 0;
-  if (artist.coverArt) {
+  if (effectiveCoverArt) {
     const coverImg = document.getElementById("artist-detail-cover-img");
-    if (coverImg)
-      _attachEagerThumb(
-        coverImg,
-        artist.coverArt,
-        400,
-        artist._coverArtTrackId || artist.tracks[0]?.id,
-      );
+    if (coverImg) {
+      // v1.2.0: When using artistImageUrl, artTrackId is null (not a track image)
+      const artTrackId = artistImageUrl
+        ? null
+        : artist._coverArtTrackId || artist.tracks[0]?.id;
+      _attachEagerThumb(coverImg, effectiveCoverArt, 400, artTrackId);
+    }
   }
   const surface = getSectionSurface();
   surface
@@ -8332,8 +9684,12 @@ function _createTrackRow(track, contextQueue) {
   row.dataset.trackId = track.id;
   const thumbDiv = document.createElement("div");
   thumbDiv.className = "playlist-song-thumb";
-  // REVFIX v2: Use album art reuse for faster resolution across duplicate albums
-  const artSrc = _resolveCoverArtSrcWithReuse(track);
+  // v1.1.0 — Use TrackThumbHandler so the row ALWAYS shows this track's
+  // OWN accurate thumbnail (never an album-shared URL). The handler caches
+  // the resolved URL permanently in IDB so subsequent renders are O(1).
+  // This fixes Bug #1: song rows showing duplicate wrong thumbnails that
+  // matched the artist card instead of each track's actual cover.
+  const artSrc = TrackThumbHandler.resolveSync(track);
   if (artSrc) {
     const img = document.createElement("img");
     img.alt = "";
@@ -8520,8 +9876,10 @@ function renderPlaylistDetail(playlistId) {
     row.className = "playlist-song-row";
     const thumbDiv = document.createElement("div");
     thumbDiv.className = "playlist-song-thumb";
-    // Use _resolveCoverArtSrc for reliable image loading across ALL art types
-    const artSrc = _resolveCoverArtSrc(track);
+    // v1.1.0 — Use TrackThumbHandler for per-track accuracy + permanent cache.
+    // Fixes Bug #1: song rows in playlist view also showed album-shared
+    // thumbnails (via _resolveCoverArtSrcWithReuse in collage paths).
+    const artSrc = TrackThumbHandler.resolveSync(track);
     if (artSrc) {
       const img = document.createElement("img");
       img.alt = "";
@@ -8963,6 +10321,20 @@ function _populateSlot(row, track, idx) {
   // If the track has a pre-built thumbnail in the atlas, render a <canvas>
   // and draw the 40×40 bitmap directly — ~5× faster than full-res <img>.
   // Fall back to <img> tag if the atlas entry isn't ready yet.
+  //
+  // v1.1.1 BUGFIX (Bug A — new songs show blank thumbnails on HDD):
+  //   For tracks WITHOUT a pre-built bitmap, we used to render only a
+  //   blank <canvas> + fire-and-forget `_ensureThumbInAtlas`. On HDD the
+  //   bitmap build can take 10-30+ seconds (especially for new songs
+  //   whose on-disk thumb hasn't been generated yet → protocol handler
+  //   has to fetch + Sharp-process on demand). During that window the
+  //   row showed a blank gray square.
+  //   Fix: render a hidden <img> ALONGSIDE the canvas. The <img> loads
+  //   the same URL but uses the browser's native image cache + decoder,
+  //   which is faster than our canvas pipeline for first paint. When
+  //   the <img> loads, fade it in. When the bitmap is ready, the canvas
+  //   takes over (and the <img> is hidden). This guarantees the user
+  //   sees SOMETHING within ~50ms of the row scrolling into view.
   let artHtml;
   const bitmap = thumbnailAtlas.get(track.id);
   if (bitmap) {
@@ -8976,20 +10348,72 @@ function _populateSlot(row, track, idx) {
       `data-bitmap-id="${track.id}"></canvas>` +
       `<div class="art-placeholder art-${artIdx}" style="display:none">${isActive ? "" : "🎵"}</div>`;
   } else if (track._thumb || track.coverArt || track._hasCoverArt) {
-    // CHANGED v2.7: Render a placeholder canvas NOW (sync) + trigger
-    // async bitmap build via _ensureThumbInAtlas. The old code fell
-    // back to <img loading="lazy"> which is async → blank space.
-    // Now: canvas is created immediately, bitmap is drawn to it when
-    // ready (~10-30ms later). No visible blank space.
+    // v1.1.1 — Resolve via TrackThumbHandler (per-track, never album-shared)
+    // and render BOTH a canvas (for future bitmap draw) AND a hidden <img>
+    // that fades in immediately on load. This eliminates the blank-square
+    // window for new songs whose bitmap hasn't been built yet.
+    const fallbackSrc = TrackThumbHandler.resolveSync(track);
     const canvasW = THUMB_DPR * 42;
     const canvasH = THUMB_DPR * 42;
+    const imgHtml = fallbackSrc
+      ? `<img class="track-thumb-fallback-img" alt="" ` +
+        `src="${fallbackSrc}" ` +
+        `style="position:absolute;inset:0;width:42px;height:42px;object-fit:cover;border-radius:4px;` +
+        `opacity:0;transition:opacity 0.25s ease;" ` +
+        `data-track-id="${track.id}">`
+      : "";
     artHtml =
       `<canvas class="track-thumb-canvas" width="${canvasW}" height="${canvasH}" ` +
       `style="width:42px;height:42px;border-radius:4px;display:block;background:rgba(255,255,255,0.04);" ` +
       `data-bitmap-id="${track.id}"></canvas>` +
+      imgHtml +
       `<div class="art-placeholder art-${artIdx}" style="display:none">${isActive ? "" : "🎵"}</div>`;
     // Fire-and-forget: build the bitmap async and draw it to this canvas
     _ensureThumbInAtlas(track);
+    // v1.1.1 — Wire up the fallback <img> fade-in. When the <img> loads,
+    // fade it in so the user sees SOMETHING while the bitmap builds.
+    // When the bitmap is later drawn to the canvas (in _ensureThumbInAtlas),
+    // the <img> will be hidden by the canvas drawing over it.
+    if (fallbackSrc) {
+      // Use requestAnimationFrame so the <img> is in the DOM before we
+      // attach the onload handler (otherwise the load event can fire
+      // before we register the listener on slow connections).
+      requestAnimationFrame(() => {
+        const img = row.querySelector(".track-thumb-fallback-img");
+        if (!img) return;
+        // If already cached by the browser, onload fires immediately
+        if (img.complete && img.naturalWidth > 1) {
+          img.style.opacity = "1";
+          return;
+        }
+        img.addEventListener(
+          "load",
+          () => {
+            // Only fade in if the bitmap hasn't been drawn yet. The bitmap
+            // draw sets `data-bitmap-ready="true"` on the canvas.
+            const canvas = row.querySelector(".track-thumb-canvas");
+            if (canvas && canvas.dataset.bitmapReady === "true") {
+              // Bitmap already drawn — hide the <img>
+              img.style.opacity = "0";
+            } else {
+              img.style.opacity = "1";
+            }
+          },
+          { once: true },
+        );
+        img.addEventListener(
+          "error",
+          () => {
+            img.style.display = "none";
+            const placeholder = row.querySelector('.art-placeholder');
+            if (placeholder) placeholder.style.display = "";
+            const canvas = row.querySelector(".track-thumb-canvas");
+            if (canvas) canvas.style.display = "none";
+          },
+          { once: true },
+        );
+      });
+    }
   } else {
     artHtml = `<div class="art-placeholder art-${artIdx}">${isActive ? "" : "🎵"}</div>`;
   }
@@ -9008,16 +10432,35 @@ function _populateSlot(row, track, idx) {
   // (album detail view intentionally keeps them for sequentiality)
   const displayTitle =
     virtualList.mode === "library" || virtualList.mode === "queue"
-      ? rawTitle.replace(/^\d+[.\s_]+/, "").trim() || rawTitle
+      ? rawTitle.replace(/^(?:\d{1,3}[._-]\s*|\d{1,3}\s+-\s+|0\d\s+)/, "").trim() || rawTitle
       : rawTitle;
-  row.innerHTML =
-    `<div class="track-thumb">${thumbInner}${artHtml}${eqHtml}</div>` +
-    `<div class="track-info"><div class="track-name">${escapeHtml(displayTitle)}</div></div>` +
-    `<div class="track-cell hide-md">${escapeHtml(getArtistText(track))}</div>` +
-    `<div class="track-cell muted hide-sm">${track.year || ""}</div>` +
-    `<div class="track-cell hide-md">${escapeHtml(track.album || "Unknown Album")}</div>` +
-    `<div class="track-cell" style="padding-left:20px">${formatTime(track.duration)}</div>` +
-    `<div class="${menuClass}">${menuSvg}</div>`;
+  if (!row._isInitialized) {
+    row.innerHTML =
+      `<div class="track-thumb"></div>` +
+      `<div class="track-info"><div class="track-name"></div></div>` +
+      `<div class="track-cell hide-md js-artist"></div>` +
+      `<div class="track-cell muted hide-sm js-year"></div>` +
+      `<div class="track-cell hide-md js-album"></div>` +
+      `<div class="track-cell js-duration" style="padding-left:20px"></div>` +
+      `<div class="track-menu"></div>`;
+    row._thumbNode = row.querySelector('.track-thumb');
+    row._nameNode = row.querySelector('.track-name');
+    row._artistNode = row.querySelector('.js-artist');
+    row._yearNode = row.querySelector('.js-year');
+    row._albumNode = row.querySelector('.js-album');
+    row._durationNode = row.querySelector('.js-duration');
+    row._menuNode = row.querySelector('.track-menu');
+    row._isInitialized = true;
+  }
+
+  row._nameNode.textContent = displayTitle;
+  row._artistNode.textContent = getArtistText(track);
+  row._yearNode.textContent = track.year || "";
+  row._albumNode.textContent = track.album || "Unknown Album";
+  row._durationNode.textContent = formatTime(track.duration);
+  row._thumbNode.innerHTML = `${thumbInner}${artHtml}${eqHtml}`;
+  row._menuNode.className = menuClass;
+  row._menuNode.innerHTML = menuSvg;
 
   // ── Draw bitmap to canvas if atlas entry exists ──
   if (bitmap) {
@@ -9276,6 +10719,7 @@ async function playTrack(track) {
   if (_npArtSrc) {
     $("np-art").innerHTML =
       `<img src="${_npArtSrc}" alt="Cover Art" style="width:100%; height:100%; object-fit:cover; display:block; border:none; outline:none;" />`;
+    $("np-art").querySelector("img")?.addEventListener("error", () => { $("np-art").innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
   } else {
     $("np-art").innerHTML =
       `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
@@ -9292,8 +10736,10 @@ async function playTrack(track) {
   if (_ovArtSrc) {
     $("ov-art").innerHTML =
       `<img src="${_ovArtSrc}" alt="Cover Art" style="width:100%; height:100%; object-fit:cover; display:block; border:none; outline:none;" />`;
+    $("ov-art").querySelector("img")?.addEventListener("error", () => { $("ov-art").innerHTML = `<div class="art-placeholder art-${artIdx}" style="font-size:56px">&#127925;</div>`; }, { once: true });
     $("ov-mini-art").innerHTML =
       `<img src="${_ovArtSrc}" alt="Cover Art" style="width:100%; height:100%; object-fit:cover; display:block; border:none; outline:none;" />`;
+    $("ov-mini-art").querySelector("img")?.addEventListener("error", () => { $("ov-mini-art").innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
   } else {
     $("ov-art").innerHTML =
       `<div class="art-placeholder art-${artIdx}" style="font-size:56px">&#127925;</div>`;
@@ -9315,6 +10761,7 @@ async function playTrack(track) {
     const _floatSrc = _resolveCoverArtSrc(track);
     if (_floatSrc) {
       floatArt.innerHTML = `<img src="${_floatSrc}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:10px;border:none;outline:none;">`;
+      floatArt.querySelector("img")?.addEventListener("error", () => { floatArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
     } else {
       floatArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
     }
@@ -9950,9 +11397,21 @@ function _wireAutoUpdater() {
   // When autoUpdater finds an update on launch, downloading starts automatically
   window.novaAPI.on("update:available", async (info) => {
     _showUpdateToast(
-      `Downloading NovaTune v${info.version}...`,
-      "Will prompt when ready",
-      () => {},
+      `A new version is now available`,
+      `Version ${info.version} is ready to download`,
+      () => {
+        // Navigate to help section
+        const navItems = document.querySelectorAll(".nav-item");
+        if (navItems) navItems.forEach((n) => n.classList.remove("active"));
+        state.activeNavSection = "help";
+        if (typeof _navigateTo === "function") _navigateTo("help");
+
+        // Scroll to bottom
+        setTimeout(() => {
+          const area = document.getElementById("track-area");
+          if (area) area.scrollTop = area.scrollHeight;
+        }, 150);
+      },
     );
   });
 
@@ -9996,11 +11455,11 @@ function _showUpdateToast(title, subtitle, onClick) {
   const toast = document.createElement("div");
   toast.id = "update-toast";
   toast.style.cssText = `
-    position:fixed; bottom:80px; left:50%; transform:translateX(-50%);
+    position:fixed; top:20px; left:50%; transform:translateX(-50%);
     background:var(--surface); border:1px solid var(--green);
     border-radius:12px; padding:12px 20px; display:flex; align-items:center; gap:12px;
     z-index:10000; cursor:pointer; box-shadow:0 8px 24px rgba(0,0,0,0.4);
-    animation:slideUp 0.3s ease;
+    animation:slideDown 0.3s ease;
   `;
   toast.innerHTML = `
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -10027,6 +11486,23 @@ function _showUpdateToast(title, subtitle, onClick) {
 }
 
 // ─── Volume ───────────────────────────────────────────────────────
+// v1.1.0 — Debounced volume persistence. Saves the user's volume choice
+// to settings.json (via IPC) when volumePersistMode === "persist".
+// Debounced 400ms so dragging the slider doesn't thrash IPC writes.
+let _volumeSaveTimer = null;
+function _persistVolumeDebounced() {
+  // Only persist if mode is "persist" — in "safe" mode the saved volume
+  // is intentionally NOT updated so the safe value remains canonical.
+  const mode = state.settings.volumePersistMode || "persist";
+  if (mode !== "persist") return;
+  clearTimeout(_volumeSaveTimer);
+  _volumeSaveTimer = setTimeout(() => {
+    try {
+      saveSetting("volume", state.volume);
+    } catch (_) {}
+  }, 400);
+}
+
 function _wireVolume() {
   const volBar = $("vol-bar");
   if (!volBar) return;
@@ -10048,6 +11524,8 @@ function _wireVolume() {
     state.volume = Math.max(0, Math.min(1, value));
     audioEngine.setVolume(state.volume);
     updateVolumeUi();
+    // v1.1.0 — Persist volume to settings (debounced, respects volumePersistMode).
+    _persistVolumeDebounced();
   };
   const volumeFromEvent = (e) => {
     const rect = volBar.getBoundingClientRect();

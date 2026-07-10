@@ -196,7 +196,7 @@ function _findOfflineCover(filePath) {
 }
 
 // ─── Main metadata reader (same logic as MetadataReader but for worker) ──
-async function readMetadata(filePath) {
+async function readMetadata(filePath, knownArtists) {
   const attempts = 3;
   const delay = 200;
   let lastError = null;
@@ -278,6 +278,35 @@ async function readMetadata(filePath) {
         metadata.coverArt = _findOfflineCover(filePath);
       }
 
+      // v1.1.6 EXHAUSTIVE SCANNER FIX: If the file has underscores in its
+      // name (YouTube rip) AND music-metadata returned an empty title
+      // (no ID3 tags), run _workerFallbackMetadata to get a nice parsed
+      // title. This is the KEY fix for files like
+      // don_toliver_high_unreleased__yaxBLgIoHuI_140.mp3 where the MP3
+      // stream is valid (duration > 0) but there are no metadata tags.
+      // Previously these files got added with the raw filename as title.
+      {
+        const fileName = path.basename(filePath);
+        const hasUnderscores = /_/.test(fileName || "");
+        const hasYtSuffix = /__(?:[A-Za-z0-9_-]{8,})_\d{2,4}$/.test(fileName || "");
+        const nameNoExt = path.basename(filePath, path.extname(filePath));
+        const hasEmptyTitle =
+          !metadata.title || metadata.title === fileName ||
+          metadata.title === nameNoExt;
+        if ((hasUnderscores || hasYtSuffix) && hasEmptyTitle && typeof _workerFallbackMetadata === "function") {
+          try {
+            const fallback = _workerFallbackMetadata(filePath, knownArtists || new Map());
+            if (fallback && fallback.title) {
+              metadata.title = fallback.title;
+              metadata.artist = fallback.artist;
+              if (!metadata.album || metadata.album === "Unknown Album")
+                metadata.album = fallback.album;
+              if (!metadata.coverArt) metadata.coverArt = fallback.coverArt;
+            }
+          } catch (_) {}
+        }
+      }
+
       return metadata;
     } catch (err) {
       lastError = err;
@@ -348,6 +377,25 @@ async function readMetadata(filePath) {
     }
   } catch (_) {}
 
+  // v1.1.5: Filename-based fallback (mirrors MetadataReader._fallbackMetadata).
+  // This runs INSIDE the worker so we don't have to round-trip back to the
+  // main thread when music-metadata fails. knownArtists is a plain object
+  // (serialized from a Map by metadataWorker.js).
+  if (knownArtists && typeof knownArtists === "object") {
+    // Rehydrate as a Map for the fallback parser
+    const knownArtistsMap = new Map(Object.entries(knownArtists));
+    try {
+      const fallback = _workerFallbackMetadata(filePath, knownArtistsMap);
+      if (fallback) return fallback;
+    } catch (_) {}
+  } else {
+    // No knownArtists — still try the fallback with an empty Map
+    try {
+      const fallback = _workerFallbackMetadata(filePath, new Map());
+      if (fallback) return fallback;
+    } catch (_) {}
+  }
+
   throw lastError || new Error("Failed to read metadata");
 }
 
@@ -403,6 +451,122 @@ async function readQuickInfo(filePath) {
   }
 }
 
+
+// ─── v1.1.5: Filename-based fallback for the worker thread ────────
+// Mirrors MetadataReader._fallbackMetadata in metadataReader.js.
+// Runs INSIDE the worker so we don't round-trip to main on failure.
+function _workerFallbackMetadata(filePath, knownArtists) {
+  const nameWithoutExt = path.basename(filePath, path.extname(filePath));
+
+  // 1. Strip YouTube-rip suffix: __<id>_<itag>
+  let cleanedName = nameWithoutExt;
+  const ytSuffixMatch = nameWithoutExt.match(/__(?:[A-Za-z0-9_-]{8,})_(\d{2,4})$/);
+  let ytItag = 0;
+  if (ytSuffixMatch) {
+    ytItag = parseInt(ytSuffixMatch[1], 10) || 0;
+    cleanedName = nameWithoutExt.slice(0, nameWithoutExt.length - ytSuffixMatch[0].length);
+    cleanedName = cleanedName.replace(/_+$/, "").replace(/^_+/, "");
+  }
+
+  // 2. Parse "Artist - Title" or underscore-separated
+  let title = cleanedName;
+  let artist = "Unknown Artist";
+  const dashIndex = cleanedName.indexOf(" - ");
+  if (dashIndex > 0 && dashIndex < cleanedName.length - 3) {
+    artist = cleanedName.substring(0, dashIndex).trim();
+    title = cleanedName.substring(dashIndex + 3).trim();
+  } else if (/[_]/.test(cleanedName)) {
+    const tokens = cleanedName.split(/[_]+/).map((t) => t.trim()).filter(Boolean);
+    let matchedArtist = null;
+    let artistTokenCount = 0;
+    if (knownArtists && knownArtists.size > 0 && tokens.length >= 2) {
+      for (let n = Math.min(3, tokens.length - 1); n >= 1; n--) {
+        const prefix = tokens.slice(0, n).join(" ").toLowerCase();
+        if (knownArtists.has(prefix)) {
+          matchedArtist = knownArtists.get(prefix);
+          artistTokenCount = n;
+          break;
+        }
+      }
+    }
+    if (matchedArtist && artistTokenCount > 0) {
+      artist = matchedArtist;
+      const titleTokens = tokens.slice(artistTokenCount);
+      const titleStr = titleTokens.join(" ");
+      const titleCased = titleStr.replace(/\b\w/g, (c) => c.toUpperCase());
+      title = titleCased
+        .replace(/\bUnreleased\b/g, "(Unreleased)")
+        .replace(/\bOfficial\s+(Video|Visualizer|Audio)\b/g, "(Official $1)")
+        .replace(/\bOfficial\b/g, "(Official)")
+        .replace(/\bLyrics\b/g, "(Lyrics)")
+        .replace(/\s+/g, " ")
+        .trim();
+    } else {
+      const spaced = cleanedName.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+      const titleCased = spaced.replace(/\b\w/g, (c) => c.toUpperCase());
+      title = titleCased
+        .replace(/\bUnreleased\b/g, "(Unreleased)")
+        .replace(/\bOfficial\s+(Video|Visualizer|Audio)\b/g, "(Official $1)")
+        .replace(/\bOfficial\b/g, "(Official)")
+        .replace(/\bLyrics\b/g, "(Lyrics)")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+  }
+
+  title = title.replace(/^\d+[._\s]+/, "").trim() || title;
+  title = title.replace(/\s+/g, " ").trim();
+  artist = artist.replace(/\s+/g, " ").trim() || "Unknown Artist";
+
+  // 3. Estimate duration from file size
+  const ext = path.extname(filePath).replace(".", "").toUpperCase();
+  let fileSize = 0;
+  try {
+    fileSize = fs.statSync(filePath).size;
+  } catch (_) {}
+
+  let duration = 0;
+  let bitrate = 0;
+  if (fileSize > 0) {
+    const extLower = path.extname(filePath).toLowerCase();
+    let assumedKbps = 128;
+    if (ytItag > 0) {
+      const itagBitrate = {
+        140: 128, 139: 48, 171: 128, 249: 50, 250: 70, 251: 160,
+        18: 96, 22: 192,
+      };
+      if (itagBitrate[ytItag]) assumedKbps = itagBitrate[ytItag];
+    } else if (extLower === ".m4a") assumedKbps = 256;
+    else if (extLower === ".opus") assumedKbps = 96;
+    else if (extLower === ".ogg") assumedKbps = 112;
+    else if (extLower === ".flac") assumedKbps = 900;
+    else if (extLower === ".wav") assumedKbps = 1411;
+    if (assumedKbps > 0) {
+      const estimated = Math.floor((fileSize * 8) / (assumedKbps * 1000));
+      duration = Math.min(3600, Math.max(1, estimated));
+      bitrate = assumedKbps;
+    }
+  }
+
+  return {
+    title,
+    artist,
+    album: "Unknown Album",
+    albumArtist: "",
+    genre: "",
+    year: 0,
+    trackNumber: 0,
+    discNumber: 0,
+    duration,
+    bitrate,
+    sampleRate: 0,
+    channels: 0,
+    format: ext,
+    coverArt: _findOfflineCover(filePath),
+    fileSize,
+  };
+}
+
 // ─── Message handler ─────────────────────────────────────────────
 const { parentPort } = require("worker_threads");
 
@@ -412,11 +576,13 @@ parentPort.on("message", async (msg) => {
     return;
   }
 
-  const { type, filePath, taskId } = msg;
+  const { type, filePath, taskId, knownArtists } = msg;
   try {
     let result;
     if (type === "readMetadata") {
-      result = await readMetadata(filePath);
+      // v1.1.5: knownArtists is a plain object (serialized from a Map).
+      // readMetadata will rehydrate it.
+      result = await readMetadata(filePath, knownArtists);
     } else if (type === "readQuickInfo") {
       result = await readQuickInfo(filePath);
     } else {

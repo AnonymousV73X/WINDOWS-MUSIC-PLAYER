@@ -970,9 +970,13 @@ var require_metadataReader = __commonJS({
        * Read metadata from an audio file.
        * Falls back to basic filename-based metadata if music-metadata is unavailable.
        * @param {string} filePath - Absolute path to the audio file
+       * @param {Map<string, string>} [knownArtists] - Optional Map of lowercased
+       *   artist names → original-cased names from the existing library. Used by
+       *   _fallbackMetadata to split artist from title for underscored YouTube-rip
+       *   filenames. v1.1.5: forwarded to all _fallbackMetadata call sites.
        * @returns {Promise<Object>} Parsed metadata object
        */
-      async readMetadata(filePath) {
+      async readMetadata(filePath, knownArtists) {
         const attempts = 3;
         const delay = 200;
         let lastError = null;
@@ -1106,7 +1110,7 @@ var require_metadataReader = __commonJS({
               `[metadataReader] Binary Vorbis read succeeded for ${path.basename(filePath)}: "${tags.title}" / "${tags.artist}" / "${tags.album}"`
             );
             const nameNoExt = path.basename(filePath, ".flac");
-            const fallbackTags = this._fallbackMetadata(filePath);
+            const fallbackTags = this._fallbackMetadata(filePath, knownArtists);
             return {
               title: tags.title || fallbackTags.title || nameNoExt,
               artist: tags.artist || fallbackTags.artist || "Unknown Artist",
@@ -1128,7 +1132,7 @@ var require_metadataReader = __commonJS({
         console.warn(
           `[metadataReader] All attempts failed for ${path.basename(filePath)}. Falling back to filename metadata.`
         );
-        return this._fallbackMetadata(filePath);
+        return this._fallbackMetadata(filePath, knownArtists);
       }
       /**
        * Get lightweight metadata (duration + format only) — much faster.
@@ -1246,23 +1250,116 @@ var require_metadataReader = __commonJS({
       // ─── Utility Helpers ─────────────────────────────────────────────
       /**
        * Generate fallback metadata from the filename when music-metadata fails.
+       *
+       * v1.1.0 — EXHAUSTIVE SCANNER FIX:
+       *   1. Parse underscore-separated YouTube-rip filenames such as
+       *      `don_toliver_high_unreleased__yaxBLgIoHuI_140.mp3`
+       *      → artist "Don Toliver", title "High (Unreleased)".
+       *      The `__<11-char-youtube-id>_<3-digit-itag>` suffix is stripped,
+       *      then the remaining `_`-separated tokens are split into artist
+       *      (first 1–2 lowercase-word tokens) and title (rest).
+       *   2. Estimate duration from file size when music-metadata returned 0
+       *      (common for YouTube rips with corrupt headers). Without this,
+       *      ipc.js's `library:scan` rejects the track as "0:00" and adds
+       *      the file to `_failedFiles`, permanently skipping it.
+       *      Estimation: duration = fileSizeBytes * 8 / assumedBitrate.
+       *      Bitrate is chosen by file extension (128 kbps for AAC/MP3,
+       *      256 for M4A, 96 for Opus, etc.). Capped at 1 hour to avoid
+       *      absurd estimates from oversized files.
+       *
+       * v1.1.3: Added optional `knownArtists` parameter — a Set of lowercased
+       * artist names from the existing library. When parsing underscored
+       * YouTube-rip filenames, we try to match the leading tokens against
+       * this set so we can split artist from title correctly.
+       *   e.g. "don_toliver_high_unreleased" + knownArtists={"don toliver"}
+       *        → artist="Don Toliver", title="High (Unreleased)"
+       *
        * @private
        */
-      async _fallbackMetadata(filePath) {
+      async _fallbackMetadata(filePath, knownArtists) {
         const nameWithoutExt = path.basename(filePath, path.extname(filePath));
-        let title = nameWithoutExt;
+        let cleanedName = nameWithoutExt;
+        const ytSuffixMatch = nameWithoutExt.match(
+          /__(?:[A-Za-z0-9_-]{8,})_(\d{2,4})$/
+        );
+        let ytItag = 0;
+        if (ytSuffixMatch) {
+          ytItag = parseInt(ytSuffixMatch[1], 10) || 0;
+          cleanedName = nameWithoutExt.slice(0, nameWithoutExt.length - ytSuffixMatch[0].length);
+          cleanedName = cleanedName.replace(/_+$/, "").replace(/^_+/, "");
+        }
+        let title = cleanedName;
         let artist = "Unknown Artist";
-        const dashIndex = nameWithoutExt.indexOf(" - ");
-        if (dashIndex > 0 && dashIndex < nameWithoutExt.length - 3) {
-          artist = nameWithoutExt.substring(0, dashIndex).trim();
-          title = nameWithoutExt.substring(dashIndex + 3).trim();
+        const dashIndex = cleanedName.indexOf(" - ");
+        if (dashIndex > 0 && dashIndex < cleanedName.length - 3) {
+          artist = cleanedName.substring(0, dashIndex).trim();
+          title = cleanedName.substring(dashIndex + 3).trim();
+        } else if (/[_]/.test(cleanedName)) {
+          const tokens = cleanedName.split(/[_]+/).map((t) => t.trim()).filter(Boolean);
+          let matchedArtist = null;
+          let artistTokenCount = 0;
+          if (knownArtists && knownArtists.size > 0 && tokens.length >= 2) {
+            for (let n = Math.min(3, tokens.length - 1); n >= 1; n--) {
+              const prefix = tokens.slice(0, n).join(" ").toLowerCase();
+              if (knownArtists.has(prefix)) {
+                matchedArtist = knownArtists.get(prefix);
+                artistTokenCount = n;
+                break;
+              }
+            }
+          }
+          if (matchedArtist && artistTokenCount > 0) {
+            artist = matchedArtist;
+            const titleTokens = tokens.slice(artistTokenCount);
+            const titleStr = titleTokens.join(" ");
+            const titleCased = titleStr.replace(/\b\w/g, (c) => c.toUpperCase());
+            title = titleCased.replace(/\bUnreleased\b/g, "(Unreleased)").replace(/\bOfficial\s+(Video|Visualizer|Audio)\b/g, "(Official $1)").replace(/\bOfficial\b/g, "(Official)").replace(/\bLyrics\b/g, "(Lyrics)").replace(/\s+/g, " ").trim();
+          } else {
+            const spaced = cleanedName.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+            const titleCased = spaced.replace(/\b\w/g, (c) => c.toUpperCase());
+            title = titleCased.replace(/\bUnreleased\b/g, "(Unreleased)").replace(/\bOfficial\s+(Video|Visualizer|Audio)\b/g, "(Official $1)").replace(/\bOfficial\b/g, "(Official)").replace(/\bLyrics\b/g, "(Lyrics)").replace(/\s+/g, " ").trim();
+          }
         }
         title = title.replace(/^\d+[._\s]+/, "").trim() || title;
+        title = title.replace(/\s+/g, " ").trim();
+        artist = artist.replace(/\s+/g, " ").trim() || "Unknown Artist";
         const ext = path.extname(filePath).replace(".", "").toUpperCase();
         let fileSize = 0;
         try {
           fileSize = (await fs.promises.stat(filePath)).size;
         } catch {
+        }
+        let duration = 0;
+        let bitrate = 0;
+        if (fileSize > 0) {
+          const extLower = path.extname(filePath).toLowerCase();
+          let assumedKbps = 128;
+          if (ytItag > 0) {
+            const itagBitrate = {
+              140: 128,
+              139: 48,
+              171: 128,
+              249: 50,
+              250: 70,
+              251: 160,
+              18: 96,
+              22: 192,
+              137: 0,
+              136: 0,
+              135: 0
+              // 13x = video-only, no audio
+            };
+            if (itagBitrate[ytItag]) assumedKbps = itagBitrate[ytItag];
+          } else if (extLower === ".m4a") assumedKbps = 256;
+          else if (extLower === ".opus") assumedKbps = 96;
+          else if (extLower === ".ogg") assumedKbps = 112;
+          else if (extLower === ".flac") assumedKbps = 900;
+          else if (extLower === ".wav") assumedKbps = 1411;
+          if (assumedKbps > 0) {
+            const estimated = Math.floor(fileSize * 8 / (assumedKbps * 1e3));
+            duration = Math.min(3600, Math.max(1, estimated));
+            bitrate = assumedKbps;
+          }
         }
         return {
           title,
@@ -1273,8 +1370,8 @@ var require_metadataReader = __commonJS({
           year: 0,
           trackNumber: 0,
           discNumber: 0,
-          duration: 0,
-          bitrate: 0,
+          duration,
+          bitrate,
           sampleRate: 0,
           channels: 0,
           format: ext,
@@ -1558,14 +1655,30 @@ var require_metadataWorker = __commonJS({
       /**
        * Read full metadata from a file in the worker thread.
        * @param {string} filePath
+       * @param {Map<string, string>} [knownArtists] - v1.1.5: Optional Map of
+       *   lowercased artist names -> original-cased names. Serialized as a plain
+       *   object for postMessage (Maps don't survive structured clone reliably),
+       *   then rehydrated as a Map in the worker thread.
        * @returns {Promise<Object>}
        */
-      readMetadata(filePath) {
+      readMetadata(filePath, knownArtists) {
         this._ensureWorker();
         const taskId = ++this._taskId;
+        let knownArtistsObj = null;
+        if (knownArtists && knownArtists.size > 0) {
+          knownArtistsObj = {};
+          for (const [k, v] of knownArtists) {
+            knownArtistsObj[k] = v;
+          }
+        }
         return new Promise((resolve, reject) => {
           this._pending.set(taskId, { resolve, reject });
-          this._worker.postMessage({ type: "readMetadata", filePath, taskId });
+          this._worker.postMessage({
+            type: "readMetadata",
+            filePath,
+            taskId,
+            knownArtists: knownArtistsObj
+          });
         });
       }
       /**
@@ -2516,7 +2629,7 @@ var require_package = __commonJS({
   "package.json"(exports2, module2) {
     module2.exports = {
       name: "novatune",
-      version: "1.0.9",
+      version: "1.1.0",
       description: "NovaTune \u2014 A premium Windows music player with Spotify-dark aesthetics",
       main: "main/main.bundle.js",
       scripts: {
@@ -2615,6 +2728,12 @@ var require_ipc = __commonJS({
       theme: "dark",
       accentColor: "#1DB954",
       volume: 0.5,
+      // v1.1.0 — Volume persistence mode:
+      //   "persist" → restore last-saved volume on launch (default; user explicit choice)
+      //   "safe"    → revert to safeVolume on every launch (prevents loud restarts)
+      volumePersistMode: "persist",
+      // v1.1.0 — Safe volume used on launch when mode === "safe"
+      safeVolume: 0.5,
       crossfadeDuration: 0,
       equalizer: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
       repeatMode: "off",
@@ -2624,6 +2743,11 @@ var require_ipc = __commonJS({
       scanFolders: [],
       sortOrder: "title",
       sortDirection: "asc",
+      // v1.1.7 — Card sort settings for Albums / Artists / Playlists views.
+      // Options: "songCountDesc" (most songs first), "songCountAsc" (fewest first),
+      //          "alphaAsc" (A→Z), "alphaDesc" (Z→A),
+      //          "dateAddedDesc" (newest first), "dateAddedAsc" (oldest first)
+      cardSortMode: "alphaAsc",
       miniPlayer: false,
       alwaysOnTop: false,
       hardwareAcceleration: true,
@@ -2643,10 +2767,10 @@ var require_ipc = __commonJS({
     filePath TEXT UNIQUE,
     data TEXT NOT NULL
   );
-  CREATE INDEX IF NOT EXISTS idx_tracks_title ON tracks(title COLLATE NOCASE);
-  CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist COLLATE NOCASE);
-  CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album COLLATE NOCASE);
-  CREATE INDEX IF NOT EXISTS idx_tracks_date_added ON tracks(dateAdded DESC);
+  CREATE INDEX IF NOT EXISTS idx_tracks_title_v2 ON tracks(title COLLATE NOCASE);
+  CREATE INDEX IF NOT EXISTS idx_tracks_artist_v2 ON tracks(artist COLLATE NOCASE, title COLLATE NOCASE);
+  CREATE INDEX IF NOT EXISTS idx_tracks_album_v2 ON tracks(album COLLATE NOCASE, title COLLATE NOCASE);
+  CREATE INDEX IF NOT EXISTS idx_tracks_date_added_v2 ON tracks(dateAdded DESC, title COLLATE NOCASE);
   CREATE TABLE IF NOT EXISTS playlists (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -2701,11 +2825,30 @@ var require_ipc = __commonJS({
       ".wv",
       ".mpc"
     ]);
-    var _FP_MAX_CONCURRENT_DIRS = 4;
+    var _FP_MAX_CONCURRENT_DIRS = 8;
+    var _FP_STAT_BATCH_SIZE = 16;
+    var _FP_CACHE_TTL_MS = 60 * 1e3;
+    var _fpCache = /* @__PURE__ */ new Map();
     async function _computeFolderFingerprint(folderPaths) {
+      const cacheKey = folderPaths.slice().sort().join("|");
+      const cached = _fpCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < _FP_CACHE_TTL_MS) {
+        return cached.fp;
+      }
       let fileCount = 0;
       let newestMtime = 0;
+      const dirMtimes = /* @__PURE__ */ new Map();
+      const prevDirMtimes = cached?.dirMtimes instanceof Map ? cached.dirMtimes : /* @__PURE__ */ new Map();
+      const prevDirStats = cached?.dirStats instanceof Map ? cached.dirStats : /* @__PURE__ */ new Map();
       async function walk(dir) {
+        let dirStat;
+        try {
+          dirStat = await fs.promises.stat(dir);
+        } catch (_) {
+          return;
+        }
+        const dirMtime = dirStat.mtimeMs;
+        dirMtimes.set(dir, dirMtime);
         let entries;
         try {
           entries = await fs.promises.readdir(dir, { withFileTypes: true });
@@ -2722,17 +2865,35 @@ var require_ipc = __commonJS({
             files.push(full);
           }
         }
-        if (files.length > 0) {
-          const stats = await Promise.allSettled(
-            files.map((f) => fs.promises.stat(f))
-          );
-          for (const result of stats) {
-            if (result.status === "fulfilled") {
-              fileCount++;
-              if (result.value.mtimeMs > newestMtime)
-                newestMtime = result.value.mtimeMs;
+        const prevMtime = prevDirMtimes.get(dir);
+        const prevStats = prevDirStats.get(dir);
+        if (prevMtime === dirMtime && prevStats && prevStats.fileCount === files.length) {
+          fileCount += prevStats.fileCount;
+          if (prevStats.maxMtime > newestMtime) {
+            newestMtime = prevStats.maxMtime;
+          }
+        } else if (files.length > 0) {
+          let dirMaxMtime = 0;
+          let dirFileCount = 0;
+          for (let i = 0; i < files.length; i += _FP_STAT_BATCH_SIZE) {
+            const batch = files.slice(i, i + _FP_STAT_BATCH_SIZE);
+            const stats = await Promise.allSettled(
+              batch.map((f) => fs.promises.stat(f))
+            );
+            for (const result of stats) {
+              if (result.status === "fulfilled") {
+                dirFileCount++;
+                if (result.value.mtimeMs > dirMaxMtime) {
+                  dirMaxMtime = result.value.mtimeMs;
+                }
+                if (result.value.mtimeMs > newestMtime) {
+                  newestMtime = result.value.mtimeMs;
+                }
+              }
             }
           }
+          fileCount += dirFileCount;
+          prevDirStats.set(dir, { fileCount: dirFileCount, maxMtime: dirMaxMtime });
         }
         for (let i = 0; i < dirs.length; i += _FP_MAX_CONCURRENT_DIRS) {
           const batch = dirs.slice(i, i + _FP_MAX_CONCURRENT_DIRS);
@@ -2746,7 +2907,58 @@ var require_ipc = __commonJS({
         } catch (_) {
         }
       }
-      return `${fileCount}:${Math.floor(newestMtime)}`;
+      const fp = `${fileCount}:${Math.floor(newestMtime)}`;
+      _fpCache.set(cacheKey, {
+        fp,
+        timestamp: Date.now(),
+        dirMtimes,
+        dirStats: prevDirStats
+      });
+      return fp;
+    }
+    function _maybeResetFailedFilesAtStartup() {
+      try {
+        const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+        let needsReset = false;
+        let resetReason = "";
+        if (!settings._failedFilesResetV115) {
+          needsReset = true;
+          resetReason = "v1.1.5 one-time reset";
+        }
+        if (!needsReset && (!settings._failedFilesLastRetry || Date.now() - settings._failedFilesLastRetry > 30 * 24 * 60 * 60 * 1e3)) {
+          needsReset = true;
+          resetReason = "30-day periodic re-check";
+        }
+        if (needsReset) {
+          settings._failedFiles = {};
+          settings._failedFilesResetV115 = true;
+          settings._failedFilesLastRetry = Date.now();
+          writeJSON(SETTINGS_FILE, settings);
+          console.log(
+            `[startup-reset] Cleared _failedFiles cache (${resetReason})`
+          );
+        }
+        if (db) {
+          try {
+            const result = db.prepare("DELETE FROM tracks WHERE duration <= 0").run();
+            if (result.changes > 0) {
+              console.log(
+                `[startup-reset] Deleted ${result.changes} tracks with duration <= 0 from SQLite (will be re-scanned with estimator)`
+              );
+              libraryCache = null;
+              _libraryJsonCache = null;
+              libraryById = null;
+            }
+          } catch (err) {
+            console.warn(
+              "[startup-reset] Failed to clean up 0-duration tracks:",
+              err.message
+            );
+          }
+        }
+      } catch (err) {
+        console.warn("[startup-reset] Failed:", err.message);
+      }
     }
     function migrateJsonToDb() {
       const trackCount = db.prepare("SELECT COUNT(*) AS count FROM tracks").get().count;
@@ -2981,6 +3193,54 @@ var require_ipc = __commonJS({
     function generateTrackId(filePath) {
       return crypto.createHash("sha256").update(filePath).digest("hex").substring(0, 16);
     }
+    function _estimateDurationFromFileSize(filePath, knownSize) {
+      try {
+        let fileSize = knownSize;
+        if (!fileSize || fileSize <= 0) {
+          const stat = fs.statSync(filePath);
+          fileSize = stat.size;
+        }
+        if (!fileSize || fileSize <= 0) return 0;
+        const ext = path.extname(filePath).toLowerCase();
+        const basename = path.basename(filePath, ext);
+        const ytMatch = basename.match(/__(?:[A-Za-z0-9_-]{8,})_(\d{2,4})$/);
+        let assumedKbps = 0;
+        if (ytMatch) {
+          const itag = parseInt(ytMatch[1], 10) || 0;
+          const itagBitrate = {
+            140: 128,
+            139: 48,
+            171: 128,
+            249: 50,
+            250: 70,
+            251: 160,
+            18: 96
+          };
+          assumedKbps = itagBitrate[itag] || 128;
+        } else {
+          const extBitrate = {
+            ".mp3": 192,
+            ".aac": 128,
+            ".m4a": 256,
+            ".opus": 96,
+            ".ogg": 112,
+            ".flac": 900,
+            ".wav": 1411,
+            ".wma": 128,
+            ".ape": 700,
+            ".wv": 700,
+            ".tta": 1411,
+            ".mpc": 192
+          };
+          assumedKbps = extBitrate[ext] || 128;
+        }
+        if (assumedKbps <= 0) return 0;
+        const estimated = Math.floor(fileSize * 8 / (assumedKbps * 1e3));
+        return Math.min(3600, Math.max(1, estimated));
+      } catch (_) {
+        return 0;
+      }
+    }
     function _invalidateCollageFile(playlistId) {
       try {
         const collageDir = path.join(
@@ -3039,9 +3299,14 @@ var require_ipc = __commonJS({
       db.pragma("cache_size = -20000");
       db.pragma("temp_store = MEMORY");
       db.pragma("mmap_size = 268435456");
+      db.exec("DROP INDEX IF EXISTS idx_tracks_title;");
+      db.exec("DROP INDEX IF EXISTS idx_tracks_artist;");
+      db.exec("DROP INDEX IF EXISTS idx_tracks_album;");
+      db.exec("DROP INDEX IF EXISTS idx_tracks_date_added;");
       db.exec(DB_SCHEMA);
       migrateJsonToDb();
       migrateDbCovers();
+      _maybeResetFailedFilesAtStartup();
       let manifestEnabled = true;
       if (process.env.NOVATUNE_USE_MANIFEST === "0" || process.env.NOVATUNE_USE_MANIFEST === "false") {
         manifestEnabled = false;
@@ -3187,6 +3452,46 @@ var require_ipc = __commonJS({
             workerPool = [];
           }
           const scanSettings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+          if (!scanSettings._failedFilesResetV110) {
+            scanSettings._failedFiles = {};
+            scanSettings._failedFilesResetV110 = true;
+            writeJSON(SETTINGS_FILE, scanSettings);
+            console.log(
+              "[library:scan] v1.1.0 reset: cleared _failedFiles cache (one-time migration)"
+            );
+          }
+          if (!scanSettings._failedFilesResetV113) {
+            scanSettings._failedFiles = {};
+            scanSettings._failedFilesResetV113 = true;
+            writeJSON(SETTINGS_FILE, scanSettings);
+            console.log(
+              "[library:scan] v1.1.3 reset: cleared _failedFiles cache for underscored-file re-scan"
+            );
+          }
+          if (!scanSettings._failedFilesResetV115) {
+            scanSettings._failedFiles = {};
+            scanSettings._failedFilesResetV115 = true;
+            scanSettings._failedFilesLastRetry = Date.now();
+            writeJSON(SETTINGS_FILE, scanSettings);
+            console.log(
+              "[library:scan] v1.1.5 reset: cleared _failedFiles cache for exhaustive re-scan"
+            );
+          }
+          if (!scanSettings._v116UnderscoreRescan) {
+            scanSettings._v116UnderscoreRescan = true;
+            writeJSON(SETTINGS_FILE, scanSettings);
+            console.log(
+              "[library:scan] v1.1.6: forcing re-scan of underscored files to fix raw-filename titles"
+            );
+          }
+          if (!scanSettings._failedFilesLastRetry || Date.now() - scanSettings._failedFilesLastRetry > 30 * 24 * 60 * 60 * 1e3) {
+            scanSettings._failedFiles = {};
+            scanSettings._failedFilesLastRetry = Date.now();
+            writeJSON(SETTINGS_FILE, scanSettings);
+            console.log(
+              "[library:scan] v1.1.5 periodic re-check: cleared _failedFiles cache (30-day cycle)"
+            );
+          }
           const failedFiles = scanSettings._failedFiles && typeof scanSettings._failedFiles === "object" ? scanSettings._failedFiles : {};
           const newlyFailedFiles = {};
           const toScan = [];
@@ -3196,14 +3501,28 @@ var require_ipc = __commonJS({
             const failedMtime = failedFiles[file.filePath];
             const isPreviouslyFailed = failedMtime !== void 0 && failedMtime === file.modifiedTime;
             if (isPreviouslyFailed) {
+              const hasUnderscores2 = /_/.test(file.fileName || "");
+              if (hasUnderscores2) {
+                toScan.push({ file, globalIdx: i });
+                continue;
+              }
               skippedCount++;
               continue;
             }
-            if (existing && existing.dateModified === file.modifiedTime) {
+            const hasUnderscores = /_/.test(file.fileName || "");
+            const nameNoExt = path.basename(file.fileName, path.extname(file.fileName));
+            const needsV113Rescan = hasUnderscores && existing && existing.dateModified === file.modifiedTime && (!existing.artist || existing.artist === "Unknown Artist");
+            const needsV116Rescan = hasUnderscores && existing && existing.dateModified === file.modifiedTime && (!existing.title || existing.title === file.fileName || existing.title === nameNoExt);
+            const needsV117Rescan = hasUnderscores && existing && existing.dateModified === file.modifiedTime;
+            if (needsV113Rescan || needsV116Rescan || needsV117Rescan) {
+              toScan.push({ file, globalIdx: i });
+            } else if (existing && existing.dateModified === file.modifiedTime) {
               if (existing.duration > 0) {
                 tracks.push(existing);
+                skippedCount++;
+              } else {
+                toScan.push({ file, globalIdx: i });
               }
-              skippedCount++;
             } else {
               toScan.push({ file, globalIdx: i });
             }
@@ -3220,6 +3539,32 @@ var require_ipc = __commonJS({
           }
           let doneCount = skippedCount;
           const CHUNK = useWorker ? WORKER_POOL_SIZE : 1;
+          const knownArtists = /* @__PURE__ */ new Map();
+          try {
+            const existingLib = getLibrary();
+            for (const t of existingLib) {
+              const artistText = (t.artist || "").trim();
+              if (artistText && artistText !== "Unknown Artist") {
+                const individuals = artistText.split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*/i).map((a) => a.trim()).filter(Boolean);
+                for (const a of individuals) {
+                  const lower = a.toLowerCase();
+                  if (!knownArtists.has(lower)) {
+                    knownArtists.set(lower, a);
+                  }
+                }
+                if (t.albumArtist) {
+                  const aa = t.albumArtist.trim();
+                  if (aa && aa !== "Unknown Artist") {
+                    const aaLower = aa.toLowerCase();
+                    if (!knownArtists.has(aaLower)) {
+                      knownArtists.set(aaLower, aa);
+                    }
+                  }
+                }
+              }
+            }
+          } catch (_) {
+          }
           for (let ci = 0; ci < toScan.length; ci += CHUNK) {
             const chunk = toScan.slice(ci, ci + CHUNK);
             const chunkResults = await Promise.allSettled(
@@ -3228,12 +3573,12 @@ var require_ipc = __commonJS({
                 if (useWorker && workerPool.length > 0) {
                   const worker = workerPool[wi % workerPool.length];
                   try {
-                    metadata = await worker.readMetadata(file.filePath);
+                    metadata = await worker.readMetadata(file.filePath, knownArtists);
                   } catch (_) {
-                    metadata = await metadataReader.readMetadata(file.filePath);
+                    metadata = await metadataReader.readMetadata(file.filePath, knownArtists);
                   }
                 } else {
-                  metadata = await metadataReader.readMetadata(file.filePath);
+                  metadata = await metadataReader.readMetadata(file.filePath, knownArtists);
                 }
                 return { file, metadata };
               })
@@ -3261,11 +3606,69 @@ var require_ipc = __commonJS({
                   }
                 }
                 if (metadata.duration <= 0) {
+                  const estimatedDuration = _estimateDurationFromFileSize(
+                    file.filePath,
+                    file.fileSize
+                  );
+                  if (estimatedDuration > 0) {
+                    console.log(
+                      `[library:scan] Estimated duration ${estimatedDuration}s from file size for: ${file.filePath}`
+                    );
+                    const fallback = await metadataReader._fallbackMetadata(
+                      file.filePath,
+                      knownArtists
+                    );
+                    metadata.duration = estimatedDuration;
+                    if (!metadata.bitrate)
+                      metadata.bitrate = fallback.bitrate || 0;
+                    const hasUnderscores = /_/.test(file.fileName || "");
+                    const hasYtSuffix = /__(?:[A-Za-z0-9_-]{8,})_\d{2,4}$/.test(
+                      file.fileName || ""
+                    );
+                    if (hasUnderscores || hasYtSuffix) {
+                      metadata.title = fallback.title;
+                      metadata.artist = fallback.artist;
+                      if (!metadata.album || metadata.album === "Unknown Album")
+                        metadata.album = fallback.album;
+                    } else {
+                      if (!metadata.title) metadata.title = fallback.title;
+                      if (!metadata.artist || metadata.artist === "Unknown Artist")
+                        metadata.artist = fallback.artist;
+                      if (!metadata.album || metadata.album === "Unknown Album")
+                        metadata.album = fallback.album;
+                    }
+                    if (!metadata.coverArt) metadata.coverArt = fallback.coverArt;
+                  }
+                }
+                if (metadata.duration <= 0) {
                   console.log(
-                    `[library:scan] Skipping 0:00 track: ${file.filePath}`
+                    `[library:scan] Skipping 0:00 track (size estimate also failed): ${file.filePath}`
                   );
                   newlyFailedFiles[file.filePath] = file.modifiedTime;
                 } else {
+                  const hasUnderscores = /_/.test(file.fileName || "");
+                  const hasYtSuffix = /__(?:[A-Za-z0-9_-]{8,})_\d{2,4}$/.test(
+                    file.fileName || ""
+                  );
+                  if (hasUnderscores || hasYtSuffix) {
+                    try {
+                      const fallback = await metadataReader._fallbackMetadata(
+                        file.filePath,
+                        knownArtists
+                      );
+                      if (fallback.title) {
+                        metadata.title = fallback.title;
+                        metadata.artist = fallback.artist;
+                        if (!metadata.album || metadata.album === "Unknown Album")
+                          metadata.album = fallback.album;
+                        if (!metadata.coverArt) metadata.coverArt = fallback.coverArt;
+                        console.log(
+                          `[library:scan] Underscored file parsed: "${file.fileName}" \u2192 artist="${fallback.artist}", title="${fallback.title}"`
+                        );
+                      }
+                    } catch (_) {
+                    }
+                  }
                   tracks.push({
                     id: generateTrackId(file.filePath),
                     filePath: file.filePath,
@@ -3333,12 +3736,86 @@ var require_ipc = __commonJS({
                       dateModified: file.modifiedTime || Date.now()
                     });
                   } else {
+                    const estimatedDuration = _estimateDurationFromFileSize(
+                      file.filePath,
+                      file.fileSize
+                    );
+                    if (estimatedDuration > 0) {
+                      const fallback = await metadataReader._fallbackMetadata(
+                        file.filePath,
+                        knownArtists
+                      );
+                      console.log(
+                        `[library:scan] Rejected-promise fallback: estimated ${estimatedDuration}s for ${file.filePath}`
+                      );
+                      tracks.push({
+                        id: generateTrackId(file.filePath),
+                        filePath: file.filePath,
+                        fileName: file.fileName,
+                        title: fallback.title,
+                        artist: fallback.artist,
+                        album: fallback.album,
+                        albumArtist: "",
+                        genre: "",
+                        year: 0,
+                        trackNumber: 0,
+                        discNumber: 0,
+                        duration: estimatedDuration,
+                        bitrate: fallback.bitrate || 0,
+                        sampleRate: 0,
+                        channels: 2,
+                        format: path.extname(file.fileName).replace(".", "").toUpperCase(),
+                        fileSize: file.fileSize || 0,
+                        coverArt: fallback.coverArt || null,
+                        _hasCoverArt: !!fallback.coverArt,
+                        dateAdded: file.birthTime || file.modifiedTime || Date.now(),
+                        dateModified: file.modifiedTime || Date.now()
+                      });
+                    } else {
+                      failedCount++;
+                      newlyFailedFiles[file.filePath] = file.modifiedTime;
+                    }
+                  }
+                } catch (_) {
+                  const estimatedDuration = _estimateDurationFromFileSize(
+                    file.filePath,
+                    file.fileSize
+                  );
+                  if (estimatedDuration > 0) {
+                    const fallback = await metadataReader._fallbackMetadata(
+                      file.filePath,
+                      knownArtists
+                    );
+                    console.log(
+                      `[library:scan] Exception fallback: estimated ${estimatedDuration}s for ${file.filePath}`
+                    );
+                    tracks.push({
+                      id: generateTrackId(file.filePath),
+                      filePath: file.filePath,
+                      fileName: file.fileName,
+                      title: fallback.title,
+                      artist: fallback.artist,
+                      album: fallback.album,
+                      albumArtist: "",
+                      genre: "",
+                      year: 0,
+                      trackNumber: 0,
+                      discNumber: 0,
+                      duration: estimatedDuration,
+                      bitrate: fallback.bitrate || 0,
+                      sampleRate: 0,
+                      channels: 2,
+                      format: path.extname(file.fileName).replace(".", "").toUpperCase(),
+                      fileSize: file.fileSize || 0,
+                      coverArt: fallback.coverArt || null,
+                      _hasCoverArt: !!fallback.coverArt,
+                      dateAdded: file.birthTime || file.modifiedTime || Date.now(),
+                      dateModified: file.modifiedTime || Date.now()
+                    });
+                  } else {
                     failedCount++;
                     newlyFailedFiles[file.filePath] = file.modifiedTime;
                   }
-                } catch (_) {
-                  failedCount++;
-                  newlyFailedFiles[file.filePath] = file.modifiedTime;
                 }
               }
             }
@@ -3429,6 +3906,7 @@ var require_ipc = __commonJS({
           console.log(
             `[library:scan] Done! ${mergedLibrary.length} tracks in library (${tracks.length} scanned/checked, ${skippedCount} skipped/cached, ${failedCount} failed) in ${elapsed}s`
           );
+          _fpCache.clear();
           sendProgress(mainWindow, {
             stage: "complete",
             current: totalFiles,
@@ -3562,11 +4040,65 @@ var require_ipc = __commonJS({
           return { success: false, error: err.message };
         }
       });
+      ipcMain.handle("coverart:get-thumb", async (event, { trackId, size } = {}) => {
+        try {
+          if (!trackId) return { success: false, error: "No trackId" };
+          const targetSize = size || 128;
+          const thumbDir = path.join(
+            app.getPath("userData"),
+            "cached_covers",
+            "thumbs"
+          );
+          const thumbFile = path.join(thumbDir, `${trackId}_${targetSize}.webp`);
+          const exists = await fs.promises.access(thumbFile).then(() => true).catch(() => false);
+          if (exists) {
+            return {
+              success: true,
+              url: `nova-media://thumb/${trackId}/${targetSize}`
+            };
+          }
+          const library = getLibrary();
+          const track = library.find((t) => t.id === trackId);
+          if (!track || !track.coverArt && !track._hasCoverArt) {
+            return { success: false, error: "No cover art for track" };
+          }
+          const sharp = require("sharp");
+          if (!fs.existsSync(thumbDir))
+            fs.mkdirSync(thumbDir, { recursive: true });
+          let inputBuffer;
+          if (track.coverArt && track.coverArt.startsWith("data:")) {
+            const base64 = track.coverArt.split(",")[1];
+            if (!base64) return { success: false, error: "Invalid data URI" };
+            inputBuffer = Buffer.from(base64, "base64");
+          } else if (track.coverArt && fs.existsSync(track.coverArt)) {
+            inputBuffer = await fs.promises.readFile(track.coverArt);
+          } else if (track._hasCoverArt) {
+            return {
+              success: true,
+              url: `nova-media://art/${encodeURIComponent(trackId)}`
+            };
+          } else {
+            return { success: false, error: "Cover art not found on disk" };
+          }
+          const metadata = await sharp(inputBuffer).metadata();
+          const side = Math.min(metadata.width, metadata.height);
+          const left = Math.floor((metadata.width - side) / 2);
+          const top = Math.floor((metadata.height - side) / 2);
+          const thumbBuffer = await sharp(inputBuffer).extract({ left, top, width: side, height: side }).resize(targetSize, targetSize, { fit: "cover" }).webp({ quality: 90 }).toBuffer();
+          await fs.promises.writeFile(thumbFile, thumbBuffer);
+          return {
+            success: true,
+            url: `nova-media://thumb/${trackId}/${targetSize}`
+          };
+        } catch (err) {
+          return { success: false, error: err.message };
+        }
+      });
       ipcMain.handle("coverart:get-all-thumbs", async (event, { size } = {}) => {
         try {
           const sharp = require("sharp");
           const library = getLibrary();
-          const targetSize = size || 48;
+          const targetSize = size || 128;
           const thumbDir = path.join(
             app.getPath("userData"),
             "cached_covers",
@@ -3614,7 +4146,7 @@ var require_ipc = __commonJS({
                   const side = Math.min(metadata.width, metadata.height);
                   const left = Math.floor((metadata.width - side) / 2);
                   const top = Math.floor((metadata.height - side) / 2);
-                  const thumbBuffer = await sharp(inputBuffer).extract({ left, top, width: side, height: side }).resize(targetSize, targetSize, { fit: "cover" }).webp({ quality: 75 }).toBuffer();
+                  const thumbBuffer = await sharp(inputBuffer).extract({ left, top, width: side, height: side }).resize(targetSize, targetSize, { fit: "cover" }).webp({ quality: 90 }).toBuffer();
                   await fs.promises.writeFile(thumbFile, thumbBuffer);
                   thumbs[track.id] = `nova-media://thumb/${track.id}/${targetSize}`;
                   if (targetSize <= 48) {
@@ -3698,7 +4230,7 @@ var require_ipc = __commonJS({
               const side = Math.min(metadata.width, metadata.height);
               const left = Math.floor((metadata.width - side) / 2);
               const top = Math.floor((metadata.height - side) / 2);
-              const thumbBuffer = await sharp(inputBuffer).extract({ left, top, width: side, height: side }).resize(targetSize, targetSize, { fit: "cover" }).webp({ quality: 80 }).toBuffer();
+              const thumbBuffer = await sharp(inputBuffer).extract({ left, top, width: side, height: side }).resize(targetSize, targetSize, { fit: "cover" }).webp({ quality: 90 }).toBuffer();
               fs.writeFileSync(thumbFile, thumbBuffer);
               return thumbFile;
             })();
@@ -5587,6 +6119,602 @@ ${items}
         return { success: false, error: err.message };
       }
     });
+    var _thumbStubsPath = null;
+    var _thumbStubsCache = null;
+    var _thumbStubsDirty = false;
+    var _thumbStubsSaveTimer = null;
+    function _getThumbStubsPath() {
+      if (_thumbStubsPath) return _thumbStubsPath;
+      _thumbStubsPath = path.join(app.getPath("userData"), "thumb-stubs.json");
+      return _thumbStubsPath;
+    }
+    function _readThumbStubsSync() {
+      if (_thumbStubsCache !== null) return _thumbStubsCache;
+      try {
+        const p = _getThumbStubsPath();
+        if (fs.existsSync(p)) {
+          const txt = fs.readFileSync(p, "utf-8");
+          _thumbStubsCache = JSON.parse(txt);
+          if (!_thumbStubsCache || typeof _thumbStubsCache !== "object") {
+            _thumbStubsCache = {};
+          }
+        } else {
+          _thumbStubsCache = {};
+        }
+      } catch (err) {
+        console.warn("[thumb-stubs] failed to read stub file:", err.message);
+        _thumbStubsCache = {};
+      }
+      return _thumbStubsCache;
+    }
+    function _scheduleThumbStubsSave() {
+      if (_thumbStubsSaveTimer) return;
+      _thumbStubsSaveTimer = setTimeout(() => {
+        _thumbStubsSaveTimer = null;
+        _thumbStubsDirty = false;
+        try {
+          const p = _getThumbStubsPath();
+          const data = _thumbStubsCache || {};
+          const tmp = p + ".tmp";
+          fs.writeFileSync(tmp, JSON.stringify(data), "utf-8");
+          fs.renameSync(tmp, p);
+        } catch (err) {
+          console.warn("[thumb-stubs] failed to save stub file:", err.message);
+        }
+      }, 1e3);
+    }
+    ipcMain.handle("thumb-stubs:load", async () => {
+      try {
+        return { success: true, stubs: _readThumbStubsSync() };
+      } catch (err) {
+        return { success: false, error: err.message, stubs: {} };
+      }
+    });
+    ipcMain.handle("thumb-stubs:save", async (_event, stubs) => {
+      try {
+        if (!stubs || typeof stubs !== "object") {
+          return { success: false, error: "stubs must be an object" };
+        }
+        _thumbStubsCache = stubs;
+        _thumbStubsDirty = true;
+        _scheduleThumbStubsSave();
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
+    ipcMain.handle("thumb-stubs:patch", async (_event, patch) => {
+      try {
+        if (!patch || typeof patch !== "object") {
+          return { success: false, error: "patch must be an object" };
+        }
+        const cache = _readThumbStubsSync();
+        let added = 0, removed = 0;
+        for (const [k, v] of Object.entries(patch)) {
+          if (v === null || v === void 0) {
+            if (cache[k] !== void 0) {
+              delete cache[k];
+              removed++;
+            }
+          } else {
+            if (cache[k] !== v) {
+              cache[k] = v;
+              added++;
+            }
+          }
+        }
+        if (added > 0 || removed > 0) {
+          _thumbStubsDirty = true;
+          _scheduleThumbStubsSave();
+        }
+        return { success: true, added, removed };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
+    var ARTIST_IMAGE_CACHE_DIR = () => path.join(app.getPath("userData"), "cached_covers", "artists");
+    function _artistImageHash(artistName) {
+      return crypto.createHash("sha256").update(artistName.toLowerCase().trim()).digest("hex").substring(0, 16);
+    }
+    var _artistImageCache = /* @__PURE__ */ new Map();
+    function _loadArtistImageCache() {
+      try {
+        const dir = ARTIST_IMAGE_CACHE_DIR();
+        if (!fs.existsSync(dir)) return;
+        const files = fs.readdirSync(dir);
+        for (const file of files) {
+          if (/\.(jpg|jpeg|png|webp)$/i.test(file)) {
+          }
+        }
+        const mapFile = path.join(dir, "artist-images.json");
+        if (fs.existsSync(mapFile)) {
+          const map = JSON.parse(fs.readFileSync(mapFile, "utf-8"));
+          for (const [name, p] of Object.entries(map)) {
+            if (fs.existsSync(p)) {
+              _artistImageCache.set(name.toLowerCase(), p);
+            }
+          }
+        }
+      } catch (_) {
+      }
+    }
+    function _saveArtistImageMap() {
+      try {
+        const dir = ARTIST_IMAGE_CACHE_DIR();
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const mapFile = path.join(dir, "artist-images.json");
+        const map = {};
+        for (const [k, v] of _artistImageCache) {
+          map[k] = v;
+        }
+        fs.writeFileSync(mapFile, JSON.stringify(map, null, 2), "utf-8");
+      } catch (_) {
+      }
+    }
+    async function _fetchArtistImageOnline(artistName) {
+      const name = (artistName || "").trim();
+      if (!name || name === "Unknown Artist") return null;
+      try {
+        const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(name)}&entity=musicArtist&limit=1`;
+        const resp = await fetch(itunesUrl, {
+          signal: AbortSignal.timeout(8e3),
+          headers: { "User-Agent": "NovaTune/1.2.0" }
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.results && data.results.length > 0) {
+            const artist = data.results[0];
+            if (artist.artistLinkUrl) {
+              const lookupUrl = `https://itunes.apple.com/lookup?id=${artist.artistId}&entity=musicArtist`;
+              const lookupResp = await fetch(lookupUrl, {
+                signal: AbortSignal.timeout(8e3),
+                headers: { "User-Agent": "NovaTune/1.2.0" }
+              });
+              if (lookupResp.ok) {
+                const lookupData = await lookupResp.json();
+                if (lookupData.results && lookupData.results.length > 0) {
+                  const a = lookupData.results[0];
+                  if (a.artworkUrl100) {
+                    return a.artworkUrl100.replace("100x100", "600x600");
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (_) {
+      }
+      try {
+        const deezerUrl = `https://api.deezer.com/search/artist?q=${encodeURIComponent(name)}&limit=1`;
+        const resp = await fetch(deezerUrl, {
+          signal: AbortSignal.timeout(8e3),
+          headers: { "User-Agent": "NovaTune/1.2.0" }
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.data && data.data.length > 0) {
+            const artist = data.data[0];
+            const imgUrl = artist.picture_xl || artist.picture_big || artist.picture_medium || artist.picture;
+            if (imgUrl && !imgUrl.includes("deezer.com/images/artist/default")) {
+              return imgUrl;
+            }
+          }
+        }
+      } catch (_) {
+      }
+      return null;
+    }
+    async function _downloadArtistImage(url, artistName) {
+      try {
+        const dir = ARTIST_IMAGE_CACHE_DIR();
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const hash = _artistImageHash(artistName);
+        let ext = ".jpg";
+        if (url.includes(".png")) ext = ".png";
+        else if (url.includes(".webp")) ext = ".webp";
+        const localPath = path.join(dir, `${hash}${ext}`);
+        if (fs.existsSync(localPath)) return localPath;
+        const resp = await fetch(url, {
+          signal: AbortSignal.timeout(15e3),
+          headers: { "User-Agent": "NovaTune/1.2.0" }
+        });
+        if (!resp.ok) return null;
+        const buffer = Buffer.from(await resp.arrayBuffer());
+        if (buffer.length < 2048) {
+          console.log(
+            `[artist-image] Rejected "${artistName}" \u2014 file too small (${buffer.length} bytes)`
+          );
+          return null;
+        }
+        try {
+          const sharp = require("sharp");
+          const metadata = await sharp(buffer).metadata();
+          if (!metadata.width || !metadata.height || metadata.width < 100 || metadata.height < 100) {
+            console.log(
+              `[artist-image] Rejected "${artistName}" \u2014 image too small (${metadata.width}\xD7${metadata.height})`
+            );
+            return null;
+          }
+          const tiny = await sharp(buffer).resize(32, 32, { fit: "cover" }).raw().toBuffer();
+          let sum = 0, sumSq = 0, n = 0;
+          let rSum = 0, gSum = 0, bSum = 0;
+          for (let i = 0; i < tiny.length; i += 4) {
+            const r = tiny[i], g = tiny[i + 1], b = tiny[i + 2];
+            sum += r + g + b;
+            sumSq += r * r + g * g + b * b;
+            rSum += r;
+            gSum += g;
+            bSum += b;
+            n += 3;
+          }
+          const mean = sum / n;
+          const variance = sumSq / n - mean * mean;
+          const stdev = Math.sqrt(Math.max(0, variance));
+          const rMean = rSum / (n / 3);
+          const gMean = gSum / (n / 3);
+          const bMean = bSum / (n / 3);
+          const isNearWhite = mean > 235 && stdev < 25;
+          const isNearBlack = mean < 15;
+          const isAllWhite = rMean > 240 && gMean > 240 && bMean > 240;
+          const isLowVariance = stdev < 15;
+          if (isNearWhite || isNearBlack || isAllWhite || isLowVariance) {
+            console.log(
+              `[artist-image] Rejected "${artistName}" \u2014 placeholder (mean=${mean.toFixed(1)}, stdev=${stdev.toFixed(1)}, r=${rMean.toFixed(0)} g=${gMean.toFixed(0)} b=${bMean.toFixed(0)})`
+            );
+            return null;
+          }
+        } catch (sharpErr) {
+          console.log(
+            `[artist-image] Rejected "${artistName}" \u2014 Sharp validation failed: ${sharpErr.message}`
+          );
+          return null;
+        }
+        fs.writeFileSync(localPath, buffer);
+        return localPath;
+      } catch (_) {
+        return null;
+      }
+    }
+    async function _validateSavedArtistImage(filePath) {
+      try {
+        const stat = fs.statSync(filePath);
+        if (stat.size < 2048) return false;
+        const sharp = require("sharp");
+        const buffer = fs.readFileSync(filePath);
+        const metadata = await sharp(buffer).metadata();
+        if (!metadata.width || !metadata.height || metadata.width < 100 || metadata.height < 100) {
+          return false;
+        }
+        const tiny = await sharp(buffer).resize(32, 32, { fit: "cover" }).raw().toBuffer();
+        let sum = 0, sumSq = 0, n = 0;
+        let rSum = 0, gSum = 0, bSum = 0;
+        for (let i = 0; i < tiny.length; i += 4) {
+          const r = tiny[i], g = tiny[i + 1], b = tiny[i + 2];
+          sum += r + g + b;
+          sumSq += r * r + g * g + b * b;
+          rSum += r;
+          gSum += g;
+          bSum += b;
+          n += 3;
+        }
+        const mean = sum / n;
+        const variance = sumSq / n - mean * mean;
+        const stdev = Math.sqrt(Math.max(0, variance));
+        const rMean = rSum / (n / 3);
+        const gMean = gSum / (n / 3);
+        const bMean = bSum / (n / 3);
+        const isNearWhite = mean > 235 && stdev < 25;
+        const isNearBlack = mean < 15;
+        const isAllWhite = rMean > 240 && gMean > 240 && bMean > 240;
+        const isLowVariance = stdev < 15;
+        return !(isNearWhite || isNearBlack || isAllWhite || isLowVariance);
+      } catch (_) {
+        return false;
+      }
+    }
+    ipcMain.handle("artist-image:fetch", async (event, { artistName } = {}) => {
+      try {
+        const name = (artistName || "").trim();
+        if (!name || name === "Unknown Artist") {
+          return { success: true, localPath: null };
+        }
+        const key = name.toLowerCase();
+        if (_artistImageCache.has(key)) {
+          return { success: true, localPath: _artistImageCache.get(key) };
+        }
+        const imageUrl = await _fetchArtistImageOnline(name);
+        if (!imageUrl) {
+          _artistImageCache.set(key, null);
+          _saveArtistImageMap();
+          return { success: true, localPath: null };
+        }
+        const localPath = await _downloadArtistImage(imageUrl, name);
+        if (localPath) {
+          _artistImageCache.set(key, localPath);
+          _saveArtistImageMap();
+          console.log(`[artist-image] Saved image for "${name}" \u2192 ${localPath}`);
+          return { success: true, localPath };
+        }
+        _artistImageCache.set(key, null);
+        _saveArtistImageMap();
+        return { success: true, localPath: null };
+      } catch (err) {
+        return { success: false, error: err.message, localPath: null };
+      }
+    });
+    ipcMain.handle("artist-image:load-all", async () => {
+      try {
+        if (_artistImageCache.size === 0) {
+          _loadArtistImageCache();
+        }
+        const result = {};
+        for (const [name, localPath] of _artistImageCache) {
+          if (localPath) result[name] = localPath;
+        }
+        return { success: true, images: result };
+      } catch (err) {
+        return { success: false, error: err.message, images: {} };
+      }
+    });
+    ipcMain.handle("artist-image:get", async (event, { artistName } = {}) => {
+      try {
+        const name = (artistName || "").trim().toLowerCase();
+        if (!name) return { success: true, localPath: null };
+        if (_artistImageCache.size === 0) _loadArtistImageCache();
+        return { success: true, localPath: _artistImageCache.get(name) || null };
+      } catch (err) {
+        return { success: false, error: err.message, localPath: null };
+      }
+    });
+    ipcMain.handle("artist-image:validate-saved", async () => {
+      try {
+        const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+        if (settings._artistImageValidationV122) {
+          return { success: true, validated: false, reason: "already-done" };
+        }
+        settings._artistImageValidationV122 = true;
+        writeJSON(SETTINGS_FILE, settings);
+        if (_artistImageCache.size === 0) _loadArtistImageCache();
+        const dir = ARTIST_IMAGE_CACHE_DIR();
+        if (!fs.existsSync(dir)) {
+          return { success: true, validated: true, deletedCount: 0 };
+        }
+        let deletedCount = 0;
+        let validCount = 0;
+        const toDelete = [];
+        for (const [name, localPath] of [..._artistImageCache]) {
+          if (!localPath || !fs.existsSync(localPath)) {
+            _artistImageCache.delete(name);
+            continue;
+          }
+          const isValid = await _validateSavedArtistImage(localPath);
+          if (!isValid) {
+            toDelete.push({ name, path: localPath });
+          } else {
+            validCount++;
+          }
+        }
+        for (const { name, path: p } of toDelete) {
+          try {
+            fs.unlinkSync(p);
+            _artistImageCache.delete(name);
+            deletedCount++;
+            console.log(`[artist-image] Migration deleted invalid image for "${name}"`);
+          } catch (_) {
+          }
+        }
+        _saveArtistImageMap();
+        console.log(
+          `[artist-image] Migration: ${validCount} valid, ${deletedCount} deleted (corrupt/placeholder)`
+        );
+        return { success: true, validated: true, deletedCount, validCount };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
+    ipcMain.handle("artist-image:save-custom", async (event, { artistName, localFilePath, url } = {}) => {
+      try {
+        const name = (artistName || "").trim();
+        if (!name) return { success: false, error: "No artist name provided" };
+        let buffer;
+        if (localFilePath) {
+          if (!fs.existsSync(localFilePath)) {
+            return { success: false, error: "File not found: " + localFilePath };
+          }
+          buffer = fs.readFileSync(localFilePath);
+        } else if (url) {
+          const resp = await fetch(url, {
+            signal: AbortSignal.timeout(2e4),
+            headers: { "User-Agent": "NovaTune/1.2.0" }
+          });
+          if (!resp.ok) {
+            return { success: false, error: `Download failed: HTTP ${resp.status}` };
+          }
+          buffer = Buffer.from(await resp.arrayBuffer());
+        } else {
+          return { success: false, error: "Provide localFilePath or url" };
+        }
+        if (!buffer || buffer.length < 100) {
+          return { success: false, error: "Image data is empty or too small" };
+        }
+        const sharp = require("sharp");
+        let croppedBuffer;
+        try {
+          croppedBuffer = await sharp(buffer).resize(600, 600, { fit: "cover", position: "attention" }).jpeg({ quality: 90 }).toBuffer();
+        } catch (sharpErr) {
+          try {
+            croppedBuffer = await sharp(buffer, { failOnError: false }).resize(600, 600, { fit: "cover", position: "attention" }).jpeg({ quality: 90 }).toBuffer();
+          } catch (_) {
+            return { success: false, error: "Could not decode image: " + sharpErr.message };
+          }
+        }
+        const dir = ARTIST_IMAGE_CACHE_DIR();
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const hash = _artistImageHash(name);
+        try {
+          const existingFiles = fs.readdirSync(dir);
+          for (const f of existingFiles) {
+            if (f.startsWith(hash + "_") || f === hash + ".jpg") {
+              try {
+                fs.unlinkSync(path.join(dir, f));
+              } catch (_) {
+              }
+            }
+          }
+        } catch (_) {
+        }
+        const localPath = path.join(dir, `${hash}_${Date.now()}.jpg`);
+        fs.writeFileSync(localPath, croppedBuffer);
+        _artistImageCache.set(name.toLowerCase(), localPath);
+        _saveArtistImageMap();
+        console.log(`[artist-image:save-custom] Saved custom image for "${name}" \u2192 ${localPath}`);
+        return { success: true, localPath };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
+    ipcMain.handle("coverart:ensure-thumbs", async (event, { trackIds, size = 128 } = {}) => {
+      try {
+        if (!Array.isArray(trackIds) || trackIds.length === 0) {
+          return { success: true, thumbs: {}, missing: [] };
+        }
+        const sharp = require("sharp");
+        const thumbDir = path.join(
+          app.getPath("userData"),
+          "cached_covers",
+          "thumbs"
+        );
+        if (!fs.existsSync(thumbDir)) {
+          await fs.promises.mkdir(thumbDir, { recursive: true });
+        }
+        const thumbs = {};
+        const missing = [];
+        const library = getLibrary();
+        const libById = new Map(library.map((t) => [t.id, t]));
+        const BATCH = 8;
+        for (let i = 0; i < trackIds.length; i += BATCH) {
+          const batch = trackIds.slice(i, i + BATCH);
+          await Promise.allSettled(
+            batch.map(async (trackId) => {
+              try {
+                const thumbFile = path.join(
+                  thumbDir,
+                  `${trackId}_${size}.webp`
+                );
+                const exists = await fs.promises.access(thumbFile).then(() => true).catch(() => false);
+                if (exists) {
+                  thumbs[trackId] = `nova-media://thumb/${trackId}/${size}`;
+                  return;
+                }
+                const track = libById.get(trackId);
+                let coverArt = track?.coverArt || null;
+                if (!coverArt) {
+                  coverArt = getCoverArtByTrackId(trackId);
+                }
+                if (!coverArt) {
+                  missing.push(trackId);
+                  return;
+                }
+                let inputBuffer;
+                if (coverArt.startsWith("data:")) {
+                  const base64 = coverArt.split(",")[1];
+                  if (!base64) return;
+                  inputBuffer = Buffer.from(base64, "base64");
+                } else {
+                  try {
+                    inputBuffer = await fs.promises.readFile(coverArt);
+                  } catch (_) {
+                    missing.push(trackId);
+                    return;
+                  }
+                }
+                const metadata = await sharp(inputBuffer).metadata();
+                const side = Math.min(metadata.width, metadata.height);
+                const left = Math.floor((metadata.width - side) / 2);
+                const top = Math.floor((metadata.height - side) / 2);
+                const thumbBuffer = await sharp(inputBuffer).extract({ left, top, width: side, height: side }).resize(size, size, { fit: "cover" }).webp({ quality: 90 }).toBuffer();
+                await fs.promises.writeFile(thumbFile, thumbBuffer);
+                thumbs[trackId] = `nova-media://thumb/${trackId}/${size}`;
+              } catch (_) {
+                missing.push(trackId);
+              }
+            })
+          );
+          await new Promise((resolve) => setImmediate(resolve));
+          if (Date.now() - (global._lastAudioActivity || 0) < 1500) {
+            await new Promise((resolve) => setTimeout(resolve, 40));
+          }
+        }
+        return { success: true, thumbs, missing };
+      } catch (err) {
+        return { success: false, error: err.message, thumbs: {}, missing: [] };
+      }
+    });
+    ipcMain.handle("coverart:sibling-cover", async (event, { trackId } = {}) => {
+      try {
+        if (!trackId) return { success: false, error: "trackId required" };
+        const library = getLibrary();
+        const track = library.find((t) => t.id === trackId);
+        if (!track || !track.filePath) {
+          return { success: true, coverArt: null };
+        }
+        const dir = path.dirname(track.filePath);
+        const siblings = library.filter(
+          (t) => t.id !== trackId && t.filePath && path.dirname(t.filePath) === dir && (t.coverArt || t._hasCoverArt)
+        );
+        if (siblings.length === 0) {
+          return { success: true, coverArt: null };
+        }
+        const sibling = siblings[0];
+        let coverArt = sibling.coverArt;
+        if (!coverArt && sibling._hasCoverArt) {
+          coverArt = getCoverArtByTrackId(sibling.id);
+        }
+        return {
+          success: true,
+          coverArt,
+          sourceTrackId: sibling.id,
+          sourceTitle: sibling.title
+        };
+      } catch (err) {
+        return { success: false, error: err.message, coverArt: null };
+      }
+    });
+    ipcMain.handle("coverart:migrate-v114", async () => {
+      try {
+        const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+        if (settings._thumbMigrationV114) {
+          return { success: true, migrated: false, reason: "already-done" };
+        }
+        const thumbDir = path.join(
+          app.getPath("userData"),
+          "cached_covers",
+          "thumbs"
+        );
+        let deletedCount = 0;
+        if (fs.existsSync(thumbDir)) {
+          const files = await fs.promises.readdir(thumbDir);
+          const deletePromises = files.map(async (file) => {
+            if (/_48\.webp$/i.test(file) || /_96\.webp$/i.test(file)) {
+              try {
+                await fs.promises.unlink(path.join(thumbDir, file));
+                deletedCount++;
+              } catch (_) {
+              }
+            }
+          });
+          await Promise.allSettled(deletePromises);
+        }
+        settings._thumbMigrationV114 = true;
+        writeJSON(SETTINGS_FILE, settings);
+        console.log(
+          `[migrate-v114] Deleted ${deletedCount} old thumbnail files (48px + 96px)`
+        );
+        return { success: true, migrated: true, deletedCount };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
     function compareVersions(a, b) {
       const pa = (a || "0").split(".").map(Number);
       const pb = (b || "0").split(".").map(Number);
@@ -5991,6 +7119,7 @@ var require_main = __commonJS({
           additionalArguments: [`--accent-color=${initAccentColor}`]
         }
       });
+      registerIPCHandlers(mainWindow);
       mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
       mainWindow.webContents.on(
         "console-message",
@@ -6327,7 +7456,7 @@ var require_main = __commonJS({
                 const side = Math.min(metadata.width, metadata.height);
                 const left = Math.floor((metadata.width - side) / 2);
                 const top = Math.floor((metadata.height - side) / 2);
-                const thumbBuffer = await sharp(inputBuffer).extract({ left, top, width: side, height: side }).resize(targetSize, targetSize, { fit: "cover" }).webp({ quality: 75 }).toBuffer();
+                const thumbBuffer = await sharp(inputBuffer).extract({ left, top, width: side, height: side }).resize(targetSize, targetSize, { fit: "cover" }).webp({ quality: 90 }).toBuffer();
                 fs.writeFileSync(thumbFile, thumbBuffer);
                 return thumbBuffer;
               })();
@@ -6447,11 +7576,6 @@ var require_main = __commonJS({
           );
         } catch (_) {
         }
-      }
-      try {
-        registerIPCHandlers(mainWindow);
-      } catch (err) {
-        _logFatal("registerIPCHandlers failed", err);
       }
       if (autoUpdater && app.isPackaged) {
         autoUpdater.autoDownload = true;

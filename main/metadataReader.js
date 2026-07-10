@@ -285,9 +285,13 @@ class MetadataReader {
    * Read metadata from an audio file.
    * Falls back to basic filename-based metadata if music-metadata is unavailable.
    * @param {string} filePath - Absolute path to the audio file
+   * @param {Map<string, string>} [knownArtists] - Optional Map of lowercased
+   *   artist names → original-cased names from the existing library. Used by
+   *   _fallbackMetadata to split artist from title for underscored YouTube-rip
+   *   filenames. v1.1.5: forwarded to all _fallbackMetadata call sites.
    * @returns {Promise<Object>} Parsed metadata object
    */
-  async readMetadata(filePath) {
+  async readMetadata(filePath, knownArtists) {
     const attempts = 3;
     const delay = 200;
     let lastError = null;
@@ -453,7 +457,7 @@ class MetadataReader {
           `[metadataReader] Binary Vorbis read succeeded for ${path.basename(filePath)}: "${tags.title}" / "${tags.artist}" / "${tags.album}"`,
         );
         const nameNoExt = path.basename(filePath, ".flac");
-        const fallbackTags = this._fallbackMetadata(filePath);
+        const fallbackTags = this._fallbackMetadata(filePath, knownArtists);
         return {
           title: tags.title || fallbackTags.title || nameNoExt,
           artist: tags.artist || fallbackTags.artist || "Unknown Artist",
@@ -477,7 +481,9 @@ class MetadataReader {
       `[metadataReader] All attempts failed for ${path.basename(filePath)}. Falling back to filename metadata.`,
     );
     // Return fallback metadata from filename
-    return this._fallbackMetadata(filePath);
+    // v1.1.5: forward knownArtists so underscored YouTube rips get proper
+    // artist splitting even when music-metadata fails completely.
+    return this._fallbackMetadata(filePath, knownArtists);
   }
 
   /**
@@ -619,30 +625,163 @@ class MetadataReader {
 
   /**
    * Generate fallback metadata from the filename when music-metadata fails.
+   *
+   * v1.1.0 — EXHAUSTIVE SCANNER FIX:
+   *   1. Parse underscore-separated YouTube-rip filenames such as
+   *      `don_toliver_high_unreleased__yaxBLgIoHuI_140.mp3`
+   *      → artist "Don Toliver", title "High (Unreleased)".
+   *      The `__<11-char-youtube-id>_<3-digit-itag>` suffix is stripped,
+   *      then the remaining `_`-separated tokens are split into artist
+   *      (first 1–2 lowercase-word tokens) and title (rest).
+   *   2. Estimate duration from file size when music-metadata returned 0
+   *      (common for YouTube rips with corrupt headers). Without this,
+   *      ipc.js's `library:scan` rejects the track as "0:00" and adds
+   *      the file to `_failedFiles`, permanently skipping it.
+   *      Estimation: duration = fileSizeBytes * 8 / assumedBitrate.
+   *      Bitrate is chosen by file extension (128 kbps for AAC/MP3,
+   *      256 for M4A, 96 for Opus, etc.). Capped at 1 hour to avoid
+   *      absurd estimates from oversized files.
+   *
+   * v1.1.3: Added optional `knownArtists` parameter — a Set of lowercased
+   * artist names from the existing library. When parsing underscored
+   * YouTube-rip filenames, we try to match the leading tokens against
+   * this set so we can split artist from title correctly.
+   *   e.g. "don_toliver_high_unreleased" + knownArtists={"don toliver"}
+   *        → artist="Don Toliver", title="High (Unreleased)"
+   *
    * @private
    */
-  async _fallbackMetadata(filePath) {
+  async _fallbackMetadata(filePath, knownArtists) {
     const nameWithoutExt = path.basename(filePath, path.extname(filePath));
 
-    // Try to parse "Artist - Title" pattern
-    let title = nameWithoutExt;
+    // ── 1. Strip YouTube-rip suffix: __<id>_<itag> ───────────────────
+    // Pattern: double-underscore, 11+ chars of [A-Za-z0-9_-], underscore, 2-3 digits at end.
+    // Examples: "__yaxBLgIoHuI_140", "__dQw4w9WgXcQ_251"
+    let cleanedName = nameWithoutExt;
+    const ytSuffixMatch = nameWithoutExt.match(
+      /__(?:[A-Za-z0-9_-]{8,})_(\d{2,4})$/,
+    );
+    let ytItag = 0;
+    if (ytSuffixMatch) {
+      ytItag = parseInt(ytSuffixMatch[1], 10) || 0;
+      cleanedName = nameWithoutExt.slice(0, nameWithoutExt.length - ytSuffixMatch[0].length);
+      // Trim any trailing underscores left behind
+      cleanedName = cleanedName.replace(/_+$/, "").replace(/^_+/, "");
+    }
+
+    // ── 2. Parse "Artist - Title" pattern (existing behaviour) ───────
+    let title = cleanedName;
     let artist = "Unknown Artist";
 
-    const dashIndex = nameWithoutExt.indexOf(" - ");
-    if (dashIndex > 0 && dashIndex < nameWithoutExt.length - 3) {
-      artist = nameWithoutExt.substring(0, dashIndex).trim();
-      title = nameWithoutExt.substring(dashIndex + 3).trim();
+    const dashIndex = cleanedName.indexOf(" - ");
+    if (dashIndex > 0 && dashIndex < cleanedName.length - 3) {
+      artist = cleanedName.substring(0, dashIndex).trim();
+      title = cleanedName.substring(dashIndex + 3).trim();
+    } else if (/[_]/.test(cleanedName)) {
+      // ── 3. Underscore-separated YouTube rips ───────────────────────
+      // v1.1.3: Try to split artist from title using knownArtists.
+      // Strategy:
+      //   a. Split cleanedName into underscore-separated tokens.
+      //   b. Try matching 1-token, 2-token, 3-token prefixes against
+      //      knownArtists (lowercased). Longest match wins.
+      //   c. If a match is found, the matched tokens become the artist
+      //      (preserving the original casing from the known library),
+      //      and the remaining tokens become the title.
+      //   d. If no match, fall back to the old behavior (whole thing
+      //      becomes the title, artist stays "Unknown Artist").
+      const tokens = cleanedName.split(/[_]+/).map((t) => t.trim()).filter(Boolean);
+
+      // Build the artist match if knownArtists is provided
+      let matchedArtist = null;
+      let artistTokenCount = 0;
+      if (knownArtists && knownArtists.size > 0 && tokens.length >= 2) {
+        // Try 3-token prefix, then 2-token, then 1-token
+        for (let n = Math.min(3, tokens.length - 1); n >= 1; n--) {
+          const prefix = tokens.slice(0, n).join(" ").toLowerCase();
+          if (knownArtists.has(prefix)) {
+            // Find the original-cased version from the knownArtists map
+            // (knownArtists is a Map: lowercase → originalCased)
+            matchedArtist = knownArtists.get(prefix);
+            artistTokenCount = n;
+            break;
+          }
+        }
+      }
+
+      if (matchedArtist && artistTokenCount > 0) {
+        artist = matchedArtist;
+        const titleTokens = tokens.slice(artistTokenCount);
+        const titleStr = titleTokens.join(" ");
+        // Title-case the title
+        const titleCased = titleStr.replace(/\b\w/g, (c) => c.toUpperCase());
+        title = titleCased
+          .replace(/\bUnreleased\b/g, "(Unreleased)")
+          .replace(/\bOfficial\s+(Video|Visualizer|Audio)\b/g, "(Official $1)")
+          .replace(/\bOfficial\b/g, "(Official)")
+          .replace(/\bLyrics\b/g, "(Lyrics)")
+          .replace(/\s+/g, " ")
+          .trim();
+      } else {
+        // No artist match — use the whole thing as the title (v1.1.0 behavior)
+        const spaced = cleanedName.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+        const titleCased = spaced.replace(/\b\w/g, (c) => c.toUpperCase());
+        title = titleCased
+          .replace(/\bUnreleased\b/g, "(Unreleased)")
+          .replace(/\bOfficial\s+(Video|Visualizer|Audio)\b/g, "(Official $1)")
+          .replace(/\bOfficial\b/g, "(Official)")
+          .replace(/\bLyrics\b/g, "(Lyrics)")
+          .replace(/\s+/g, " ")
+          .trim();
+      }
     }
 
     // Strip leading track number prefix from title (e.g. "14. Title" → "Title", "01_Title" → "Title")
     title = title.replace(/^\d+[._\s]+/, "").trim() || title;
+    // Collapse whitespace
+    title = title.replace(/\s+/g, " ").trim();
+    artist = artist.replace(/\s+/g, " ").trim() || "Unknown Artist";
 
-    // Get format from extension
+    // ── 4. Estimate duration from file size ──────────────────────────
+    // Without this, ipc.js's `library:scan` rejects the track as "0:00"
+    // AND records it in `_failedFiles` so future scans skip it.
+    // This is the primary reason YouTube-rip files like
+    // `don_toliver_high_unreleased__yaxBLgIoHuI_140.mp3` never make it
+    // into the library.
     const ext = path.extname(filePath).replace(".", "").toUpperCase();
     let fileSize = 0;
     try {
       fileSize = (await fs.promises.stat(filePath)).size;
     } catch {}
+
+    let duration = 0;
+    let bitrate = 0;
+    if (fileSize > 0) {
+      // Pick assumed bitrate (kbps) by extension + YouTube itag if known.
+      // YouTube itags: 140=AAC 128, 139=AAC 48 (HE), 171=Opus 128, 249=Opus 50,
+      // 250=Opus 70, 251=Opus 160, 140=mp4a 128, 18=AAC 96 (also video).
+      const extLower = path.extname(filePath).toLowerCase();
+      let assumedKbps = 128; // default for mp3/aac
+      if (ytItag > 0) {
+        const itagBitrate = {
+          140: 128, 139: 48, 171: 128, 249: 50, 250: 70, 251: 160,
+          18: 96, 22: 192, 137: 0, 136: 0, 135: 0, // 13x = video-only, no audio
+        };
+        if (itagBitrate[ytItag]) assumedKbps = itagBitrate[ytItag];
+      } else if (extLower === ".m4a") assumedKbps = 256;
+      else if (extLower === ".opus") assumedKbps = 96;
+      else if (extLower === ".ogg") assumedKbps = 112;
+      else if (extLower === ".flac") assumedKbps = 900; // ~9:1 vs 1411kbps raw
+      else if (extLower === ".wav") assumedKbps = 1411;
+
+      if (assumedKbps > 0) {
+        // duration (seconds) = fileSizeBytes * 8 / (bitrate * 1000)
+        const estimated = Math.floor((fileSize * 8) / (assumedKbps * 1000));
+        // Sanity cap: 1 hour max — guards against absurd estimates from
+        // oversized files (e.g. WAV with wrong assumedKbps).
+        duration = Math.min(3600, Math.max(1, estimated));
+        bitrate = assumedKbps;
+      }
+    }
 
     return {
       title,
@@ -653,8 +792,8 @@ class MetadataReader {
       year: 0,
       trackNumber: 0,
       discNumber: 0,
-      duration: 0,
-      bitrate: 0,
+      duration,
+      bitrate,
       sampleRate: 0,
       channels: 0,
       format: ext,

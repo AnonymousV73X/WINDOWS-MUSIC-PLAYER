@@ -1,0 +1,49 @@
+# ── Dependencies ──────────────────────────────────────────────────────
+node_modules/
+
+# ── Build outputs ─────────────────────────────────────────────────────
+dist/
+out/
+build/
+*.bundle.js
+main/main.bundle.js
+
+# ── User data / databases ─────────────────────────────────────────────
+data/
+playlists/
+temps/
+scratch/
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# ── Logs ──────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Cached/generated assets ───────────────────────────────────────────
+renderer/fonts/
+screenshots/
+*.zip
+scripts.*.zip
+
+# ── Temp/scratch files ────────────────────────────────────────────────
+patch.js
+test-date-sort.js
+download-fonts.js
+make_icons.js
+"s.includes(x)).join('"
+
+# ── OS / editor artefacts ─────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+.env
+.vscode/
+.vite/
+coverage/
+NOTES/

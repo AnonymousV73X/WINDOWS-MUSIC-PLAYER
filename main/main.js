@@ -300,6 +300,7 @@ function createMainWindow() {
     },
   });
 
+  registerIPCHandlers(mainWindow);
   mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
 
   mainWindow.webContents.on(
@@ -722,7 +723,7 @@ app.whenReady().then(() => {
             const thumbBuffer = await sharp(inputBuffer)
               .extract({ left, top, width: side, height: side })
               .resize(targetSize, targetSize, { fit: "cover" })
-              .webp({ quality: 75 })
+              .webp({ quality: 90 }) // v1.1.4: bumped to 90 for retina quality
               .toBuffer();
 
             fs.writeFileSync(thumbFile, thumbBuffer);
@@ -871,11 +872,7 @@ app.whenReady().then(() => {
     } catch (_) {}
   }
 
-  try {
-    registerIPCHandlers(mainWindow);
-  } catch (err) {
-    _logFatal("registerIPCHandlers failed", err);
-  }
+  
 
   // ─── Auto-Updater ─────────────────────────────────────────────────
   if (autoUpdater && app.isPackaged) {

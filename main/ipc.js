@@ -66,6 +66,12 @@ const DEFAULT_SETTINGS = {
   theme: "dark",
   accentColor: "#1DB954",
   volume: 0.5,
+  // v1.1.0 — Volume persistence mode:
+  //   "persist" → restore last-saved volume on launch (default; user explicit choice)
+  //   "safe"    → revert to safeVolume on every launch (prevents loud restarts)
+  volumePersistMode: "persist",
+  // v1.1.0 — Safe volume used on launch when mode === "safe"
+  safeVolume: 0.5,
   crossfadeDuration: 0,
   equalizer: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   repeatMode: "off",
@@ -75,6 +81,11 @@ const DEFAULT_SETTINGS = {
   scanFolders: [],
   sortOrder: "title",
   sortDirection: "asc",
+  // v1.1.7 — Card sort settings for Albums / Artists / Playlists views.
+  // Options: "songCountDesc" (most songs first), "songCountAsc" (fewest first),
+  //          "alphaAsc" (A→Z), "alphaDesc" (Z→A),
+  //          "dateAddedDesc" (newest first), "dateAddedAsc" (oldest first)
+  cardSortMode: "alphaAsc",
   miniPlayer: false,
   alwaysOnTop: false,
   hardwareAcceleration: true,
@@ -96,10 +107,10 @@ const DB_SCHEMA = `
     filePath TEXT UNIQUE,
     data TEXT NOT NULL
   );
-  CREATE INDEX IF NOT EXISTS idx_tracks_title ON tracks(title COLLATE NOCASE);
-  CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist COLLATE NOCASE);
-  CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album COLLATE NOCASE);
-  CREATE INDEX IF NOT EXISTS idx_tracks_date_added ON tracks(dateAdded DESC);
+  CREATE INDEX IF NOT EXISTS idx_tracks_title_v2 ON tracks(title COLLATE NOCASE);
+  CREATE INDEX IF NOT EXISTS idx_tracks_artist_v2 ON tracks(artist COLLATE NOCASE, title COLLATE NOCASE);
+  CREATE INDEX IF NOT EXISTS idx_tracks_album_v2 ON tracks(album COLLATE NOCASE, title COLLATE NOCASE);
+  CREATE INDEX IF NOT EXISTS idx_tracks_date_added_v2 ON tracks(dateAdded DESC, title COLLATE NOCASE);
   CREATE TABLE IF NOT EXISTS playlists (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -163,14 +174,56 @@ const AUDIO_EXTENSIONS = new Set([
  * Returns a string like "1126:1718000000000" (fileCount:newestMtime).
  * PERF FIX: Converted from sync to async to avoid blocking the main process
  * event loop. On HDD, the sync version blocked for 50-150ms per call.
+ *
+ * v1.1.2 OPTIMIZATIONS:
+ *   1. Larger parallel stat batches (16 vs 4). On HDD this lets the OS
+ *      reorder I/O for better seek performance; on SSD it saturates the
+ *      libuv thread pool better.
+ *   2. Directory-mtime short-circuit: if a directory's mtime matches
+ *      the cached value from the last fingerprint, we skip statting the
+ *      individual files in that directory. File mtimes only change when
+ *      content is modified, and directory mtime changes when files are
+ *      added/removed/renamed. So if dir mtime is unchanged AND no files
+ *      were added/removed, the file mtimes are also unchanged. We use
+ *      the cached (count, maxMtime) for that directory.
+ *   3. In-memory fingerprint cache (60s TTL). Rapid re-checks (e.g. on
+ *      folder add) don't re-walk.
+ *   4. Larger directory-walk concurrency (8 vs 4) since readdir is
+ *      cheap and the bottleneck is stat, not readdir.
  */
-const _FP_MAX_CONCURRENT_DIRS = 4;
+const _FP_MAX_CONCURRENT_DIRS = 8; // was 4 — readdir is cheap, stat is the bottleneck
+const _FP_STAT_BATCH_SIZE = 16; // stat 16 files in parallel per batch
+const _FP_CACHE_TTL_MS = 60 * 1000; // 60-second in-memory cache
+const _fpCache = new Map(); // key: folderPath → { fp, timestamp, dirMtimes: Map }
 
 async function _computeFolderFingerprint(folderPaths) {
+  // v1.1.2 — Check in-memory cache first
+  const cacheKey = folderPaths.slice().sort().join("|");
+  const cached = _fpCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < _FP_CACHE_TTL_MS) {
+    return cached.fp;
+  }
+
   let fileCount = 0;
   let newestMtime = 0;
+  // Track per-directory mtimes so we can short-circuit on the next run
+  const dirMtimes = new Map(); // dir → mtimeMs
+  // Load the previous run's dir mtimes for comparison (if same root folders)
+  const prevDirMtimes = cached?.dirMtimes instanceof Map ? cached.dirMtimes : new Map();
+  // Cache of directory-level (fileCount, maxMtime) from the previous run
+  // so we can reuse them when the directory mtime hasn't changed.
+  const prevDirStats = cached?.dirStats instanceof Map ? cached.dirStats : new Map();
 
   async function walk(dir) {
+    let dirStat;
+    try {
+      dirStat = await fs.promises.stat(dir);
+    } catch (_) {
+      return;
+    }
+    const dirMtime = dirStat.mtimeMs;
+    dirMtimes.set(dir, dirMtime);
+
     let entries;
     try {
       entries = await fs.promises.readdir(dir, { withFileTypes: true });
@@ -192,19 +245,51 @@ async function _computeFolderFingerprint(folderPaths) {
       }
     }
 
-    if (files.length > 0) {
-      const stats = await Promise.allSettled(
-        files.map((f) => fs.promises.stat(f)),
-      );
-      for (const result of stats) {
-        if (result.status === "fulfilled") {
-          fileCount++;
-          if (result.value.mtimeMs > newestMtime)
-            newestMtime = result.value.mtimeMs;
+    // v1.1.2 — Directory-mtime short-circuit:
+    // If this directory's mtime matches the previous run AND the file
+    // count matches (i.e. no files added/removed), we can skip statting
+    // individual files and reuse the cached (count, maxMtime).
+    const prevMtime = prevDirMtimes.get(dir);
+    const prevStats = prevDirStats.get(dir);
+    if (
+      prevMtime === dirMtime &&
+      prevStats &&
+      prevStats.fileCount === files.length
+    ) {
+      // Reuse cached stats for this directory
+      fileCount += prevStats.fileCount;
+      if (prevStats.maxMtime > newestMtime) {
+        newestMtime = prevStats.maxMtime;
+      }
+      // Note: we don't recurse into subdirs here — the subdirs will be
+      // visited below and their own mtime checks will short-circuit them.
+    } else if (files.length > 0) {
+      // v1.1.2 — Stat in larger parallel batches (16 vs 4)
+      let dirMaxMtime = 0;
+      let dirFileCount = 0;
+      for (let i = 0; i < files.length; i += _FP_STAT_BATCH_SIZE) {
+        const batch = files.slice(i, i + _FP_STAT_BATCH_SIZE);
+        const stats = await Promise.allSettled(
+          batch.map((f) => fs.promises.stat(f)),
+        );
+        for (const result of stats) {
+          if (result.status === "fulfilled") {
+            dirFileCount++;
+            if (result.value.mtimeMs > dirMaxMtime) {
+              dirMaxMtime = result.value.mtimeMs;
+            }
+            if (result.value.mtimeMs > newestMtime) {
+              newestMtime = result.value.mtimeMs;
+            }
+          }
         }
       }
+      fileCount += dirFileCount;
+      // Cache this directory's stats for the next run
+      prevDirStats.set(dir, { fileCount: dirFileCount, maxMtime: dirMaxMtime });
     }
 
+    // Recurse into subdirectories with higher concurrency
     for (let i = 0; i < dirs.length; i += _FP_MAX_CONCURRENT_DIRS) {
       const batch = dirs.slice(i, i + _FP_MAX_CONCURRENT_DIRS);
       await Promise.all(batch.map((d) => walk(d)));
@@ -218,7 +303,101 @@ async function _computeFolderFingerprint(folderPaths) {
     } catch (_) {}
   }
 
-  return `${fileCount}:${Math.floor(newestMtime)}`;
+  const fp = `${fileCount}:${Math.floor(newestMtime)}`;
+  // Cache the result + the per-directory mtimes + stats for the next run
+  _fpCache.set(cacheKey, {
+    fp,
+    timestamp: Date.now(),
+    dirMtimes,
+    dirStats: prevDirStats,
+  });
+  return fp;
+}
+
+/**
+ * v1.1.6 — Startup-time _failedFiles reset.
+ *
+ * This function runs ONCE at app startup (called from registerIPCHandlers
+ * after the DB is initialized). It checks whether a _failedFiles reset
+ * is needed and performs it BEFORE any scan or manifest check can skip it.
+ *
+ * This fixes the critical bug where the v1.1.2 manifest fast-path would
+ * skip the library:scan handler entirely (because the manifest was fresh),
+ * which meant the v1.1.5 reset inside library:scan NEVER FIRED. Result:
+ * YouTube rips blacklisted by earlier versions stayed blacklisted forever,
+ * even after the user applied the v1.1.5 patch.
+ *
+ * Reset conditions (any one triggers a reset):
+ *   1. _failedFilesResetV115 flag is not set (first v1.1.5+ launch)
+ *   2. _failedFilesLastRetry is missing or > 30 days old (periodic re-check)
+ *
+ * Also cleans up existing tracks in the SQLite DB that have duration <= 0.
+ * These tracks were previously "successfully" scanned (music-metadata
+ * returned a result) but with duration 0. The old scan code silently
+ * dropped them on subsequent scans (not pushed to tracks, not re-scanned).
+ * We delete them from the DB so the next scan re-processes them with the
+ * estimator fallback.
+ */
+function _maybeResetFailedFilesAtStartup() {
+  try {
+    const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+    let needsReset = false;
+    let resetReason = "";
+
+    // Condition 1: v1.1.5 reset flag not set
+    if (!settings._failedFilesResetV115) {
+      needsReset = true;
+      resetReason = "v1.1.5 one-time reset";
+    }
+
+    // Condition 2: periodic 30-day re-check
+    if (
+      !needsReset &&
+      (!settings._failedFilesLastRetry ||
+        Date.now() - settings._failedFilesLastRetry > 30 * 24 * 60 * 60 * 1000)
+    ) {
+      needsReset = true;
+      resetReason = "30-day periodic re-check";
+    }
+
+    if (needsReset) {
+      settings._failedFiles = {};
+      settings._failedFilesResetV115 = true;
+      settings._failedFilesLastRetry = Date.now();
+      writeJSON(SETTINGS_FILE, settings);
+      console.log(
+        `[startup-reset] Cleared _failedFiles cache (${resetReason})`,
+      );
+    }
+
+    // v1.1.6 — Clean up existing tracks with duration <= 0 from the SQLite DB.
+    // These tracks were added by older scanner versions that didn't have the
+    // duration estimator. They sit in the DB with duration=0 and get silently
+    // skipped on every subsequent scan (the `existing` check finds them,
+    // sees duration <= 0, and doesn't push them to the new tracks list).
+    // Deleting them forces a re-scan with the estimator.
+    if (db) {
+      try {
+        const result = db.prepare("DELETE FROM tracks WHERE duration <= 0").run();
+        if (result.changes > 0) {
+          console.log(
+            `[startup-reset] Deleted ${result.changes} tracks with duration <= 0 from SQLite (will be re-scanned with estimator)`,
+          );
+          // Also invalidate the library cache so the next getLibrary() re-reads from DB
+          libraryCache = null;
+          _libraryJsonCache = null;
+          libraryById = null;
+        }
+      } catch (err) {
+        console.warn(
+          "[startup-reset] Failed to clean up 0-duration tracks:",
+          err.message,
+        );
+      }
+    }
+  } catch (err) {
+    console.warn("[startup-reset] Failed:", err.message);
+  }
 }
 
 function migrateJsonToDb() {
@@ -516,6 +695,60 @@ function generateTrackId(filePath) {
     .substring(0, 16);
 }
 
+/**
+ * v1.1.0 EXHAUSTIVE SCANNER FIX
+ * Estimate audio duration from file size when metadata extraction fails.
+ * Used as a last-resort fallback for files with corrupt/missing headers
+ * (e.g. YouTube rips like `don_toliver_high_unreleased__yaxBLgIoHuI_140.mp3`).
+ *
+ * The bitrate assumption is chosen by file extension AND by inspecting
+ * the filename for a YouTube itag suffix (`__<id>_<itag>`). YouTube's
+ * common audio itags map to known bitrates:
+ *   140 → AAC 128, 139 → AAC 48, 171 → Opus 128, 249 → Opus 50,
+ *   250 → Opus 70, 251 → Opus 160, 18 → AAC 96.
+ *
+ * @param {string} filePath — full path (used for extension + YouTube itag detection)
+ * @param {number} [knownSize] — optional pre-fetched file size in bytes
+ * @returns {number} estimated duration in seconds, or 0 if file is empty/unknown codec
+ */
+function _estimateDurationFromFileSize(filePath, knownSize) {
+  try {
+    let fileSize = knownSize;
+    if (!fileSize || fileSize <= 0) {
+      const stat = fs.statSync(filePath);
+      fileSize = stat.size;
+    }
+    if (!fileSize || fileSize <= 0) return 0;
+
+    const ext = path.extname(filePath).toLowerCase();
+    const basename = path.basename(filePath, ext);
+    // YouTube itag detection: "__<id>_<digits>" at end of filename
+    const ytMatch = basename.match(/__(?:[A-Za-z0-9_-]{8,})_(\d{2,4})$/);
+    let assumedKbps = 0;
+    if (ytMatch) {
+      const itag = parseInt(ytMatch[1], 10) || 0;
+      const itagBitrate = {
+        140: 128, 139: 48, 171: 128, 249: 50, 250: 70, 251: 160, 18: 96,
+      };
+      assumedKbps = itagBitrate[itag] || 128;
+    } else {
+      // No YouTube suffix — pick by extension
+      const extBitrate = {
+        ".mp3": 192, ".aac": 128, ".m4a": 256, ".opus": 96,
+        ".ogg": 112, ".flac": 900, ".wav": 1411, ".wma": 128,
+        ".ape": 700, ".wv": 700, ".tta": 1411, ".mpc": 192,
+      };
+      assumedKbps = extBitrate[ext] || 128;
+    }
+    if (assumedKbps <= 0) return 0;
+    const estimated = Math.floor((fileSize * 8) / (assumedKbps * 1000));
+    // Cap at 1 hour — guards against absurd estimates from oversized files.
+    return Math.min(3600, Math.max(1, estimated));
+  } catch (_) {
+    return 0;
+  }
+}
+
 function isAudioFile(fileName) {
   const ext = path.extname(fileName).toLowerCase();
   return SUPPORTED_FORMATS.includes(ext);
@@ -610,10 +843,24 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   db.pragma("cache_size = -20000");
   db.pragma("temp_store = MEMORY");
   db.pragma("mmap_size = 268435456");
+  db.exec("DROP INDEX IF EXISTS idx_tracks_title;");
+  db.exec("DROP INDEX IF EXISTS idx_tracks_artist;");
+  db.exec("DROP INDEX IF EXISTS idx_tracks_album;");
+  db.exec("DROP INDEX IF EXISTS idx_tracks_date_added;");
   db.exec(DB_SCHEMA);
 
   migrateJsonToDb();
   migrateDbCovers();
+
+  // v1.1.6 — Startup-time _failedFiles reset.
+  // Previously this reset lived inside the library:scan handler, but the
+  // v1.1.2 manifest fast-path can SKIP the scan entirely when the manifest
+  // is fresh (< 7 days old). That meant the reset never fired and
+  // previously-blacklisted YouTube rips (like don_toliver_high_unreleased__yaxBLgIoHuI_140.mp3)
+  // stayed blacklisted forever — even after applying the v1.1.5 patch.
+  // Now we run the reset at startup so it fires regardless of whether a
+  // scan is triggered.
+  _maybeResetFailedFilesAtStartup();
 
   // ── Binary manifest feature flag ──────────────────────────────────
   // Resolution order: env var > settings.json key > default ON.
@@ -862,6 +1109,80 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       // changes (user replaced the corrupt file with a good one), we
       // re-try it.
       const scanSettings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+      // v1.1.0 EXHAUSTIVE SCANNER FIX: One-time reset of the _failedFiles
+      // cache. Files previously rejected as "0:00" (mostly YouTube rips
+      // with corrupt headers like `don_toliver_high_unreleased__yaxBLgIoHuI_140.mp3`)
+      // are now recoverable via the new fallback path in
+      // metadataReader._fallbackMetadata (parses underscore names + estimates
+      // duration from file size). Without this reset, those files would
+      // remain permanently blacklisted.
+      if (!scanSettings._failedFilesResetV110) {
+        scanSettings._failedFiles = {};
+        scanSettings._failedFilesResetV110 = true;
+        writeJSON(SETTINGS_FILE, scanSettings);
+        console.log(
+          "[library:scan] v1.1.0 reset: cleared _failedFiles cache (one-time migration)",
+        );
+      }
+      // v1.1.3 — Force re-scan of underscored files so they pick up the
+      // new artist-splitting parser. We do this by clearing the failedFiles
+      // cache (which may contain underscored files from the v1.1.0 run that
+      // had "Unknown Artist") AND by bumping the _failedFilesResetV113 flag.
+      // This is a ONE-TIME migration — after this scan, the flag prevents
+      // re-running.
+      if (!scanSettings._failedFilesResetV113) {
+        scanSettings._failedFiles = {};
+        scanSettings._failedFilesResetV113 = true;
+        writeJSON(SETTINGS_FILE, scanSettings);
+        console.log(
+          "[library:scan] v1.1.3 reset: cleared _failedFiles cache for underscored-file re-scan",
+        );
+      }
+      // v1.1.5 EXHAUSTIVE SCANNER: Another one-time reset of _failedFiles.
+      // The v1.1.0–v1.1.4 estimators still rejected some YouTube rips
+      // because the worker thread's internal _fallbackMetadata didn't
+      // have knownArtists, and because some files with NO underscores
+      // but corrupt headers were still being blacklisted. v1.1.5 fixes
+      // both issues (Fix B + Fix C below), so we clear _failedFiles one
+      // more time to give every rejected file a fresh chance.
+      if (!scanSettings._failedFilesResetV115) {
+        scanSettings._failedFiles = {};
+        scanSettings._failedFilesResetV115 = true;
+        scanSettings._failedFilesLastRetry = Date.now();
+        writeJSON(SETTINGS_FILE, scanSettings);
+        console.log(
+          "[library:scan] v1.1.5 reset: cleared _failedFiles cache for exhaustive re-scan",
+        );
+      }
+      // v1.1.6 EXHAUSTIVE SCANNER: Force re-scan of underscored files
+      // that were previously added with the RAW FILENAME as the title
+      // (because music-metadata succeeded but returned empty title/artist).
+      // v1.1.6 now runs _fallbackMetadata even when duration > 0, so these
+      // files get proper parsed titles like "High (Unreleased)" instead of
+      // "don_toliver_high_unreleased__yaxBLgIoHuI_140".
+      if (!scanSettings._v116UnderscoreRescan) {
+        scanSettings._v116UnderscoreRescan = true;
+        writeJSON(SETTINGS_FILE, scanSettings);
+        console.log(
+          "[library:scan] v1.1.6: forcing re-scan of underscored files to fix raw-filename titles",
+        );
+      }
+      if (
+        !scanSettings._failedFilesLastRetry ||
+        Date.now() - scanSettings._failedFilesLastRetry > 30 * 24 * 60 * 60 * 1000
+      ) {
+        // v1.1.5 PERIODIC RE-CHECK: Clear _failedFiles every 30 days so
+        // files that were previously rejected get another chance. This
+        // makes the scanner truly exhaustive over time — if the estimator
+        // logic improves, or if a file was temporarily corrupt (e.g.
+        // partially downloaded), it gets re-tried.
+        scanSettings._failedFiles = {};
+        scanSettings._failedFilesLastRetry = Date.now();
+        writeJSON(SETTINGS_FILE, scanSettings);
+        console.log(
+          "[library:scan] v1.1.5 periodic re-check: cleared _failedFiles cache (30-day cycle)",
+        );
+      }
       const failedFiles =
         scanSettings._failedFiles &&
         typeof scanSettings._failedFiles === "object"
@@ -880,6 +1201,17 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
           failedMtime !== undefined && failedMtime === file.modifiedTime;
 
         if (isPreviouslyFailed) {
+          // v1.1.5 EXHAUSTIVE SCANNER: Re-try files with underscores in
+          // their filename even if they're in _failedFiles. The new
+          // estimator + knownArtists matching may now succeed where
+          // earlier attempts failed. Files without underscores stay
+          // blacklisted (they're genuinely corrupt — 0 bytes, unknown
+          // codec, etc.).
+          const hasUnderscores = /_/.test(file.fileName || "");
+          if (hasUnderscores) {
+            toScan.push({ file, globalIdx: i });
+            continue;
+          }
           // File previously returned 0:00 and hasn't changed → skip.
           // Don't re-parse, don't add to tracks. Count as skipped so
           // nothingChanged can trigger.
@@ -887,11 +1219,54 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
           continue;
         }
 
-        if (existing && existing.dateModified === file.modifiedTime) {
+        // v1.1.3 — Force re-scan of underscored files if they were
+        // scanned with an older parser (v1.1.0–v1.1.2) that didn't
+        // split artist from title. We detect this by checking if the
+        // filename has underscores AND the existing track has
+        // artist="Unknown Artist". If so, force re-scan so the new
+        // parser (with knownArtists matching) can split it correctly.
+        // v1.1.7 — Force re-scan of ALL underscored files on EVERY scan.
+        // Previously we only re-scanned if the title was empty or raw.
+        // But music-metadata can return a NON-EMPTY garbage title for
+        // YouTube AAC rips (from the MP4 container), which prevented
+        // the re-scan from triggering. Now we re-scan ALL underscored
+        // files unconditionally so the _fallbackMetadata parser always
+        // runs and produces a clean title like "High (Unreleased)"
+        // instead of whatever garbage music-metadata returned.
+        const hasUnderscores = /_/.test(file.fileName || "");
+        const nameNoExt = path.basename(file.fileName, path.extname(file.fileName));
+        const needsV113Rescan =
+          hasUnderscores &&
+          existing &&
+          existing.dateModified === file.modifiedTime &&
+          (!existing.artist || existing.artist === "Unknown Artist");
+        const needsV116Rescan =
+          hasUnderscores &&
+          existing &&
+          existing.dateModified === file.modifiedTime &&
+          (!existing.title ||
+            existing.title === file.fileName ||
+            existing.title === nameNoExt);
+        // v1.1.7: Force re-scan ALL underscored files, period.
+        // Even if the title looks OK, music-metadata may have returned
+        // a garbage title from the MP4 container. The _fallbackMetadata
+        // parser produces much better results for YouTube rips.
+        const needsV117Rescan =
+          hasUnderscores &&
+          existing &&
+          existing.dateModified === file.modifiedTime;
+
+        if (needsV113Rescan || needsV116Rescan || needsV117Rescan) {
+          toScan.push({ file, globalIdx: i });
+        } else if (existing && existing.dateModified === file.modifiedTime) {
+          // v1.1.6 — Force re-scan of tracks with duration <= 0.
           if (existing.duration > 0) {
             tracks.push(existing);
+            skippedCount++;
+          } else {
+            // Duration is 0 or negative — force re-scan with estimator
+            toScan.push({ file, globalIdx: i });
           }
-          skippedCount++;
         } else {
           toScan.push({ file, globalIdx: i });
         }
@@ -914,6 +1289,43 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       let doneCount = skippedCount;
       const CHUNK = useWorker ? WORKER_POOL_SIZE : 1;
 
+      // v1.1.3 — Build a map of known artist names from the existing library.
+      // This lets _fallbackMetadata split artist from title for underscored
+      // YouTube rips (e.g. "don_toliver_high_unreleased" → artist="Don Toliver",
+      // title="High (Unreleased)") by matching against artists that already
+      // exist in the library.
+      // Map: lowercaseArtistName → originalCasedArtistName
+      const knownArtists = new Map();
+      try {
+        const existingLib = getLibrary();
+        for (const t of existingLib) {
+          const artistText = (t.artist || "").trim();
+          if (artistText && artistText !== "Unknown Artist") {
+            // Also split multi-artist entries like "Don Toliver, Drake"
+            const individuals = artistText
+              .split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*/i)
+              .map((a) => a.trim())
+              .filter(Boolean);
+            for (const a of individuals) {
+              const lower = a.toLowerCase();
+              if (!knownArtists.has(lower)) {
+                knownArtists.set(lower, a);
+              }
+            }
+            // Also store the albumArtist if present
+            if (t.albumArtist) {
+              const aa = t.albumArtist.trim();
+              if (aa && aa !== "Unknown Artist") {
+                const aaLower = aa.toLowerCase();
+                if (!knownArtists.has(aaLower)) {
+                  knownArtists.set(aaLower, aa);
+                }
+              }
+            }
+          }
+        }
+      } catch (_) {}
+
       for (let ci = 0; ci < toScan.length; ci += CHUNK) {
         const chunk = toScan.slice(ci, ci + CHUNK);
         const chunkResults = await Promise.allSettled(
@@ -922,12 +1334,15 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             if (useWorker && workerPool.length > 0) {
               const worker = workerPool[wi % workerPool.length];
               try {
-                metadata = await worker.readMetadata(file.filePath);
+                // v1.1.5: Forward knownArtists to the worker so its
+                // internal _fallbackMetadata can split artist from title
+                // for underscored YouTube rips.
+                metadata = await worker.readMetadata(file.filePath, knownArtists);
               } catch (_) {
-                metadata = await metadataReader.readMetadata(file.filePath);
+                metadata = await metadataReader.readMetadata(file.filePath, knownArtists);
               }
             } else {
-              metadata = await metadataReader.readMetadata(file.filePath);
+              metadata = await metadataReader.readMetadata(file.filePath, knownArtists);
             }
             return { file, metadata };
           }),
@@ -961,12 +1376,103 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
               } catch (_) {}
             }
             if (metadata.duration <= 0) {
-              console.log(
-                `[library:scan] Skipping 0:00 track: ${file.filePath}`,
+              // v1.1.0 EXHAUSTIVE SCANNER FIX: As a final fallback, estimate
+              // duration from file size. This catches YouTube rips and other
+              // files with corrupt/missing headers that music-metadata can't
+              // parse. Previously these files were rejected as "0:00" and
+              // permanently blacklisted in _failedFiles. Now they get a
+              // reasonable estimated duration and are added to the library.
+              const estimatedDuration = _estimateDurationFromFileSize(
+                file.filePath,
+                file.fileSize,
               );
-              // v1.0.14: Record this file as failed so we skip it next time
+              if (estimatedDuration > 0) {
+                console.log(
+                  `[library:scan] Estimated duration ${estimatedDuration}s from file size for: ${file.filePath}`,
+                );
+                // Re-fetch fallback metadata to get the parsed title/artist
+                // (underscore parsing happens in _fallbackMetadata).
+                // v1.1.3: Pass knownArtists so underscored files can be
+                // split into artist + title using existing library artists.
+                const fallback = await metadataReader._fallbackMetadata(
+                  file.filePath,
+                  knownArtists,
+                );
+                metadata.duration = estimatedDuration;
+                if (!metadata.bitrate)
+                  metadata.bitrate = fallback.bitrate || 0;
+                // v1.1.3 BUGFIX: For underscored YouTube-rip files,
+                // ALWAYS use the fallback title/artist — even if
+                // music-metadata returned something. music-metadata often
+                // returns the raw filename as the title for these files,
+                // which is ugly and unhelpful. The fallback parser produces
+                // much nicer results (title-cased, annotations in parens,
+                // artist split via knownArtists).
+                const hasUnderscores = /_/.test(file.fileName || "");
+                const hasYtSuffix = /__(?:[A-Za-z0-9_-]{8,})_\d{2,4}$/.test(
+                  file.fileName || "",
+                );
+                if (hasUnderscores || hasYtSuffix) {
+                  metadata.title = fallback.title;
+                  metadata.artist = fallback.artist;
+                  if (!metadata.album || metadata.album === "Unknown Album")
+                    metadata.album = fallback.album;
+                } else {
+                  if (!metadata.title) metadata.title = fallback.title;
+                  if (!metadata.artist || metadata.artist === "Unknown Artist")
+                    metadata.artist = fallback.artist;
+                  if (!metadata.album || metadata.album === "Unknown Album")
+                    metadata.album = fallback.album;
+                }
+                if (!metadata.coverArt) metadata.coverArt = fallback.coverArt;
+              }
+            }
+            if (metadata.duration <= 0) {
+              console.log(
+                `[library:scan] Skipping 0:00 track (size estimate also failed): ${file.filePath}`,
+              );
+              // v1.0.14: Record this file as failed so we skip it next time.
+              // Only truly unparseable files (0 bytes, unknown codec, etc.)
+              // reach this point now.
               newlyFailedFiles[file.filePath] = file.modifiedTime;
             } else {
+              // v1.1.7 EXHAUSTIVE SCANNER FIX: For ANY file with underscores
+              // in its name (YouTube rip), ALWAYS run _fallbackMetadata to
+              // parse the filename — even if music-metadata returned a
+              // non-empty title. YouTube AAC rips often have garbage MP4
+              // container metadata (e.g. the YouTube video ID as the title)
+              // that music-metadata picks up. The _fallbackMetadata parser
+              // produces much better results: "Don Toliver High (Unreleased)"
+              // → artist="Don Toliver", title="High (Unreleased)".
+              //
+              // v1.1.6 only ran the fallback when the title was empty/raw.
+              // v1.1.7 ALWAYS runs it for underscored files, overriding
+              // whatever music-metadata returned.
+              const hasUnderscores = /_/.test(file.fileName || "");
+              const hasYtSuffix = /__(?:[A-Za-z0-9_-]{8,})_\d{2,4}$/.test(
+                file.fileName || "",
+              );
+              if (hasUnderscores || hasYtSuffix) {
+                try {
+                  const fallback = await metadataReader._fallbackMetadata(
+                    file.filePath,
+                    knownArtists,
+                  );
+                  if (fallback.title) {
+                    // v1.1.7: ALWAYS override title/artist for underscored files.
+                    // The filename parser is more reliable than MP4 container
+                    // metadata for YouTube rips.
+                    metadata.title = fallback.title;
+                    metadata.artist = fallback.artist;
+                    if (!metadata.album || metadata.album === "Unknown Album")
+                      metadata.album = fallback.album;
+                    if (!metadata.coverArt) metadata.coverArt = fallback.coverArt;
+                    console.log(
+                      `[library:scan] Underscored file parsed: "${file.fileName}" → artist="${fallback.artist}", title="${fallback.title}"`,
+                    );
+                  }
+                } catch (_) {}
+              }
               tracks.push({
                 id: generateTrackId(file.filePath),
                 filePath: file.filePath,
@@ -1042,14 +1548,99 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   dateModified: file.modifiedTime || Date.now(),
                 });
               } else {
-                failedCount++;
-                // v1.0.14: Record as failed
-                newlyFailedFiles[file.filePath] = file.modifiedTime;
+                // v1.1.0 EXHAUSTIVE SCANNER FIX: Even when quickInfo also
+                // fails, try the file-size estimator + _fallbackMetadata
+                // one more time so YouTube rips and other corrupt-header
+                // files still get into the library.
+                const estimatedDuration = _estimateDurationFromFileSize(
+                  file.filePath,
+                  file.fileSize,
+                );
+                if (estimatedDuration > 0) {
+                  const fallback = await metadataReader._fallbackMetadata(
+                    file.filePath,
+                    knownArtists,
+                  );
+                  console.log(
+                    `[library:scan] Rejected-promise fallback: estimated ${estimatedDuration}s for ${file.filePath}`,
+                  );
+                  tracks.push({
+                    id: generateTrackId(file.filePath),
+                    filePath: file.filePath,
+                    fileName: file.fileName,
+                    title: fallback.title,
+                    artist: fallback.artist,
+                    album: fallback.album,
+                    albumArtist: "",
+                    genre: "",
+                    year: 0,
+                    trackNumber: 0,
+                    discNumber: 0,
+                    duration: estimatedDuration,
+                    bitrate: fallback.bitrate || 0,
+                    sampleRate: 0,
+                    channels: 2,
+                    format: path
+                      .extname(file.fileName)
+                      .replace(".", "")
+                      .toUpperCase(),
+                    fileSize: file.fileSize || 0,
+                    coverArt: fallback.coverArt || null,
+                    _hasCoverArt: !!fallback.coverArt,
+                    dateAdded: file.birthTime || file.modifiedTime || Date.now(),
+                    dateModified: file.modifiedTime || Date.now(),
+                  });
+                } else {
+                  failedCount++;
+                  // v1.0.14: Record as failed (only truly unparseable files
+                  // — 0 bytes, unknown codec, fs.stat failed, etc.)
+                  newlyFailedFiles[file.filePath] = file.modifiedTime;
+                }
               }
             } catch (_) {
-              failedCount++;
-              // v1.0.14: Record as failed
-              newlyFailedFiles[file.filePath] = file.modifiedTime;
+              // v1.1.0 EXHAUSTIVE SCANNER FIX: Try size estimation before giving up.
+              const estimatedDuration = _estimateDurationFromFileSize(
+                file.filePath,
+                file.fileSize,
+              );
+              if (estimatedDuration > 0) {
+                const fallback = await metadataReader._fallbackMetadata(
+                  file.filePath,
+                  knownArtists,
+                );
+                console.log(
+                  `[library:scan] Exception fallback: estimated ${estimatedDuration}s for ${file.filePath}`,
+                );
+                tracks.push({
+                  id: generateTrackId(file.filePath),
+                  filePath: file.filePath,
+                  fileName: file.fileName,
+                  title: fallback.title,
+                  artist: fallback.artist,
+                  album: fallback.album,
+                  albumArtist: "",
+                  genre: "",
+                  year: 0,
+                  trackNumber: 0,
+                  discNumber: 0,
+                  duration: estimatedDuration,
+                  bitrate: fallback.bitrate || 0,
+                  sampleRate: 0,
+                  channels: 2,
+                  format: path
+                    .extname(file.fileName)
+                    .replace(".", "")
+                    .toUpperCase(),
+                  fileSize: file.fileSize || 0,
+                  coverArt: fallback.coverArt || null,
+                  _hasCoverArt: !!fallback.coverArt,
+                  dateAdded: file.birthTime || file.modifiedTime || Date.now(),
+                  dateModified: file.modifiedTime || Date.now(),
+                });
+              } else {
+                failedCount++;
+                newlyFailedFiles[file.filePath] = file.modifiedTime;
+              }
             }
           }
         }
@@ -1199,6 +1790,10 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         `[library:scan] Done! ${mergedLibrary.length} tracks in library (${tracks.length} scanned/checked, ${skippedCount} skipped/cached, ${failedCount} failed) in ${elapsed}s`,
       );
 
+      // v1.1.2 — Invalidate the fingerprint cache after a scan so the
+      // next library:needs-scan call re-walks and picks up any changes
+      // (the scan may have updated mtimes via metadata writes, etc.)
+      _fpCache.clear();
       sendProgress(mainWindow, {
         stage: "complete",
         current: totalFiles,
@@ -1387,6 +1982,82 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
     }
   });
 
+  // ─── Cover Art: per-track thumbnail lookup (on-demand) ───────────
+  // Returns the protocol URL for a single track's pre-generated WebP thumbnail.
+  // Called lazily as rows scroll into view — never bulk-scans all tracks.
+  // If the WebP doesn't exist yet, generates it on-demand using Sharp.
+  ipcMain.handle("coverart:get-thumb", async (event, { trackId, size } = {}) => {
+    try {
+      if (!trackId) return { success: false, error: "No trackId" };
+      const targetSize = size || 128;
+      const thumbDir = path.join(
+        app.getPath("userData"),
+        "cached_covers",
+        "thumbs",
+      );
+      const thumbFile = path.join(thumbDir, `${trackId}_${targetSize}.webp`);
+
+      // Fast path: thumb already on disk
+      const exists = await fs.promises
+        .access(thumbFile)
+        .then(() => true)
+        .catch(() => false);
+      if (exists) {
+        return {
+          success: true,
+          url: `nova-media://thumb/${trackId}/${targetSize}`,
+        };
+      }
+
+      // Slow path: generate thumbnail on-demand from the library record
+      const library = getLibrary();
+      const track = library.find((t) => t.id === trackId);
+      if (!track || (!track.coverArt && !track._hasCoverArt)) {
+        return { success: false, error: "No cover art for track" };
+      }
+
+      const sharp = require("sharp");
+      if (!fs.existsSync(thumbDir))
+        fs.mkdirSync(thumbDir, { recursive: true });
+
+      let inputBuffer;
+      if (track.coverArt && track.coverArt.startsWith("data:")) {
+        const base64 = track.coverArt.split(",")[1];
+        if (!base64) return { success: false, error: "Invalid data URI" };
+        inputBuffer = Buffer.from(base64, "base64");
+      } else if (track.coverArt && fs.existsSync(track.coverArt)) {
+        inputBuffer = await fs.promises.readFile(track.coverArt);
+      } else if (track._hasCoverArt) {
+        // Embedded art — let the nova-media://art/ protocol handle it
+        return {
+          success: true,
+          url: `nova-media://art/${encodeURIComponent(trackId)}`,
+        };
+      } else {
+        return { success: false, error: "Cover art not found on disk" };
+      }
+
+      const metadata = await sharp(inputBuffer).metadata();
+      const side = Math.min(metadata.width, metadata.height);
+      const left = Math.floor((metadata.width - side) / 2);
+      const top = Math.floor((metadata.height - side) / 2);
+
+      const thumbBuffer = await sharp(inputBuffer)
+        .extract({ left, top, width: side, height: side })
+        .resize(targetSize, targetSize, { fit: "cover" })
+        .webp({ quality: 90 })
+        .toBuffer();
+
+      await fs.promises.writeFile(thumbFile, thumbBuffer);
+      return {
+        success: true,
+        url: `nova-media://thumb/${trackId}/${targetSize}`,
+      };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   // ─── Cover Art: batch thumbnails for all tracks with art ─────
   // Revolutionary: Uses Sharp (libvips) for 5-10x faster thumbnail generation.
   // Saves WebP thumbnails to disk for protocol URL serving (nova-media://thumb/)
@@ -1396,7 +2067,8 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
     try {
       const sharp = require("sharp");
       const library = getLibrary();
-      const targetSize = size || 48;
+      // v1.1.4 — Default to 128px for retina quality (was 48)
+      const targetSize = size || 128;
       const thumbDir = path.join(
         app.getPath("userData"),
         "cached_covers",
@@ -1467,7 +2139,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
               const thumbBuffer = await sharp(inputBuffer)
                 .extract({ left, top, width: side, height: side })
                 .resize(targetSize, targetSize, { fit: "cover" })
-                .webp({ quality: 75 }) // WebP: 25-35% smaller than PNG, faster decode
+                .webp({ quality: 90 }) // v1.1.4: bumped to 90 for 128px retina quality
                 .toBuffer();
 
               // Save to disk for future use
@@ -1596,7 +2268,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
           const thumbBuffer = await sharp(inputBuffer)
             .extract({ left, top, width: side, height: side })
             .resize(targetSize, targetSize, { fit: "cover" })
-            .webp({ quality: 80 })
+            .webp({ quality: 90 }) // v1.1.4: bumped to 90 for retina quality
             .toBuffer();
 
           fs.writeFileSync(thumbFile, thumbBuffer);
@@ -4009,6 +4681,816 @@ ipcMain.handle("app:open-external", async (_event, url) => {
   try {
     await shell.openExternal(url);
     return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── v1.1.1 — Thumbnail Stub File (fast app-entry cache) ───────────
+// Persistent JSON file at userData/thumb-stubs.json containing
+//   { trackId: resolvedSrc }
+// Loaded in ONE synchronous fs.readFileSync at app start so the renderer
+// never has to wait on slow IndexedDB reads (which were timing out on
+// HDD with 1144+ entries).
+//
+// Why a JSON file instead of IDB?
+//   1. fs.readFileSync of a 100KB JSON is ~1ms (vs IDB's 1500ms+)
+//   2. Electron's IDB is up to 20x slower than Chrome's for writes
+//      (known Electron bug — see github.com/electron/electron/issues/29427)
+//   3. The stub file is append-only-ish — easy to inspect/debug
+//   4. Single source of truth at startup; IDB remains as a backup
+//
+// The renderer-side TrackThumbHandler owns the in-memory Map and calls
+// these IPCs to load/save. Save is debounced 2s on the renderer side and
+// 1s on the main side (so rapid bursts of invalidate() during a library
+// rescan produce ONE file write, not 1144).
+let _thumbStubsPath = null;
+let _thumbStubsCache = null; // parsed object cache
+let _thumbStubsDirty = false;
+let _thumbStubsSaveTimer = null;
+
+function _getThumbStubsPath() {
+  if (_thumbStubsPath) return _thumbStubsPath;
+  _thumbStubsPath = path.join(app.getPath("userData"), "thumb-stubs.json");
+  return _thumbStubsPath;
+}
+
+function _readThumbStubsSync() {
+  if (_thumbStubsCache !== null) return _thumbStubsCache;
+  try {
+    const p = _getThumbStubsPath();
+    if (fs.existsSync(p)) {
+      const txt = fs.readFileSync(p, "utf-8");
+      _thumbStubsCache = JSON.parse(txt);
+      if (!_thumbStubsCache || typeof _thumbStubsCache !== "object") {
+        _thumbStubsCache = {};
+      }
+    } else {
+      _thumbStubsCache = {};
+    }
+  } catch (err) {
+    console.warn("[thumb-stubs] failed to read stub file:", err.message);
+    _thumbStubsCache = {};
+  }
+  return _thumbStubsCache;
+}
+
+function _scheduleThumbStubsSave() {
+  if (_thumbStubsSaveTimer) return;
+  _thumbStubsSaveTimer = setTimeout(() => {
+    _thumbStubsSaveTimer = null;
+    _thumbStubsDirty = false;
+    try {
+      const p = _getThumbStubsPath();
+      const data = _thumbStubsCache || {};
+      // Atomic write: write to .tmp then rename. Prevents corruption if
+      // the app crashes mid-write.
+      const tmp = p + ".tmp";
+      fs.writeFileSync(tmp, JSON.stringify(data), "utf-8");
+      fs.renameSync(tmp, p);
+    } catch (err) {
+      console.warn("[thumb-stubs] failed to save stub file:", err.message);
+    }
+  }, 1000);
+}
+
+ipcMain.handle("thumb-stubs:load", async () => {
+  try {
+    return { success: true, stubs: _readThumbStubsSync() };
+  } catch (err) {
+    return { success: false, error: err.message, stubs: {} };
+  }
+});
+
+ipcMain.handle("thumb-stubs:save", async (_event, stubs) => {
+  try {
+    if (!stubs || typeof stubs !== "object") {
+      return { success: false, error: "stubs must be an object" };
+    }
+    _thumbStubsCache = stubs;
+    _thumbStubsDirty = true;
+    _scheduleThumbStubsSave();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Bulk patch — merge a partial update into the stub file without
+// rewriting the whole thing in memory (well, we do rewrite on disk, but
+// the merge is O(n) where n = patch size, not O(N) where N = library).
+ipcMain.handle("thumb-stubs:patch", async (_event, patch) => {
+  try {
+    if (!patch || typeof patch !== "object") {
+      return { success: false, error: "patch must be an object" };
+    }
+    const cache = _readThumbStubsSync();
+    let added = 0, removed = 0;
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null || v === undefined) {
+        if (cache[k] !== undefined) {
+          delete cache[k];
+          removed++;
+        }
+      } else {
+        if (cache[k] !== v) {
+          cache[k] = v;
+          added++;
+        }
+      }
+    }
+    if (added > 0 || removed > 0) {
+      _thumbStubsDirty = true;
+      _scheduleThumbStubsSave();
+    }
+    return { success: true, added, removed };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── v1.2.0 — Artist Image Fetch (FREE, no API key, no login) ──────
+// Uses iTunes Search API (free, no auth, CORS-enabled) + Deezer API
+// (free, no auth) to fetch real artist photos.
+//
+// Flow:
+//   1. renderer calls artist-image:fetch { artistName }
+//   2. main process searches iTunes (entity=musicArtist) → gets artistId
+//   3. fetches artist artwork from iTunes (artworkUrl100, upscaled to 600x600)
+//   4. if iTunes fails, falls back to Deezer /search/artist → artist.picture_xl
+//   5. downloads image to userData/cached_covers/artists/<hash>.jpg
+//   6. returns { success, localPath } so renderer can use nova-media://cover/
+//
+// Saved images persist across launches — no re-fetching needed.
+// The renderer's bg-queue fetches missing artist images after library load.
+
+const ARTIST_IMAGE_CACHE_DIR = () =>
+  path.join(app.getPath("userData"), "cached_covers", "artists");
+
+function _artistImageHash(artistName) {
+  return crypto
+    .createHash("sha256")
+    .update(artistName.toLowerCase().trim())
+    .digest("hex")
+    .substring(0, 16);
+}
+
+// In-memory cache: artistName(lowercase) → localPath | null
+const _artistImageCache = new Map();
+
+// Load all saved artist images from disk at startup
+function _loadArtistImageCache() {
+  try {
+    const dir = ARTIST_IMAGE_CACHE_DIR();
+    if (!fs.existsSync(dir)) return;
+    const files = fs.readdirSync(dir);
+    for (const file of files) {
+      if (/\.(jpg|jpeg|png|webp)$/i.test(file)) {
+        // File is <hash>.ext — we can't reverse-lookup the artist name,
+        // but we store a mapping file (artist-images.json) for that.
+      }
+    }
+    // Load the name → path mapping
+    const mapFile = path.join(dir, "artist-images.json");
+    if (fs.existsSync(mapFile)) {
+      const map = JSON.parse(fs.readFileSync(mapFile, "utf-8"));
+      for (const [name, p] of Object.entries(map)) {
+        if (fs.existsSync(p)) {
+          _artistImageCache.set(name.toLowerCase(), p);
+        }
+      }
+    }
+  } catch (_) {}
+}
+
+function _saveArtistImageMap() {
+  try {
+    const dir = ARTIST_IMAGE_CACHE_DIR();
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const mapFile = path.join(dir, "artist-images.json");
+    const map = {};
+    for (const [k, v] of _artistImageCache) {
+      map[k] = v;
+    }
+    fs.writeFileSync(mapFile, JSON.stringify(map, null, 2), "utf-8");
+  } catch (_) {}
+}
+
+// Fetch artist image from iTunes + Deezer (main process, no CORS issues)
+async function _fetchArtistImageOnline(artistName) {
+  const name = (artistName || "").trim();
+  if (!name || name === "Unknown Artist") return null;
+
+  // 1. iTunes Search API — free, no auth, no API key
+  try {
+    const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(name)}&entity=musicArtist&limit=1`;
+    const resp = await fetch(itunesUrl, {
+      signal: AbortSignal.timeout(8000),
+      headers: { "User-Agent": "NovaTune/1.2.0" },
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.results && data.results.length > 0) {
+        const artist = data.results[0];
+        // iTunes doesn't always return artist artwork directly in search.
+        // But if the artist has a primaryGenreName, we can try the lookup API.
+        if (artist.artistLinkUrl) {
+          // Use the artistId to fetch artwork via lookup
+          const lookupUrl = `https://itunes.apple.com/lookup?id=${artist.artistId}&entity=musicArtist`;
+          const lookupResp = await fetch(lookupUrl, {
+            signal: AbortSignal.timeout(8000),
+            headers: { "User-Agent": "NovaTune/1.2.0" },
+          });
+          if (lookupResp.ok) {
+            const lookupData = await lookupResp.json();
+            if (lookupData.results && lookupData.results.length > 0) {
+              const a = lookupData.results[0];
+              if (a.artworkUrl100) {
+                // Upscale from 100x100 to 600x600
+                return a.artworkUrl100.replace("100x100", "600x600");
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (_) {}
+
+  // 2. Deezer API — free, no auth
+  try {
+    const deezerUrl = `https://api.deezer.com/search/artist?q=${encodeURIComponent(name)}&limit=1`;
+    const resp = await fetch(deezerUrl, {
+      signal: AbortSignal.timeout(8000),
+      headers: { "User-Agent": "NovaTune/1.2.0" },
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.data && data.data.length > 0) {
+        const artist = data.data[0];
+        // Deezer returns picture_small, picture_medium, picture_big, picture_xl
+        const imgUrl =
+          artist.picture_xl ||
+          artist.picture_big ||
+          artist.picture_medium ||
+          artist.picture;
+        if (imgUrl && !imgUrl.includes("deezer.com/images/artist/default")) {
+          return imgUrl;
+        }
+      }
+    }
+  } catch (_) {}
+
+  return null;
+}
+
+// Download an image URL to disk and return the local path.
+// v1.2.1 — Validates the image with Sharp after download to detect:
+//   - Corrupt/invalid image files (Sharp can't read metadata)
+//   - Tiny images (< 100×100) — likely placeholders or error icons
+//   - Solid-color images ( Deezer/iTunes default fallbacks) — detected by
+//     checking if the image has very low entropy (all pixels similar color)
+//   - Files < 2KB — definitely not a real photo
+// If the image fails validation, it's deleted and null is returned so the
+// renderer falls back to the album cover art.
+async function _downloadArtistImage(url, artistName) {
+  try {
+    const dir = ARTIST_IMAGE_CACHE_DIR();
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const hash = _artistImageHash(artistName);
+    // Determine extension from URL or content-type
+    let ext = ".jpg";
+    if (url.includes(".png")) ext = ".png";
+    else if (url.includes(".webp")) ext = ".webp";
+    const localPath = path.join(dir, `${hash}${ext}`);
+    // Skip if already exists (and is valid — validation runs on first download)
+    if (fs.existsSync(localPath)) return localPath;
+    // Download
+    const resp = await fetch(url, {
+      signal: AbortSignal.timeout(15000),
+      headers: { "User-Agent": "NovaTune/1.2.0" },
+    });
+    if (!resp.ok) return null;
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    // v1.2.1 — Reject files < 2KB (definitely not a real photo)
+    if (buffer.length < 2048) {
+      console.log(
+        `[artist-image] Rejected "${artistName}" — file too small (${buffer.length} bytes)`,
+      );
+      return null;
+    }
+    // v1.2.1 — Validate with Sharp: check dimensions + detect solid-color placeholders
+    try {
+      const sharp = require("sharp");
+      const metadata = await sharp(buffer).metadata();
+      // Reject tiny images (< 100×100) — likely icons or placeholders
+      if (!metadata.width || !metadata.height || metadata.width < 100 || metadata.height < 100) {
+        console.log(
+          `[artist-image] Rejected "${artistName}" — image too small (${metadata.width}×${metadata.height})`,
+        );
+        return null;
+      }
+      // Detect solid-color / near-solid-color images (Deezer default placeholders).
+      // v1.2.2: Use ALL 3 channels (R, G, B) and check both stdev AND mean.
+      // A white image (mean > 240, stdev < 15) is rejected even if it has
+      // tiny variations. A black image (mean < 15) is also rejected.
+      // We resize to 32×32 and get raw RGBA, then compute stats over all channels.
+      const tiny = await sharp(buffer)
+        .resize(32, 32, { fit: "cover" })
+        .raw()
+        .toBuffer();
+      let sum = 0, sumSq = 0, n = 0;
+      let rSum = 0, gSum = 0, bSum = 0;
+      for (let i = 0; i < tiny.length; i += 4) {
+        const r = tiny[i], g = tiny[i + 1], b = tiny[i + 2];
+        sum += r + g + b;
+        sumSq += r * r + g * g + b * b;
+        rSum += r; gSum += g; bSum += b;
+        n += 3;
+      }
+      const mean = sum / n;
+      const variance = sumSq / n - mean * mean;
+      const stdev = Math.sqrt(Math.max(0, variance));
+      const rMean = rSum / (n / 3);
+      const gMean = gSum / (n / 3);
+      const bMean = bSum / (n / 3);
+      // Reject if:
+      //   - stdev < 15 (nearly solid color — catches gray placeholders)
+      //   - mean > 235 AND stdev < 25 (nearly-white image with slight variation)
+      //   - mean < 15 (nearly-black image)
+      //   - all channels > 240 (pure white/near-white)
+      const isNearWhite = mean > 235 && stdev < 25;
+      const isNearBlack = mean < 15;
+      const isAllWhite = rMean > 240 && gMean > 240 && bMean > 240;
+      const isLowVariance = stdev < 15;
+      if (isNearWhite || isNearBlack || isAllWhite || isLowVariance) {
+        console.log(
+          `[artist-image] Rejected "${artistName}" — placeholder (mean=${mean.toFixed(1)}, stdev=${stdev.toFixed(1)}, r=${rMean.toFixed(0)} g=${gMean.toFixed(0)} b=${bMean.toFixed(0)})`,
+        );
+        return null;
+      }
+    } catch (sharpErr) {
+      // Sharp couldn't read the image → corrupt/invalid format
+      console.log(
+        `[artist-image] Rejected "${artistName}" — Sharp validation failed: ${sharpErr.message}`,
+      );
+      return null;
+    }
+    // All checks passed — save the file
+    fs.writeFileSync(localPath, buffer);
+    return localPath;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * v1.2.1 — Validate an already-saved artist image file.
+ * Used by the one-time migration to clean up corrupt images that were
+ * saved by v1.2.0 (which had no validation).
+ * Returns true if the image is valid, false if it should be deleted.
+ */
+async function _validateSavedArtistImage(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    if (stat.size < 2048) return false;
+    const sharp = require("sharp");
+    const buffer = fs.readFileSync(filePath);
+    const metadata = await sharp(buffer).metadata();
+    if (!metadata.width || !metadata.height || metadata.width < 100 || metadata.height < 100) {
+      return false;
+    }
+    // v1.2.2 — Same tighter validation as _downloadArtistImage
+    const tiny = await sharp(buffer)
+      .resize(32, 32, { fit: "cover" })
+      .raw()
+      .toBuffer();
+    let sum = 0, sumSq = 0, n = 0;
+    let rSum = 0, gSum = 0, bSum = 0;
+    for (let i = 0; i < tiny.length; i += 4) {
+      const r = tiny[i], g = tiny[i + 1], b = tiny[i + 2];
+      sum += r + g + b;
+      sumSq += r * r + g * g + b * b;
+      rSum += r; gSum += g; bSum += b;
+      n += 3;
+    }
+    const mean = sum / n;
+    const variance = sumSq / n - mean * mean;
+    const stdev = Math.sqrt(Math.max(0, variance));
+    const rMean = rSum / (n / 3);
+    const gMean = gSum / (n / 3);
+    const bMean = bSum / (n / 3);
+    const isNearWhite = mean > 235 && stdev < 25;
+    const isNearBlack = mean < 15;
+    const isAllWhite = rMean > 240 && gMean > 240 && bMean > 240;
+    const isLowVariance = stdev < 15;
+    return !(isNearWhite || isNearBlack || isAllWhite || isLowVariance);
+  } catch (_) {
+    return false;
+  }
+}
+
+// IPC: fetch + save artist image
+ipcMain.handle("artist-image:fetch", async (event, { artistName } = {}) => {
+  try {
+    const name = (artistName || "").trim();
+    if (!name || name === "Unknown Artist") {
+      return { success: true, localPath: null };
+    }
+    const key = name.toLowerCase();
+    // Check cache first
+    if (_artistImageCache.has(key)) {
+      return { success: true, localPath: _artistImageCache.get(key) };
+    }
+    // Fetch online
+    const imageUrl = await _fetchArtistImageOnline(name);
+    if (!imageUrl) {
+      // Cache the null result so we don't re-fetch
+      _artistImageCache.set(key, null);
+      _saveArtistImageMap();
+      return { success: true, localPath: null };
+    }
+    // Download + save
+    const localPath = await _downloadArtistImage(imageUrl, name);
+    if (localPath) {
+      _artistImageCache.set(key, localPath);
+      _saveArtistImageMap();
+      console.log(`[artist-image] Saved image for "${name}" → ${localPath}`);
+      return { success: true, localPath };
+    }
+    // Download failed
+    _artistImageCache.set(key, null);
+    _saveArtistImageMap();
+    return { success: true, localPath: null };
+  } catch (err) {
+    return { success: false, error: err.message, localPath: null };
+  }
+});
+
+// IPC: load all saved artist images (called at startup)
+ipcMain.handle("artist-image:load-all", async () => {
+  try {
+    if (_artistImageCache.size === 0) {
+      _loadArtistImageCache();
+    }
+    const result = {};
+    for (const [name, localPath] of _artistImageCache) {
+      if (localPath) result[name] = localPath;
+    }
+    return { success: true, images: result };
+  } catch (err) {
+    return { success: false, error: err.message, images: {} };
+  }
+});
+
+// IPC: get a single artist image (checks cache, no online fetch)
+ipcMain.handle("artist-image:get", async (event, { artistName } = {}) => {
+  try {
+    const name = (artistName || "").trim().toLowerCase();
+    if (!name) return { success: true, localPath: null };
+    if (_artistImageCache.size === 0) _loadArtistImageCache();
+    return { success: true, localPath: _artistImageCache.get(name) || null };
+  } catch (err) {
+    return { success: false, error: err.message, localPath: null };
+  }
+});
+
+// v1.2.1 — One-time migration: validate all saved artist images and delete
+// corrupt/placeholder ones. Gated by settings._artistImageValidationV121.
+// v1.2.2 — Re-run with tighter validation (rejects white/near-white images
+// that passed v1.2.1's check). Gated by _artistImageValidationV122.
+ipcMain.handle("artist-image:validate-saved", async () => {
+  try {
+    const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+    if (settings._artistImageValidationV122) {
+      return { success: true, validated: false, reason: "already-done" };
+    }
+    settings._artistImageValidationV122 = true;
+    writeJSON(SETTINGS_FILE, settings);
+
+    if (_artistImageCache.size === 0) _loadArtistImageCache();
+    const dir = ARTIST_IMAGE_CACHE_DIR();
+    if (!fs.existsSync(dir)) {
+      return { success: true, validated: true, deletedCount: 0 };
+    }
+    let deletedCount = 0;
+    let validCount = 0;
+    const toDelete = [];
+    // Validate each cached image
+    for (const [name, localPath] of [..._artistImageCache]) {
+      if (!localPath || !fs.existsSync(localPath)) {
+        _artistImageCache.delete(name);
+        continue;
+      }
+      const isValid = await _validateSavedArtistImage(localPath);
+      if (!isValid) {
+        toDelete.push({ name, path: localPath });
+      } else {
+        validCount++;
+      }
+    }
+    // Delete invalid images
+    for (const { name, path: p } of toDelete) {
+      try {
+        fs.unlinkSync(p);
+        _artistImageCache.delete(name);
+        deletedCount++;
+        console.log(`[artist-image] Migration deleted invalid image for "${name}"`);
+      } catch (_) {}
+    }
+    _saveArtistImageMap();
+    console.log(
+      `[artist-image] Migration: ${validCount} valid, ${deletedCount} deleted (corrupt/placeholder)`,
+    );
+    return { success: true, validated: true, deletedCount, validCount };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── Artist Image: User-supplied custom image ─────────────────────────────
+// Accepts { artistName, localFilePath } or { artistName, url }.
+// If url is provided, it is downloaded on the main process (no CORS issues).
+// The image is cropped/resized to a 600×600 square using Sharp so it always
+// fills the artist card perfectly regardless of the original aspect ratio.
+// The placeholder validator is intentionally bypassed — the user chose this.
+ipcMain.handle("artist-image:save-custom", async (event, { artistName, localFilePath, url } = {}) => {
+  try {
+    const name = (artistName || "").trim();
+    if (!name) return { success: false, error: "No artist name provided" };
+
+    let buffer;
+
+    if (localFilePath) {
+      // Read from disk (file the user picked via dialog)
+      if (!fs.existsSync(localFilePath)) {
+        return { success: false, error: "File not found: " + localFilePath };
+      }
+      buffer = fs.readFileSync(localFilePath);
+    } else if (url) {
+      // Download from URL
+      const resp = await fetch(url, {
+        signal: AbortSignal.timeout(20000),
+        headers: { "User-Agent": "NovaTune/1.2.0" },
+      });
+      if (!resp.ok) {
+        return { success: false, error: `Download failed: HTTP ${resp.status}` };
+      }
+      buffer = Buffer.from(await resp.arrayBuffer());
+    } else {
+      return { success: false, error: "Provide localFilePath or url" };
+    }
+
+    if (!buffer || buffer.length < 100) {
+      return { success: false, error: "Image data is empty or too small" };
+    }
+
+    // Use Sharp to validate + crop to perfect square (cover fit, 600×600)
+    const sharp = require("sharp");
+    let croppedBuffer;
+    try {
+      croppedBuffer = await sharp(buffer)
+        .resize(600, 600, { fit: "cover", position: "attention" })
+        .jpeg({ quality: 90 })
+        .toBuffer();
+    } catch (sharpErr) {
+      // Sharp couldn't decode — try to coerce via raw pipeline (handles most corrupt/unusual formats)
+      try {
+        croppedBuffer = await sharp(buffer, { failOnError: false })
+          .resize(600, 600, { fit: "cover", position: "attention" })
+          .jpeg({ quality: 90 })
+          .toBuffer();
+      } catch (_) {
+        return { success: false, error: "Could not decode image: " + sharpErr.message };
+      }
+    }
+
+    // Save to the same artist images cache dir
+    const dir = ARTIST_IMAGE_CACHE_DIR();
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const hash = _artistImageHash(name);
+
+    // Clean up any existing image files for this artist
+    try {
+      const existingFiles = fs.readdirSync(dir);
+      for (const f of existingFiles) {
+        if (f.startsWith(hash + "_") || f === hash + ".jpg") {
+          try { fs.unlinkSync(path.join(dir, f)); } catch (_) {}
+        }
+      }
+    } catch (_) {}
+
+    const localPath = path.join(dir, `${hash}_${Date.now()}.jpg`);
+    fs.writeFileSync(localPath, croppedBuffer);
+
+    // Update in-memory cache + map file
+    _artistImageCache.set(name.toLowerCase(), localPath);
+    _saveArtistImageMap();
+
+    console.log(`[artist-image:save-custom] Saved custom image for "${name}" → ${localPath}`);
+    return { success: true, localPath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Load the cache at module initialization (after app is ready)
+// We call this lazily from the first IPC handler.
+
+// ─── v1.1.1 — Pre-generate thumbnails for a list of trackIds ────────
+// Called by the renderer's bg-queue after library load. Generates
+// 48px WebP thumbnails on the MAIN process side (avoiding 1144 IPC
+// round-trips) and returns the protocol URLs for the renderer to cache.
+//
+// This is the "fast stub" the user asked for: by the time the user
+// scrolls the library, every visible thumbnail is already on disk
+// (cached_covers/thumbs/<id>_128.webp) — the renderer's <img>/<canvas>
+// just reads the cached file, no Sharp processing needed.
+// v1.1.4: Default size bumped from 48 → 128 for retina quality.
+ipcMain.handle("coverart:ensure-thumbs", async (event, { trackIds, size = 128 } = {}) => {
+  try {
+    if (!Array.isArray(trackIds) || trackIds.length === 0) {
+      return { success: true, thumbs: {}, missing: [] };
+    }
+    const sharp = require("sharp");
+    const thumbDir = path.join(
+      app.getPath("userData"),
+      "cached_covers",
+      "thumbs",
+    );
+    if (!fs.existsSync(thumbDir)) {
+      await fs.promises.mkdir(thumbDir, { recursive: true });
+    }
+
+    const thumbs = {};
+    const missing = [];
+    const library = getLibrary();
+    const libById = new Map(library.map((t) => [t.id, t]));
+
+    // Process in parallel batches of 8 (Sharp is thread-safe; 8 fits
+    // comfortably within libuv's default thread pool of 4 × 2).
+    const BATCH = 8;
+    for (let i = 0; i < trackIds.length; i += BATCH) {
+      const batch = trackIds.slice(i, i + BATCH);
+      await Promise.allSettled(
+        batch.map(async (trackId) => {
+          try {
+            const thumbFile = path.join(
+              thumbDir,
+              `${trackId}_${size}.webp`,
+            );
+            // Fast path: thumb already exists on disk → just return URL
+            const exists = await fs.promises
+              .access(thumbFile)
+              .then(() => true)
+              .catch(() => false);
+            if (exists) {
+              thumbs[trackId] = `nova-media://thumb/${trackId}/${size}`;
+              return;
+            }
+            // Need to generate — look up cover art
+            const track = libById.get(trackId);
+            let coverArt = track?.coverArt || null;
+            if (!coverArt) {
+              // Fall back to track_covers table (where base64 was stored)
+              coverArt = getCoverArtByTrackId(trackId);
+            }
+            if (!coverArt) {
+              missing.push(trackId);
+              return;
+            }
+            // Load source image
+            let inputBuffer;
+            if (coverArt.startsWith("data:")) {
+              const base64 = coverArt.split(",")[1];
+              if (!base64) return;
+              inputBuffer = Buffer.from(base64, "base64");
+            } else {
+              try {
+                inputBuffer = await fs.promises.readFile(coverArt);
+              } catch (_) {
+                missing.push(trackId);
+                return;
+              }
+            }
+            // Generate square-cropped WebP thumbnail
+            const metadata = await sharp(inputBuffer).metadata();
+            const side = Math.min(metadata.width, metadata.height);
+            const left = Math.floor((metadata.width - side) / 2);
+            const top = Math.floor((metadata.height - side) / 2);
+            const thumbBuffer = await sharp(inputBuffer)
+              .extract({ left, top, width: side, height: side })
+              .resize(size, size, { fit: "cover" })
+              .webp({ quality: 90 }) // v1.1.4: bumped to 90 for retina quality
+              .toBuffer();
+            await fs.promises.writeFile(thumbFile, thumbBuffer);
+            thumbs[trackId] = `nova-media://thumb/${trackId}/${size}`;
+          } catch (_) {
+            missing.push(trackId);
+          }
+        }),
+      );
+      // Yield between batches so we don't starve the audio thread on HDD.
+      await new Promise((resolve) => setImmediate(resolve));
+      // Back off harder while audio is active
+      if (Date.now() - (global._lastAudioActivity || 0) < 1500) {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+    }
+    return { success: true, thumbs, missing };
+  } catch (err) {
+    return { success: false, error: err.message, thumbs: {}, missing: [] };
+  }
+});
+
+// ─── v1.1.4 — Sibling cover fallback ────────────────────────────────
+// For tracks with NO cover art (common for YouTube rips like
+// don_toliver_high_unreleased__yaxBLgIoHuI_140.mp3 that have no embedded
+// picture and no sidecar cover.jpg), find another track in the SAME
+// FOLDER that has cover art, and return that track's coverArt.
+//
+// This handles the very common case where a user has a folder of songs
+// from the same artist/album and SOME have embedded art (purchased from
+// iTunes, ripped from CD) while others don't (YouTube downloads).
+// Visually, all songs in the folder should show the same album cover.
+//
+// Returns { success, coverArt, sourceTrackId } or { success: true, coverArt: null }
+ipcMain.handle("coverart:sibling-cover", async (event, { trackId } = {}) => {
+  try {
+    if (!trackId) return { success: false, error: "trackId required" };
+    const library = getLibrary();
+    const track = library.find((t) => t.id === trackId);
+    if (!track || !track.filePath) {
+      return { success: true, coverArt: null };
+    }
+    const dir = path.dirname(track.filePath);
+    // Find siblings in the same directory
+    const siblings = library.filter(
+      (t) =>
+        t.id !== trackId &&
+        t.filePath &&
+        path.dirname(t.filePath) === dir &&
+        (t.coverArt || t._hasCoverArt),
+    );
+    if (siblings.length === 0) {
+      return { success: true, coverArt: null };
+    }
+    // Pick the first sibling with cover art
+    const sibling = siblings[0];
+    let coverArt = sibling.coverArt;
+    if (!coverArt && sibling._hasCoverArt) {
+      // Look up from track_covers table
+      coverArt = getCoverArtByTrackId(sibling.id);
+    }
+    return {
+      success: true,
+      coverArt,
+      sourceTrackId: sibling.id,
+      sourceTitle: sibling.title,
+    };
+  } catch (err) {
+    return { success: false, error: err.message, coverArt: null };
+  }
+});
+
+// ─── v1.1.4 — One-time thumbnail migration ─────────────────────────
+// Deletes old <id>_48.webp and <id>_96.webp files from the thumbs
+// directory so the new 128px versions get generated fresh. Also signals
+// the renderer to clear stale IDB entries (batch48::/batch96::) that
+// still point to the old 48px URLs.
+//
+// Gated by settings._thumbMigrationV114 — runs ONCE, then never again.
+ipcMain.handle("coverart:migrate-v114", async () => {
+  try {
+    const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+    if (settings._thumbMigrationV114) {
+      return { success: true, migrated: false, reason: "already-done" };
+    }
+    const thumbDir = path.join(
+      app.getPath("userData"),
+      "cached_covers",
+      "thumbs",
+    );
+    let deletedCount = 0;
+    if (fs.existsSync(thumbDir)) {
+      const files = await fs.promises.readdir(thumbDir);
+      // Delete all <id>_48.webp and <id>_96.webp files
+      const deletePromises = files.map(async (file) => {
+        if (/_48\.webp$/i.test(file) || /_96\.webp$/i.test(file)) {
+          try {
+            await fs.promises.unlink(path.join(thumbDir, file));
+            deletedCount++;
+          } catch (_) {}
+        }
+      });
+      await Promise.allSettled(deletePromises);
+    }
+    // Mark migration as done
+    settings._thumbMigrationV114 = true;
+    writeJSON(SETTINGS_FILE, settings);
+    console.log(
+      `[migrate-v114] Deleted ${deletedCount} old thumbnail files (48px + 96px)`,
+    );
+    return { success: true, migrated: true, deletedCount };
   } catch (err) {
     return { success: false, error: err.message };
   }
