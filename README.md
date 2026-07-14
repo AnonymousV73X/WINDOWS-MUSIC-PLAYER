@@ -25,7 +25,7 @@
 
 ---
 
-## Why I Built NovaTune — An Honest Story
+## Why I Built NovaTune
 
 I never set out to write a music player. I just wanted to listen to music on my laptop the way I do on my phone.
 
