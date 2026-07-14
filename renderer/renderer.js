@@ -2201,6 +2201,63 @@ document.addEventListener("DOMContentLoaded", async () => {
   setTimeout(() => {
     _updateSplashStatus("fingerprint", "skipped", "Auto-scan disabled");
   }, 100);
+
+  // Play external file if passed on startup or from second instance
+  async function playExternalFile(filePath) {
+    if (!filePath) return;
+    const fileName = filePath.split(/[\\/]/).pop();
+    const defaultTitle = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
+    const track = {
+      id: "external-" + Date.now(),
+      filePath: filePath,
+      title: defaultTitle,
+      artist: "External File",
+      album: "Downloads",
+      duration: 0
+    };
+
+    try {
+      const res = await window.novaAPI.invoke("file:get-metadata", filePath);
+      if (res && res.success && res.metadata) {
+        track.title = res.metadata.title || defaultTitle;
+        track.artist = res.metadata.artist || "Unknown Artist";
+        track.album = res.metadata.album || "Unknown Album";
+        track.duration = res.metadata.duration || 0;
+        if (res.metadata.coverArt) {
+          track.coverArt = res.metadata.coverArt;
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to read metadata for external file:", err.message);
+    }
+
+    await playTrack(track);
+  }
+
+  // Register listeners for player events from main process (taskbar thumbnail buttons, file associations)
+  window.novaAPI.on("player:play-file", (filePath) => {
+    playExternalFile(filePath);
+  });
+
+  window.novaAPI.on("player:toggle-play-pause", () => {
+    const playBtn = document.getElementById("play-btn") || document.getElementById("ov-play-btn");
+    if (playBtn) playBtn.click();
+  });
+
+  window.novaAPI.on("player:next", () => {
+    playNext();
+  });
+
+  window.novaAPI.on("player:prev", () => {
+    playPrevious();
+  });
+
+  // Check for file opened on startup
+  window.novaAPI.invoke("app:get-startup-file").then((filePath) => {
+    if (filePath) {
+      playExternalFile(filePath);
+    }
+  }).catch((err) => console.warn("Failed to check for startup file:", err));
 });
 
 // ─── Keyboard Shortcuts (unified global handler) ─────────────────

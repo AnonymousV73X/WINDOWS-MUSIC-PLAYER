@@ -2629,7 +2629,7 @@ var require_package = __commonJS({
   "package.json"(exports2, module2) {
     module2.exports = {
       name: "novatune",
-      version: "1.1.0",
+      version: "1.1.1",
       description: "NovaTune \u2014 A premium Windows music player with Spotify-dark aesthetics",
       main: "main/main.bundle.js",
       scripts: {
@@ -4351,10 +4351,18 @@ var require_ipc = __commonJS({
       ipcMain.handle("library:remove-track", async (event, trackId) => {
         try {
           const library = getLibrary();
+          const track = library.find((t) => t.id === trackId);
+          if (!track) return { success: true, removed: false };
           const filtered = library.filter((t) => t.id !== trackId);
-          if (filtered.length === library.length)
-            return { success: true, removed: false };
           saveLibrary(filtered);
+          if (track.filePath && fs.existsSync(track.filePath)) {
+            try {
+              await fs.promises.unlink(track.filePath);
+              console.log(`[library] Deleted file from storage: ${track.filePath}`);
+            } catch (e) {
+              console.warn(`[library] Failed to delete file ${track.filePath} from storage:`, e.message);
+            }
+          }
           return { success: true, removed: true };
         } catch (err) {
           return { success: false, error: err.message };
@@ -4864,6 +4872,14 @@ var require_ipc = __commonJS({
           const base64 = buffer.toString("base64");
           const mimeType = getAudioMimeType(filePath);
           return { success: true, data: `data:${mimeType};base64,${base64}` };
+        } catch (err) {
+          return { success: false, error: err.message };
+        }
+      });
+      ipcMain.handle("file:get-metadata", async (event, filePath) => {
+        try {
+          const metadata = await metadataReader.readMetadata(filePath);
+          return { success: true, metadata };
         } catch (err) {
           return { success: false, error: err.message };
         }
@@ -5484,6 +5500,9 @@ ${items}
         if (_smtcBridgeRef && typeof _smtcBridgeRef.updatePlaybackStatus === "function") {
           _smtcBridgeRef.updatePlaybackStatus(status);
         }
+        if (global.updateThumbarButtons) {
+          global.updateThumbarButtons(status === "playing");
+        }
         return { success: true };
       });
       ipcMain.handle("smtc:update-position", (_, positionMs) => {
@@ -5491,6 +5510,11 @@ ${items}
           _smtcBridgeRef.updatePosition(positionMs);
         }
         return { success: true };
+      });
+      ipcMain.handle("app:get-startup-file", () => {
+        const file = global.fileToPlayOnStartup;
+        global.fileToPlayOnStartup = null;
+        return file;
       });
       ipcMain.handle("lyrics:get-from-db", async (event, trackId) => {
         try {
@@ -7014,18 +7038,39 @@ var require_main = __commonJS({
         }
       }
     ]);
+    function parseFileFromArgv(argv) {
+      if (!argv || !Array.isArray(argv)) return null;
+      for (let i = 1; i < argv.length; i++) {
+        const arg = argv[i];
+        if (arg.startsWith("-")) continue;
+        const ext = path.extname(arg).toLowerCase();
+        const audioExtensions = [".mp3", ".flac", ".wav", ".m4a", ".ogg", ".aac", ".wma", ".opus", ".m3u", ".m3u8"];
+        if (audioExtensions.includes(ext)) {
+          const fullPath = path.resolve(arg);
+          if (fs.existsSync(fullPath)) {
+            return fullPath;
+          }
+        }
+      }
+      return null;
+    }
+    global.fileToPlayOnStartup = parseFileFromArgv(process.argv);
     var gotTheLock = app.requestSingleInstanceLock();
     if (!gotTheLock) {
       console.log("[single-instance] Another instance has the lock \u2014 quitting.");
       app.quit();
     } else {
-      app.on("second-instance", () => {
+      app.on("second-instance", (event, commandLine) => {
         console.log(
           "[single-instance] Second instance launched \u2014 focusing existing window."
         );
         if (mainWindow) {
           if (mainWindow.isMinimized()) mainWindow.restore();
           mainWindow.focus();
+          const filePath = parseFileFromArgv(commandLine);
+          if (filePath) {
+            mainWindow.webContents.send("player:play-file", filePath);
+          }
         } else {
           console.log(
             "[single-instance] No window exists \u2014 zombie process. Force-exiting."
@@ -7120,6 +7165,43 @@ var require_main = __commonJS({
         }
       });
       registerIPCHandlers(mainWindow);
+      let thumbarIcons = null;
+      ensureThumbarIcons().then((icons) => {
+        thumbarIcons = icons;
+        global.updateThumbarButtons = (isPlaying) => {
+          if (!mainWindow || mainWindow.isDestroyed() || !thumbarIcons) return;
+          try {
+            mainWindow.setThumbarButtons([
+              {
+                tooltip: "Previous",
+                icon: thumbarIcons.prev,
+                click() {
+                  mainWindow.webContents.send("player:prev");
+                }
+              },
+              {
+                tooltip: isPlaying ? "Pause" : "Play",
+                icon: isPlaying ? thumbarIcons.pause : thumbarIcons.play,
+                click() {
+                  mainWindow.webContents.send("player:toggle-play-pause");
+                }
+              },
+              {
+                tooltip: "Next",
+                icon: thumbarIcons.next,
+                click() {
+                  mainWindow.webContents.send("player:next");
+                }
+              }
+            ]);
+          } catch (err) {
+            console.warn("Failed to set thumbar buttons:", err.message);
+          }
+        };
+        global.updateThumbarButtons(false);
+      }).catch((err) => {
+        console.error("Failed to initialize thumbar icons:", err);
+      });
       mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
       mainWindow.webContents.on(
         "console-message",
@@ -7141,6 +7223,9 @@ var require_main = __commonJS({
           }
         }
         mainWindow.show();
+        if (global.updateThumbarButtons) {
+          global.updateThumbarButtons(false);
+        }
       }
       mainWindow.once("ready-to-show", () => _showWindow("ready-to-show"));
       mainWindow.webContents.once("did-finish-load", () => {
@@ -7674,6 +7759,36 @@ var require_main = __commonJS({
         if (parsedUrl.protocol !== "file:") event2.preventDefault();
       });
     });
+    var { nativeImage } = require("electron");
+    async function ensureThumbarIcons() {
+      const iconDir = path.join(app.getPath("userData"), "thumbar-icons");
+      if (!fs.existsSync(iconDir)) {
+        fs.mkdirSync(iconDir, { recursive: true });
+      }
+      const prevPath = path.join(iconDir, "prev.png");
+      const playPath = path.join(iconDir, "play.png");
+      const pausePath = path.join(iconDir, "pause.png");
+      const nextPath = path.join(iconDir, "next.png");
+      const prevSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M10 6 L10 26 M24 6 L12 16 L24 26 Z" fill="#ffffff"/></svg>`;
+      const playSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M8 6 L26 16 L8 26 Z" fill="#ffffff"/></svg>`;
+      const pauseSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="6" width="5" height="20" fill="#ffffff"/><rect x="19" y="6" width="5" height="20" fill="#ffffff"/></svg>`;
+      const nextSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M6 6 L18 16 L6 26 M22 6 L22 26" fill="#ffffff"/></svg>`;
+      try {
+        const sharp = require("sharp");
+        if (!fs.existsSync(prevPath)) await sharp(Buffer.from(prevSvg)).png().toFile(prevPath);
+        if (!fs.existsSync(playPath)) await sharp(Buffer.from(playSvg)).png().toFile(playPath);
+        if (!fs.existsSync(pausePath)) await sharp(Buffer.from(pauseSvg)).png().toFile(pausePath);
+        if (!fs.existsSync(nextPath)) await sharp(Buffer.from(nextSvg)).png().toFile(nextPath);
+      } catch (err) {
+        console.error("Failed to generate taskbar icons using sharp, using empty image icons:", err.message);
+      }
+      return {
+        prev: nativeImage.createFromPath(prevPath),
+        play: nativeImage.createFromPath(playPath),
+        pause: nativeImage.createFromPath(pausePath),
+        next: nativeImage.createFromPath(nextPath)
+      };
+    }
     module2.exports = { mainWindow: () => mainWindow };
   }
 });
