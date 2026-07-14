@@ -3855,6 +3855,10 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
     ) {
       _smtcBridgeRef.updatePlaybackStatus(status);
     }
+    // Update Windows taskbar thumbnail toolbar buttons
+    if (global.updateThumbarButtons) {
+      global.updateThumbarButtons(status === "playing");
+    }
     return { success: true };
   });
 
@@ -3863,6 +3867,12 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       _smtcBridgeRef.updatePosition(positionMs);
     }
     return { success: true };
+  });
+
+  ipcMain.handle("app:get-startup-file", () => {
+    const file = global.fileToPlayOnStartup;
+    global.fileToPlayOnStartup = null; // Clear so it only plays once
+    return file;
   });
 
   // ═══════════════════════════════════════════════════════════════════

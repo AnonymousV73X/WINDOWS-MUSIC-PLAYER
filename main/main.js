@@ -160,19 +160,45 @@ protocol.registerSchemesAsPrivileged([
 //   - Add before-quit handler with a 3-second force-exit safety net:
 //     if app.quit() doesn't complete in 3s (something is hanging),
 //     process.exit(0) forces immediate termination
+// File association support: parse command line arguments for audio files
+function parseFileFromArgv(argv) {
+  if (!argv || !Array.isArray(argv)) return null;
+  for (let i = 1; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg.startsWith("-")) continue;
+    const ext = path.extname(arg).toLowerCase();
+    const audioExtensions = [".mp3", ".flac", ".wav", ".m4a", ".ogg", ".aac", ".wma", ".opus", ".m3u", ".m3u8"];
+    if (audioExtensions.includes(ext)) {
+      const fullPath = path.resolve(arg);
+      if (fs.existsSync(fullPath)) {
+        return fullPath;
+      }
+    }
+  }
+  return null;
+}
+
+global.fileToPlayOnStartup = parseFileFromArgv(process.argv);
+
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
   console.log("[single-instance] Another instance has the lock — quitting.");
   app.quit();
 } else {
-  app.on("second-instance", () => {
+  app.on("second-instance", (event, commandLine) => {
     console.log(
       "[single-instance] Second instance launched — focusing existing window.",
     );
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
+
+      // Handle file open from second instance
+      const filePath = parseFileFromArgv(commandLine);
+      if (filePath) {
+        mainWindow.webContents.send("player:play-file", filePath);
+      }
     } else {
       // CHANGED v3.0: No window exists — this process is a zombie (the
       // window was closed but app.quit() never completed). Force-exit
@@ -301,6 +327,47 @@ function createMainWindow() {
   });
 
   registerIPCHandlers(mainWindow);
+
+  // Initialize taskbar thumbnail toolbar actions
+  let thumbarIcons = null;
+  ensureThumbarIcons().then(icons => {
+    thumbarIcons = icons;
+    global.updateThumbarButtons = (isPlaying) => {
+      if (!mainWindow || mainWindow.isDestroyed() || !thumbarIcons) return;
+      try {
+        mainWindow.setThumbarButtons([
+          {
+            tooltip: "Previous",
+            icon: thumbarIcons.prev,
+            click() {
+              mainWindow.webContents.send("player:prev");
+            }
+          },
+          {
+            tooltip: isPlaying ? "Pause" : "Play",
+            icon: isPlaying ? thumbarIcons.pause : thumbarIcons.play,
+            click() {
+              mainWindow.webContents.send("player:toggle-play-pause");
+            }
+          },
+          {
+            tooltip: "Next",
+            icon: thumbarIcons.next,
+            click() {
+              mainWindow.webContents.send("player:next");
+            }
+          }
+        ]);
+      } catch (err) {
+        console.warn("Failed to set thumbar buttons:", err.message);
+      }
+    };
+    // Initial taskbar buttons state
+    global.updateThumbarButtons(false);
+  }).catch(err => {
+    console.error("Failed to initialize thumbar icons:", err);
+  });
+
   mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
 
   mainWindow.webContents.on(
@@ -989,5 +1056,41 @@ app.on("web-contents-created", (event, contents) => {
     if (parsedUrl.protocol !== "file:") event.preventDefault();
   });
 });
+
+const { nativeImage } = require("electron");
+
+async function ensureThumbarIcons() {
+  const iconDir = path.join(app.getPath("userData"), "thumbar-icons");
+  if (!fs.existsSync(iconDir)) {
+    fs.mkdirSync(iconDir, { recursive: true });
+  }
+
+  const prevPath = path.join(iconDir, "prev.png");
+  const playPath = path.join(iconDir, "play.png");
+  const pausePath = path.join(iconDir, "pause.png");
+  const nextPath = path.join(iconDir, "next.png");
+
+  const prevSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M10 6 L10 26 M24 6 L12 16 L24 26 Z" fill="#ffffff"/></svg>`;
+  const playSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M8 6 L26 16 L8 26 Z" fill="#ffffff"/></svg>`;
+  const pauseSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="6" width="5" height="20" fill="#ffffff"/><rect x="19" y="6" width="5" height="20" fill="#ffffff"/></svg>`;
+  const nextSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M6 6 L18 16 L6 26 M22 6 L22 26" fill="#ffffff"/></svg>`;
+
+  try {
+    const sharp = require("sharp");
+    if (!fs.existsSync(prevPath)) await sharp(Buffer.from(prevSvg)).png().toFile(prevPath);
+    if (!fs.existsSync(playPath)) await sharp(Buffer.from(playSvg)).png().toFile(playPath);
+    if (!fs.existsSync(pausePath)) await sharp(Buffer.from(pauseSvg)).png().toFile(pausePath);
+    if (!fs.existsSync(nextPath)) await sharp(Buffer.from(nextSvg)).png().toFile(nextPath);
+  } catch (err) {
+    console.error("Failed to generate taskbar icons using sharp, using empty image icons:", err.message);
+  }
+
+  return {
+    prev: nativeImage.createFromPath(prevPath),
+    play: nativeImage.createFromPath(playPath),
+    pause: nativeImage.createFromPath(pausePath),
+    next: nativeImage.createFromPath(nextPath)
+  };
+}
 
 module.exports = { mainWindow: () => mainWindow };
