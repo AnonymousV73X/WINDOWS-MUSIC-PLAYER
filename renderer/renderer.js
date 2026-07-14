@@ -2206,15 +2206,31 @@ document.addEventListener("DOMContentLoaded", async () => {
   async function playExternalFile(filePath) {
     if (!filePath) return;
     const fileName = filePath.split(/[\\/]/).pop();
-    const title = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
+    const defaultTitle = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
     const track = {
       id: "external-" + Date.now(),
       filePath: filePath,
-      title: title,
+      title: defaultTitle,
       artist: "External File",
       album: "Downloads",
       duration: 0
     };
+
+    try {
+      const res = await window.novaAPI.invoke("file:get-metadata", filePath);
+      if (res && res.success && res.metadata) {
+        track.title = res.metadata.title || defaultTitle;
+        track.artist = res.metadata.artist || "Unknown Artist";
+        track.album = res.metadata.album || "Unknown Album";
+        track.duration = res.metadata.duration || 0;
+        if (res.metadata.coverArt) {
+          track.coverArt = res.metadata.coverArt;
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to read metadata for external file:", err.message);
+    }
+
     await playTrack(track);
   }
 

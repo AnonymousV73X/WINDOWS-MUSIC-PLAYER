@@ -397,6 +397,9 @@ function createMainWindow() {
       } catch (_) {}
     }
     mainWindow.show();
+    if (global.updateThumbarButtons) {
+      global.updateThumbarButtons(false);
+    }
   }
 
   mainWindow.once("ready-to-show", () => _showWindow("ready-to-show"));

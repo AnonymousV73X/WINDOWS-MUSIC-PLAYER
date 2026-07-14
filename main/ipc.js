@@ -2427,10 +2427,22 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   ipcMain.handle("library:remove-track", async (event, trackId) => {
     try {
       const library = getLibrary();
+      const track = library.find((t) => t.id === trackId);
+      if (!track) return { success: true, removed: false };
+
       const filtered = library.filter((t) => t.id !== trackId);
-      if (filtered.length === library.length)
-        return { success: true, removed: false };
       saveLibrary(filtered);
+
+      // Delete the file from physical storage
+      if (track.filePath && fs.existsSync(track.filePath)) {
+        try {
+          await fs.promises.unlink(track.filePath);
+          console.log(`[library] Deleted file from storage: ${track.filePath}`);
+        } catch (e) {
+          console.warn(`[library] Failed to delete file ${track.filePath} from storage:`, e.message);
+        }
+      }
+
       return { success: true, removed: true };
     } catch (err) {
       return { success: false, error: err.message };
@@ -3084,6 +3096,15 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       const base64 = buffer.toString("base64");
       const mimeType = getAudioMimeType(filePath);
       return { success: true, data: `data:${mimeType};base64,${base64}` };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle("file:get-metadata", async (event, filePath) => {
+    try {
+      const metadata = await metadataReader.readMetadata(filePath);
+      return { success: true, metadata };
     } catch (err) {
       return { success: false, error: err.message };
     }
