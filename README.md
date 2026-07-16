@@ -288,7 +288,7 @@ This deserves its own section because it's the soul of NovaTune's UI.
 
 The squiggly progress bar is a direct port of the AOSP (Android Open Source Project) `SquigglyProgress` animation. The wave:
 
-- **Animates only while playing** — it freezes when paused, like a held breath.
+- **Animates only while playing** — it freezes when paused, like a held breath haha...
 - **Runs on an `OffscreenCanvas` driven by a dedicated Web Worker** (created from a Blob URL) so animation never blocks the main thread.
 - **Falls back gracefully** — if `OffscreenCanvas` is unavailable or CSP blocks the Worker, it drops to a main-thread `requestAnimationFrame` loop.
 - **Has an SVG sine-wave overlay** as a secondary implementation inside the bottom now-playing bar (`PlayerControls._injectWaveSvg`), with cosine/sine path tiles.
