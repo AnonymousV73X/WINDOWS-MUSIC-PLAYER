@@ -1668,7 +1668,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 }
 
 @keyframes nolyric-pulse {
-  0%, 100% { height: 4px; opacity: 0.3; }
+  0%, 100% { height: 2px; opacity: 0.3; }
   50% { height: 28px; opacity: 0.8; }
 }
 
