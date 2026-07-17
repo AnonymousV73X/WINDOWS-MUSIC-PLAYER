@@ -2071,7 +2071,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 }
 
 .playlist-popover button:hover {
-  background: grey;
+  background: rgba(128, 128, 128, 0.336);
 }
 
 .playlist-popover button:disabled {
