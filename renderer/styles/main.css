@@ -6114,7 +6114,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   transform: translateY(0);
 }
 .card-play-btn:hover {
-  background: #1ed760;
+  background: var(--green);
   transform: scale(1.08) translateY(0);
 }
 .card-play-btn:active {
