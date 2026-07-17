@@ -1640,7 +1640,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 }
 
 .nolyric-bar {
-  width: 3px;
+  width: 1px;
   border-radius: 2px;
   background: var(--green, #1DB954);
   animation: nolyric-pulse 1.2s ease-in-out infinite;
