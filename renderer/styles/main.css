@@ -1664,7 +1664,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 }
 
 .ov-lyrics-empty .nolyric-bar {
-  width: 4px;
+  width: 2px;
 }
 
 @keyframes nolyric-pulse {
