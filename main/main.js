@@ -335,7 +335,7 @@ function createMainWindow() {
     global.updateThumbarButtons = (isPlaying) => {
       if (!mainWindow || mainWindow.isDestroyed() || !thumbarIcons) return;
       try {
-        mainWindow.setThumbarButtons([
+        const res = mainWindow.setThumbarButtons([
           {
             tooltip: "Previous",
             icon: thumbarIcons.prev,
@@ -358,8 +358,9 @@ function createMainWindow() {
             }
           }
         ]);
+        console.log("[thumbar] setThumbarButtons result:", res);
       } catch (err) {
-        console.warn("Failed to set thumbar buttons:", err.message);
+        console.warn("[thumbar] Failed to set thumbar buttons:", err.message);
       }
     };
     // Initial taskbar buttons state
@@ -1123,9 +1124,10 @@ async function ensureThumbarIcons() {
   });
 
   return {
-    play: nativeImage.createFromPath(fs.existsSync(usePlay) ? usePlay : fallbackPlay),
-    pause: nativeImage.createFromPath(fs.existsSync(usePause) ? usePause : fallbackPause),
-    next: nativeImage.createFromPath(fs.existsSync(useNext) ? useNext : fallbackNext)
+    prev: prevImg,
+    play: playImg,
+    pause: pauseImg,
+    next: nextImg
   };
 }
 
