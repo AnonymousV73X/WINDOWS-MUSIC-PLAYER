@@ -28,6 +28,7 @@ const svg = Buffer.from(`
   <circle cx="512" cy="488" r="246" fill="none" stroke="#272739" stroke-width="7"/>
   <circle cx="512" cy="488" r="190" fill="none" stroke="#232333" stroke-width="6"/>
 
+
   <circle cx="512" cy="488" r="132" fill="#1DB954"/>
   <rect x="454" y="494" width="20" height="66" rx="8" fill="#fff"/>
   <rect x="486" y="454" width="20" height="106" rx="8" fill="#fff"/>
@@ -81,10 +82,25 @@ async function main() {
   await sharp(svg).resize(512, 512).png().toFile(path.join(iconDir, "icon.png"));
   await sharp(svg).resize(32, 32).png().toFile(path.join(iconDir, "tray.png"));
 
-  console.log("Wrote assets/icons/icon.ico, icon.png, and tray.png");
+  const prevSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M10 6 L10 26 M24 6 L12 16 L24 26 Z" fill="#ffffff"/></svg>`;
+  const playSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M8 6 L26 16 L8 26 Z" fill="#ffffff"/></svg>`;
+  const pauseSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="6" width="5" height="20" fill="#ffffff"/><rect x="19" y="6" width="5" height="20" fill="#ffffff"/></svg>`;
+  const nextSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M6 6 L18 16 L6 26 M22 6 L22 26" fill="#ffffff"/></svg>`;
+
+
+  await sharp(Buffer.from(prevSvg)).png().toFile(path.join(iconDir, "prev.png"));
+  await sharp(Buffer.from(playSvg)).png().toFile(path.join(iconDir, "play.png"));
+  await sharp(Buffer.from(pauseSvg)).png().toFile(path.join(iconDir, "pause.png"));
+  await sharp(Buffer.from(nextSvg)).png().toFile(path.join(iconDir, "next.png"));
+
+
+  console.log("Wrote assets/icons/icon.ico, icon.png, tray.png, and thumbar icons (prev.png, play.png, pause.png, next.png)");
 }
 
 main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+
+
+
