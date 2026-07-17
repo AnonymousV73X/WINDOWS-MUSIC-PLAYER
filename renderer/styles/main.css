@@ -302,6 +302,16 @@
   --app-font: "Outfit", sans-serif;
 }
 
+/* Global text selection — use accent green instead of native blue */
+::selection {
+  background: color-mix(in srgb, var(--green, #1ed760) 40%, transparent);
+  color: var(--text-primary);
+}
+::-moz-selection {
+  background: color-mix(in srgb, var(--green, #1ed760) 40%, transparent);
+  color: var(--text-primary);
+}
+
 body {
   font-family: var(--app-font);
   background: var(--bg);
@@ -342,11 +352,6 @@ body {
 
 body.overlay-visible .titlebar {
   display: none;
-}
-
-.titlebar-left,
-.menu-btn {
-  -webkit-app-region: no-drag;
 }
 
 .titlebar-left {
@@ -404,27 +409,28 @@ textarea {
   letter-spacing: 0.2px;
 }
 
-/* hamburger – mobile only */
-.menu-btn {
-  display: none;
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  cursor: default;
-  padding: 4px;
-}
+/* hamburger – removed (float-nav-trigger in toolbar replaces it) */
 
-@media (max-width: 640px) {
+@media (max-width: 800px) {
   .colly {
     font-size: 11px;
     margin-left: -5px !important;
   }
+
+  .col-headers,
+  .track-row {
+    grid-template-columns: 46px minmax(0, 480px) 96px 32px !important;
+  }
+
+  .track-skeleton-row {
+    grid-template-columns: 46px minmax(0, 480px) 96px 32px !important;
+  }
+
+  .hide-md-artist {
+    display: none !important;
+  }
 }
 
-.menu-btn svg {
-  width: 20px;
-  height: 20px;
-}
 
 /* ── LAYOUT ── */
 .app-body {
@@ -565,6 +571,37 @@ textarea {
   transform: translateX(-50%) translateY(0);
 }
 
+/* Tooltip-below overrides for float-nav-trigger and lyrics-toggle-btn
+   (same pattern as sidebar-help-btn — tooltip appears below the element) */
+#float-nav-trigger[data-tooltip]:hover::before,
+#float-nav-trigger[data-tooltip]:hover::after,
+#lyrics-toggle-btn[data-tooltip]:hover::before,
+#lyrics-toggle-btn[data-tooltip]:hover::after {
+  z-index: 100000;
+}
+#float-nav-trigger[data-tooltip]::before,
+#lyrics-toggle-btn[data-tooltip]::before {
+  bottom: auto;
+  top: calc(100% + 10px);
+  transform: translateX(-50%) translateY(-4px);
+}
+#float-nav-trigger[data-tooltip]::after,
+#lyrics-toggle-btn[data-tooltip]::after {
+  bottom: auto;
+  top: calc(100% + 4px);
+  border-top-color: transparent;
+  border-bottom-color: #282828;
+}
+#float-nav-trigger[data-tooltip]:hover::before,
+#float-nav-trigger[data-tooltip]:hover::after,
+#lyrics-toggle-btn[data-tooltip]:hover::before,
+#lyrics-toggle-btn[data-tooltip]:hover::after {
+  transform: translateX(-50%) translateY(0);
+}
+/* Lyrics pill extra offset to avoid overlapping sort group */
+#lyrics-toggle-btn[data-tooltip]::before { top: calc(100% + 14px); }
+#lyrics-toggle-btn[data-tooltip]::after { top: calc(100% + 8px); }
+
 .sidebar-help-btn svg {
   width: 16px;
   height: 16px;
@@ -594,18 +631,29 @@ textarea {
   border-radius: 6px;
   margin: 0 8px 4px;
   position: relative;
-  transition: color 0.12s ease, background 0.12s ease;
 }
 
-.nav-item:hover {
-  color: var(--text-primary);
-  opacity: 0.8;
+.nav-item:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.04);
 }
 
+/* Active indicator */
 .nav-item.active {
   color: var(--text-primary);
   background: var(--surface-active);
-  
+}
+/* Left accent bar — only on active item */
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  background: var(--green, #1DB954);
+  border-radius: 0 3px 3px 0;
+  opacity: 1;
 }
 
 
@@ -1448,8 +1496,8 @@ textarea {
 /* Vinyl disc container */
 .lyrics-empty-vinyl {
   position: relative;
-  width: 100px;
-  height: 100px;
+  width: 50px;
+  height: 50px;
   flex-shrink: 0;
 }
 
@@ -1499,6 +1547,16 @@ textarea {
   }
 }
 
+/* ── Pause vinyl/visualizer animations when not playing ── */
+body:not(.is-playing) .lyrics-empty-vinyl::before,
+body:not(.is-playing) .lyrics-nolyrics-cover {
+  animation-play-state: paused;
+}
+
+body:not(.is-playing) .nolyric-bar {
+  animation-play-state: paused;
+}
+
 /* Shimmer highlight arm over disc */
 .lyrics-empty-arm {
   position: absolute;
@@ -1519,6 +1577,93 @@ textarea {
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.16);
   font-weight: 500;
+}
+
+/* ── Task 2: No-lyrics cover art + visualizer ── */
+.lyrics-nolyrics-vinyl {
+  position: relative;
+  width: 100px;
+  height: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Center spindle hole — sits on top of the spinning cover */
+.lyrics-nolyrics-vinyl::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #111 35%, #1a1a1a 100%);
+  border: 1.5px solid rgba(255, 255, 255, 0.06);
+  box-shadow:
+    inset 0 0 0 2px #0a0a0a,
+    0 0 6px rgba(0, 0, 0, 0.6);
+  z-index: 3;
+  pointer-events: none;
+}
+
+.lyrics-nolyrics-cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  animation: vinyl-spin 4s linear infinite;
+  opacity: 0.6;
+}
+
+/* Visualizer overlaid inside the vinyl circle, centered */
+.lyrics-nolyrics-visualizer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 100%;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.nolyric-bar {
+  width: 3px;
+  border-radius: 2px;
+  background: var(--green, #1DB954);
+  animation: nolyric-pulse 1.2s ease-in-out infinite;
+  animation-delay: calc(var(--i) * 0.08s);
+  opacity: 0.7;
+}
+
+/* Overlay variant — larger vinyl for the full-screen view */
+.ov-lyrics-empty .lyrics-nolyrics-vinyl {
+  width: 180px;
+  height: 180px;
+}
+
+.ov-lyrics-empty .lyrics-nolyrics-vinyl::after {
+  width: 20px;
+  height: 20px;
+}
+
+.ov-lyrics-empty .lyrics-nolyrics-cover {
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+
+.ov-lyrics-empty .nolyric-bar {
+  width: 4px;
+}
+
+@keyframes nolyric-pulse {
+  0%, 100% { height: 4px; opacity: 0.3; }
+  50% { height: 28px; opacity: 0.8; }
 }
 
 .lyric-line.active {
@@ -2106,6 +2251,52 @@ textarea {
 #np-menu-btn svg {
   width: 20px;
   height: 20px;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* ── Playlist button icon morph (playlist → X) ── */
+#np-menu-btn .morph-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+#np-menu-btn .morph-wrap::before,
+#np-menu-btn .morph-wrap::after {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  transform: rotate(0deg) scale(0.5);
+}
+
+/* When menu-open: fade out the playlist SVG */
+#np-menu-btn.menu-open svg {
+  opacity: 0;
+  transform: scale(0.5) rotate(90deg);
+}
+
+/* When menu-open: fade in the two crossing bars to form X */
+#np-menu-btn.menu-open .morph-wrap::before {
+  opacity: 1;
+  transform: rotate(45deg) scale(1);
+}
+
+#np-menu-btn.menu-open .morph-wrap::after {
+  opacity: 1;
+  transform: rotate(-45deg) scale(1);
+}
+
+/* Active/open state — highlight with accent color */
+#np-menu-btn.menu-open {
+  color: var(--green);
 }
 
 #prev-btn,
@@ -2361,6 +2552,7 @@ textarea {
 #np-menu-btn svg {
   width: 20px;
   height: 20px;
+  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
 .vol-icon-btn svg {
@@ -3187,7 +3379,18 @@ textarea {
 .settings-layout {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
+}
+
+.settings-layout .section-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px; /* Equivalent vertical spacing/gaps inside the cards */
+  padding: 20px;
+}
+
+.settings-layout .section-panel-title {
+  margin-bottom: 4px;
 }
 
 /* ── Help Section Styles ── */
@@ -3504,8 +3707,14 @@ textarea {
   gap: 14px;
   min-height: 42px;
   color: var(--text-primary);
-
   font-size: 13px;
+}
+
+/* Row with a top divider line — keeps natural gap spacing intact */
+.settings-row--divider {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 4px;
 }
 
 .settings-row > span:first-child {
@@ -3846,11 +4055,55 @@ textarea {
 #ov-add-btn svg{
   width: 26px;
   height: 26px;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* ── Overlay playlist button icon morph (playlist → X) ── */
+#ov-add-btn .morph-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+#ov-add-btn .morph-wrap::before,
+#ov-add-btn .morph-wrap::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  transform: rotate(0deg) scale(0.5);
+}
+
+#ov-add-btn.menu-open svg {
+  opacity: 0;
+  transform: scale(0.5) rotate(90deg);
+}
+
+#ov-add-btn.menu-open .morph-wrap::before {
+  opacity: 1;
+  transform: rotate(45deg) scale(1);
+}
+
+#ov-add-btn.menu-open .morph-wrap::after {
+  opacity: 1;
+  transform: rotate(-45deg) scale(1);
+}
+
+#ov-add-btn.menu-open {
+  color: var(--green);
 }
 
  #np-menu-btn svg{
   width: 25px;
   height: 25px;
+  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
 #ov-repeat-icon{
@@ -4031,7 +4284,8 @@ textarea {
   background: var(--green) !important;
 }
 
-.content.lyrics-open .hide-md {
+.content.lyrics-open .hide-md,
+.content.lyrics-open .hide-md-artist {
   display: none !important;
 }
 
@@ -4561,32 +4815,19 @@ textarea {
     display: block;
   }
 
-  .menu-btn {
-    display: flex;
-  }
-
   .sidebar-search {
     display: flex;
   }
 
-  .nav-item {
-    padding: 9px 16px;
-    justify-content: flex-start;
-    margin: 0 8px;
-  }
-
-  .nav-item span {
-    display: inline;
-  }
-
-  /* compact track grid: thumb + title + duration + menu */
+  /* compact track grid: thumb + title + artist + duration + menu */
   .col-headers,
   .track-row {
-    grid-template-columns: 46px 1fr 96px 32px;
+    grid-template-columns: 46px 1fr 110px 96px 32px;
   }
+  
 
   .track-skeleton-row {
-    grid-template-columns: 46px 1fr 96px 32px;
+    grid-template-columns: 46px 1fr 110px 96px 32px;
   }
 
   .track-skeleton-row > div:nth-child(4),
@@ -4671,6 +4912,8 @@ textarea {
   .sort-group {
     margin-left: auto;
   }
+
+  .js-duration { padding-left: 28px !important; }
 }
 
 /* ── OVERLAY ART FLIP + PENCIL EDIT ── */
@@ -5690,6 +5933,99 @@ textarea {
   background: rgba(255, 92, 92, 0.12) !important;
 }
 
+/* ── Actions Menu (3-dot) ── */
+.actions-menu {
+  width: 230px !important;
+  max-height: none !important;
+}
+.actions-menu button {
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.action-has-sub {
+  position: relative;
+}
+.action-chevron {
+  opacity: 0.4;
+  transition: opacity 0.15s;
+}
+.action-has-sub:hover .action-chevron {
+  opacity: 0.8;
+}
+
+/* ── Playlist Sub-Menu (from "Add to Playlist") ── */
+.playlist-sub-menu {
+  width: 220px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+/* ── Action Toast ── */
+.action-toast {
+  position: fixed;
+  bottom: 88px;
+  left: 50%;
+  transform: translateX(-50%) translateY(8px);
+  /* Glassmorphic pill — matches popover / floating lyrics pad */
+  background: rgba(18, 18, 18, 0.78);
+  backdrop-filter: blur(24px) saturate(1.6);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+  padding: 8px 18px 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 200000;
+  opacity: 0;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  max-width: 90vw;
+  overflow: hidden;
+}
+/* Green check icon */
+.action-toast svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--green, #1ed760);
+}
+.action-toast-title {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.action-toast-action {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+}
+.action-toast.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ── Delete Confirmation Dialog ── */
+.delete-confirm-card {
+  width: 360px !important;
+  max-width: 90vw;
+  text-align: left;
+}
+.delete-confirm-card h3 {
+  margin: 0 0 4px;
+}
+.delete-confirm-card p {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 /* ── Sidebar Folder Info ── */
 .sidebar-folder-info {
   padding: 6px 16px !important;
@@ -5820,7 +6156,7 @@ textarea {
   border: 1.5px solid #333;
   background: var(--surface);
   color: var(--text-secondary);
-  cursor: pointer;
+  cursor: default;
   transition: background 0.15s ease, border-color 0.15s ease, opacity 0.2s ease, transform 0.2s ease;
 }
 
@@ -5832,8 +6168,18 @@ textarea {
   transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
-.float-nav-trigger::before,
-.float-nav-trigger::after {
+/* ── Morph wrapper: holds SVG + X bars via ::before/::after ── */
+.morph-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.morph-wrap::before,
+.morph-wrap::after {
   content: "";
   position: absolute;
   width: 15px;
@@ -5845,17 +6191,19 @@ textarea {
   transform: rotate(0deg) scale(0.5);
 }
 
+/* When .nav-open: fade out the hamburger SVG */
 .float-nav-trigger.nav-open svg {
   opacity: 0;
   transform: scale(0.5) rotate(90deg);
 }
 
-.float-nav-trigger.nav-open::before {
+/* When .nav-open: fade in the two crossing bars to form X */
+.float-nav-trigger.nav-open .morph-wrap::before {
   opacity: 1;
   transform: rotate(45deg) scale(1);
 }
 
-.float-nav-trigger.nav-open::after {
+.float-nav-trigger.nav-open .morph-wrap::after {
   opacity: 1;
   transform: rotate(-45deg) scale(1);
 }
@@ -6262,3 +6610,192 @@ textarea {
 .aie-btn-primary:hover  { filter: brightness(1.1); }
 .aie-btn-primary:active { transform: scale(0.97); }
 .aie-btn-primary:disabled { opacity: 0.45; pointer-events: none; filter: none; }
+
+/* ── Task 5: Expanded Sidebar for smaller screens (experimental) ── */
+/* When body has .expanded-sidebar class, sidebar stays visible on
+   smaller screens (up to tablets/11-inch displays). This lets users
+   with 12-inch laptops see what 15.6-inch screen users see. */
+body.expanded-sidebar .sidebar {
+  position: relative !important;
+  transform: none !important;
+  left: auto !important;
+  top: auto !important;
+  height: auto !important;
+  border-radius: 12px !important;
+  /* Preserve the sidebar's natural margins — same look as wide-screen */
+  margin-left: 12px !important;
+  margin-bottom: 12px !important;
+  margin-top: 2px !important;
+  margin-right: 0 !important;
+}
+body.expanded-sidebar .sidebar-overlay {
+  display: none !important;
+}
+body.expanded-sidebar .sidebar-search {
+  display: flex;
+}
+@media (max-width: 860px) and (min-width: 641px) {
+  body.expanded-sidebar .sidebar {
+    min-width: 200px;
+    max-width: 220px;
+  }
+}
+
+/* 11-inch to 13-inch laptop screens: collapse just the Artist column
+   (Title column absorbs the freed space via its 1fr track). */
+@media (min-width: 860px) and (max-width: 1024px) {
+  .col-headers,
+  .track-row {
+    grid-template-columns: 52px 1fr 70px 180px 80px 36px !important;
+  }
+
+  .col-headers .col-header:nth-child(3),
+  .track-row .js-artist {
+    display: none !important;
+  }
+}
+
+/* Below 1024px (~11-inch screens), expanded sidebar reverts to normal
+   responsive behavior — mobile overlay sidebar kicks in instead. */
+@media (max-width: 949px) {
+  body.expanded-sidebar .sidebar {
+    position: fixed !important;
+    left: 0 !important;
+    top: 32px !important;
+    height: calc(100vh - 32px) !important;
+    transform: translateX(-100%) !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+  }
+  body.expanded-sidebar .sidebar.open {
+    transform: translateX(0) !important;
+  }
+  body.expanded-sidebar .sidebar-overlay {
+    display: none !important;
+  }
+  body.expanded-sidebar .sidebar-overlay.open {
+    display: block !important;
+  }
+}
+
+
+/* ── Task 9: Song Tag Editor ── */
+.tag-editor-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+}
+.tag-editor-card {
+  background: var(--bg, #121212);
+  border: 1px solid var(--border, #333);
+  border-radius: 16px;
+  padding: 28px;
+  width: 420px;
+  max-width: 90vw;
+  max-height: 80vh;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  position: relative;
+}
+.tag-editor-scroll {
+  max-height: calc(80vh - 56px);
+  overflow-y: auto;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.tag-editor-scroll::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+}
+.tag-editor-card h3 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 20px;
+}
+.tag-editor-field {
+  margin-bottom: 14px;
+}
+.tag-editor-field label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.tag-editor-field input {
+  width: 100%;
+  background: var(--surface, #1a1a1a);
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.tag-editor-field input:focus {
+  border-color: var(--green, #1DB954);
+}
+.tag-editor-cover {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.tag-editor-cover img {
+  width: 80px;
+  height: 80px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--border, #333);
+}
+.tag-editor-cover button {
+  padding: 6px 14px;
+  background: var(--surface, #1a1a1a);
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s;
+}
+.tag-editor-cover button:hover {
+  background: var(--surface-active, #282828);
+  color: var(--text-primary);
+}
+.tag-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+.tag-editor-actions button {
+  padding: 8px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: filter 0.15s, transform 0.1s;
+}
+.tag-editor-actions button:active {
+  transform: scale(0.97);
+}
+.tag-editor-actions .btn-cancel {
+  background: var(--surface, #1a1a1a);
+  color: var(--text-secondary);
+  border: 1px solid var(--border, #333);
+}
+.tag-editor-actions .btn-save {
+  background: var(--green, #1DB954);
+  color: #000;
+}

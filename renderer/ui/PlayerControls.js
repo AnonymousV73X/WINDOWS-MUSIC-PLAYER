@@ -300,6 +300,8 @@ class PlayerControls {
 
   updatePlayState(isPlaying) {
     this._isPlaying = isPlaying;
+    // Expose play state to CSS for animation-play-state hooks
+    document.body.classList.toggle('is-playing', isPlaying);
     if (this._waveSvg) {
       this._waveSvg.style.display = isPlaying ? "block" : "none";
     }

@@ -209,10 +209,12 @@ async function _computeFolderFingerprint(folderPaths) {
   // Track per-directory mtimes so we can short-circuit on the next run
   const dirMtimes = new Map(); // dir → mtimeMs
   // Load the previous run's dir mtimes for comparison (if same root folders)
-  const prevDirMtimes = cached?.dirMtimes instanceof Map ? cached.dirMtimes : new Map();
+  const prevDirMtimes =
+    cached?.dirMtimes instanceof Map ? cached.dirMtimes : new Map();
   // Cache of directory-level (fileCount, maxMtime) from the previous run
   // so we can reuse them when the directory mtime hasn't changed.
-  const prevDirStats = cached?.dirStats instanceof Map ? cached.dirStats : new Map();
+  const prevDirStats =
+    cached?.dirStats instanceof Map ? cached.dirStats : new Map();
 
   async function walk(dir) {
     let dirStat;
@@ -378,7 +380,9 @@ function _maybeResetFailedFilesAtStartup() {
     // Deleting them forces a re-scan with the estimator.
     if (db) {
       try {
-        const result = db.prepare("DELETE FROM tracks WHERE duration <= 0").run();
+        const result = db
+          .prepare("DELETE FROM tracks WHERE duration <= 0")
+          .run();
         if (result.changes > 0) {
           console.log(
             `[startup-reset] Deleted ${result.changes} tracks with duration <= 0 from SQLite (will be re-scanned with estimator)`,
@@ -728,15 +732,30 @@ function _estimateDurationFromFileSize(filePath, knownSize) {
     if (ytMatch) {
       const itag = parseInt(ytMatch[1], 10) || 0;
       const itagBitrate = {
-        140: 128, 139: 48, 171: 128, 249: 50, 250: 70, 251: 160, 18: 96,
+        140: 128,
+        139: 48,
+        171: 128,
+        249: 50,
+        250: 70,
+        251: 160,
+        18: 96,
       };
       assumedKbps = itagBitrate[itag] || 128;
     } else {
       // No YouTube suffix — pick by extension
       const extBitrate = {
-        ".mp3": 192, ".aac": 128, ".m4a": 256, ".opus": 96,
-        ".ogg": 112, ".flac": 900, ".wav": 1411, ".wma": 128,
-        ".ape": 700, ".wv": 700, ".tta": 1411, ".mpc": 192,
+        ".mp3": 192,
+        ".aac": 128,
+        ".m4a": 256,
+        ".opus": 96,
+        ".ogg": 112,
+        ".flac": 900,
+        ".wav": 1411,
+        ".wma": 128,
+        ".ape": 700,
+        ".wv": 700,
+        ".tta": 1411,
+        ".mpc": 192,
       };
       assumedKbps = extBitrate[ext] || 128;
     }
@@ -1169,7 +1188,8 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       }
       if (
         !scanSettings._failedFilesLastRetry ||
-        Date.now() - scanSettings._failedFilesLastRetry > 30 * 24 * 60 * 60 * 1000
+        Date.now() - scanSettings._failedFilesLastRetry >
+          30 * 24 * 60 * 60 * 1000
       ) {
         // v1.1.5 PERIODIC RE-CHECK: Clear _failedFiles every 30 days so
         // files that were previously rejected get another chance. This
@@ -1234,7 +1254,10 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         // runs and produces a clean title like "High (Unreleased)"
         // instead of whatever garbage music-metadata returned.
         const hasUnderscores = /_/.test(file.fileName || "");
-        const nameNoExt = path.basename(file.fileName, path.extname(file.fileName));
+        const nameNoExt = path.basename(
+          file.fileName,
+          path.extname(file.fileName),
+        );
         const needsV113Rescan =
           hasUnderscores &&
           existing &&
@@ -1303,7 +1326,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
           if (artistText && artistText !== "Unknown Artist") {
             // Also split multi-artist entries like "Don Toliver, Drake"
             const individuals = artistText
-              .split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*/i)
+              .split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*|&\s*|\band\b/i)
               .map((a) => a.trim())
               .filter(Boolean);
             for (const a of individuals) {
@@ -1316,9 +1339,15 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             if (t.albumArtist) {
               const aa = t.albumArtist.trim();
               if (aa && aa !== "Unknown Artist") {
-                const aaLower = aa.toLowerCase();
-                if (!knownArtists.has(aaLower)) {
-                  knownArtists.set(aaLower, aa);
+                const individualsAA = aa
+                  .split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*|&\s*|\band\b/i)
+                  .map((a) => a.trim())
+                  .filter(Boolean);
+                for (const a of individualsAA) {
+                  const lower = a.toLowerCase();
+                  if (!knownArtists.has(lower)) {
+                    knownArtists.set(lower, a);
+                  }
                 }
               }
             }
@@ -1337,12 +1366,21 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                 // v1.1.5: Forward knownArtists to the worker so its
                 // internal _fallbackMetadata can split artist from title
                 // for underscored YouTube rips.
-                metadata = await worker.readMetadata(file.filePath, knownArtists);
+                metadata = await worker.readMetadata(
+                  file.filePath,
+                  knownArtists,
+                );
               } catch (_) {
-                metadata = await metadataReader.readMetadata(file.filePath, knownArtists);
+                metadata = await metadataReader.readMetadata(
+                  file.filePath,
+                  knownArtists,
+                );
               }
             } else {
-              metadata = await metadataReader.readMetadata(file.filePath, knownArtists);
+              metadata = await metadataReader.readMetadata(
+                file.filePath,
+                knownArtists,
+              );
             }
             return { file, metadata };
           }),
@@ -1399,8 +1437,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   knownArtists,
                 );
                 metadata.duration = estimatedDuration;
-                if (!metadata.bitrate)
-                  metadata.bitrate = fallback.bitrate || 0;
+                if (!metadata.bitrate) metadata.bitrate = fallback.bitrate || 0;
                 // v1.1.3 BUGFIX: For underscored YouTube-rip files,
                 // ALWAYS use the fallback title/artist — even if
                 // music-metadata returned something. music-metadata often
@@ -1466,7 +1503,8 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                     metadata.artist = fallback.artist;
                     if (!metadata.album || metadata.album === "Unknown Album")
                       metadata.album = fallback.album;
-                    if (!metadata.coverArt) metadata.coverArt = fallback.coverArt;
+                    if (!metadata.coverArt)
+                      metadata.coverArt = fallback.coverArt;
                     console.log(
                       `[library:scan] Underscored file parsed: "${file.fileName}" → artist="${fallback.artist}", title="${fallback.title}"`,
                     );
@@ -1587,7 +1625,8 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                     fileSize: file.fileSize || 0,
                     coverArt: fallback.coverArt || null,
                     _hasCoverArt: !!fallback.coverArt,
-                    dateAdded: file.birthTime || file.modifiedTime || Date.now(),
+                    dateAdded:
+                      file.birthTime || file.modifiedTime || Date.now(),
                     dateModified: file.modifiedTime || Date.now(),
                   });
                 } else {
@@ -1986,77 +2025,80 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   // Returns the protocol URL for a single track's pre-generated WebP thumbnail.
   // Called lazily as rows scroll into view — never bulk-scans all tracks.
   // If the WebP doesn't exist yet, generates it on-demand using Sharp.
-  ipcMain.handle("coverart:get-thumb", async (event, { trackId, size } = {}) => {
-    try {
-      if (!trackId) return { success: false, error: "No trackId" };
-      const targetSize = size || 128;
-      const thumbDir = path.join(
-        app.getPath("userData"),
-        "cached_covers",
-        "thumbs",
-      );
-      const thumbFile = path.join(thumbDir, `${trackId}_${targetSize}.webp`);
+  ipcMain.handle(
+    "coverart:get-thumb",
+    async (event, { trackId, size } = {}) => {
+      try {
+        if (!trackId) return { success: false, error: "No trackId" };
+        const targetSize = size || 128;
+        const thumbDir = path.join(
+          app.getPath("userData"),
+          "cached_covers",
+          "thumbs",
+        );
+        const thumbFile = path.join(thumbDir, `${trackId}_${targetSize}.webp`);
 
-      // Fast path: thumb already on disk
-      const exists = await fs.promises
-        .access(thumbFile)
-        .then(() => true)
-        .catch(() => false);
-      if (exists) {
+        // Fast path: thumb already on disk
+        const exists = await fs.promises
+          .access(thumbFile)
+          .then(() => true)
+          .catch(() => false);
+        if (exists) {
+          return {
+            success: true,
+            url: `nova-media://thumb/${trackId}/${targetSize}`,
+          };
+        }
+
+        // Slow path: generate thumbnail on-demand from the library record
+        const library = getLibrary();
+        const track = library.find((t) => t.id === trackId);
+        if (!track || (!track.coverArt && !track._hasCoverArt)) {
+          return { success: false, error: "No cover art for track" };
+        }
+
+        const sharp = require("sharp");
+        if (!fs.existsSync(thumbDir))
+          fs.mkdirSync(thumbDir, { recursive: true });
+
+        let inputBuffer;
+        if (track.coverArt && track.coverArt.startsWith("data:")) {
+          const base64 = track.coverArt.split(",")[1];
+          if (!base64) return { success: false, error: "Invalid data URI" };
+          inputBuffer = Buffer.from(base64, "base64");
+        } else if (track.coverArt && fs.existsSync(track.coverArt)) {
+          inputBuffer = await fs.promises.readFile(track.coverArt);
+        } else if (track._hasCoverArt) {
+          // Embedded art — let the nova-media://art/ protocol handle it
+          return {
+            success: true,
+            url: `nova-media://art/${encodeURIComponent(trackId)}`,
+          };
+        } else {
+          return { success: false, error: "Cover art not found on disk" };
+        }
+
+        const metadata = await sharp(inputBuffer).metadata();
+        const side = Math.min(metadata.width, metadata.height);
+        const left = Math.floor((metadata.width - side) / 2);
+        const top = Math.floor((metadata.height - side) / 2);
+
+        const thumbBuffer = await sharp(inputBuffer)
+          .extract({ left, top, width: side, height: side })
+          .resize(targetSize, targetSize, { fit: "cover" })
+          .webp({ quality: 90 })
+          .toBuffer();
+
+        await fs.promises.writeFile(thumbFile, thumbBuffer);
         return {
           success: true,
           url: `nova-media://thumb/${trackId}/${targetSize}`,
         };
+      } catch (err) {
+        return { success: false, error: err.message };
       }
-
-      // Slow path: generate thumbnail on-demand from the library record
-      const library = getLibrary();
-      const track = library.find((t) => t.id === trackId);
-      if (!track || (!track.coverArt && !track._hasCoverArt)) {
-        return { success: false, error: "No cover art for track" };
-      }
-
-      const sharp = require("sharp");
-      if (!fs.existsSync(thumbDir))
-        fs.mkdirSync(thumbDir, { recursive: true });
-
-      let inputBuffer;
-      if (track.coverArt && track.coverArt.startsWith("data:")) {
-        const base64 = track.coverArt.split(",")[1];
-        if (!base64) return { success: false, error: "Invalid data URI" };
-        inputBuffer = Buffer.from(base64, "base64");
-      } else if (track.coverArt && fs.existsSync(track.coverArt)) {
-        inputBuffer = await fs.promises.readFile(track.coverArt);
-      } else if (track._hasCoverArt) {
-        // Embedded art — let the nova-media://art/ protocol handle it
-        return {
-          success: true,
-          url: `nova-media://art/${encodeURIComponent(trackId)}`,
-        };
-      } else {
-        return { success: false, error: "Cover art not found on disk" };
-      }
-
-      const metadata = await sharp(inputBuffer).metadata();
-      const side = Math.min(metadata.width, metadata.height);
-      const left = Math.floor((metadata.width - side) / 2);
-      const top = Math.floor((metadata.height - side) / 2);
-
-      const thumbBuffer = await sharp(inputBuffer)
-        .extract({ left, top, width: side, height: side })
-        .resize(targetSize, targetSize, { fit: "cover" })
-        .webp({ quality: 90 })
-        .toBuffer();
-
-      await fs.promises.writeFile(thumbFile, thumbBuffer);
-      return {
-        success: true,
-        url: `nova-media://thumb/${trackId}/${targetSize}`,
-      };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  });
+    },
+  );
 
   // ─── Cover Art: batch thumbnails for all tracks with art ─────
   // Revolutionary: Uses Sharp (libvips) for 5-10x faster thumbnail generation.
@@ -2409,6 +2451,28 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
     }
   });
 
+  // ── Task 4: Partial update — returns only new/updated tracks ──
+  // Avoids full library reload when adding a few songs
+  ipcMain.handle("library:partial-update", async (event, existingIds) => {
+    try {
+      getLibrary();
+      const currentIds = new Set(library.map((t) => t.id));
+      const existingSet = new Set(
+        Array.isArray(existingIds) ? existingIds : [],
+      );
+      const newTracks = library.filter((t) => !existingSet.has(t.id));
+      const removedIds = [...existingSet].filter((id) => !currentIds.has(id));
+      return {
+        success: true,
+        newTracks,
+        removedIds,
+        totalTracks: library.length,
+      };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle("library:clear", async () => {
     try {
       saveLibrary([]);
@@ -2439,7 +2503,10 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
           await fs.promises.unlink(track.filePath);
           console.log(`[library] Deleted file from storage: ${track.filePath}`);
         } catch (e) {
-          console.warn(`[library] Failed to delete file ${track.filePath} from storage:`, e.message);
+          console.warn(
+            `[library] Failed to delete file ${track.filePath} from storage:`,
+            e.message,
+          );
         }
       }
 
@@ -3144,6 +3211,127 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       return { success: false, error: err.message };
     }
   });
+
+  // ── Task 9: Write metadata tags to audio file ──
+  ipcMain.handle(
+    "metadata:write-tags",
+    async (event, { trackId, filePath, tags }) => {
+      try {
+        console.log("[metadata:write-tags] Request received for trackId:", trackId, "filePath:", filePath);
+        if (!filePath || !fs.existsSync(filePath)) {
+          console.error("[metadata:write-tags] File not found:", filePath);
+          return { success: false, error: "File not found" };
+        }
+
+        // Ensure the library cache and libraryById map are fully loaded and initialized
+        getLibrary();
+
+        const ext = path.extname(filePath).toLowerCase();
+
+        // ── 1. Write tags INTO the actual audio file on disk ──────────────
+        // This is what makes tags survive app restarts and show on other devices.
+        if (ext === ".mp3") {
+          // node-id3 supports full ID3v2 read+write for MP3
+          const NodeID3 = require("node-id3");
+
+          // Build the ID3 tag object (only include fields the user actually changed)
+          const id3Tags = {};
+          if (tags.title  !== undefined) id3Tags.title  = tags.title  || "";
+          if (tags.artist !== undefined) id3Tags.artist = tags.artist || "";
+          if (tags.album  !== undefined) id3Tags.album  = tags.album  || "";
+          if (tags.genre  !== undefined) id3Tags.genre  = tags.genre  || "";
+          if (tags.year   !== undefined) id3Tags.year   = tags.year   ? String(tags.year) : "";
+
+          // Cover art — coverArt arrives as a data-URI ("data:image/...;base64,...")
+          if (tags.coverArt) {
+            try {
+              const match = tags.coverArt.match(/^data:([^;]+);base64,(.+)$/);
+              if (match) {
+                const mime   = match[1];              // e.g. "image/jpeg"
+                const buf    = Buffer.from(match[2], "base64");
+                id3Tags.image = {
+                  mime,
+                  type: { id: 3, name: "front cover" },
+                  description: "Cover",
+                  imageBuffer: buf,
+                };
+              }
+            } catch (coverErr) {
+              console.warn("[metadata:write-tags] cover art parse failed:", coverErr.message);
+            }
+          }
+
+          // node-id3.update() merges with existing tags; returns true on success
+          const written = NodeID3.update(id3Tags, filePath);
+          if (written !== true) {
+            console.warn("[metadata:write-tags] node-id3 write returned:", written);
+          }
+        }
+        // For FLAC / M4A / OGG / WAV — these formats need separate libraries
+        // (e.g. flac-metadata, mp4-stream). They are not bundled here yet, so
+        // we fall through to the DB-only path below which at least keeps the
+        // NovaTune library consistent across restarts on the same machine.
+        // TODO: add native tag-write for other formats when needed.
+
+        // ── 2. Update in-memory library & SQLite so the UI is instant ─────
+        let updatedTrack = null;
+        if (libraryById && libraryById.has(trackId)) {
+          const track = libraryById.get(trackId);
+          if (tags.title  !== undefined) track.title  = tags.title;
+          if (tags.artist !== undefined) track.artist = tags.artist;
+          if (tags.album  !== undefined) track.album  = tags.album;
+          if (tags.genre  !== undefined) track.genre  = tags.genre;
+          if (tags.year   !== undefined) track.year   = tags.year;
+          if (tags.coverArt) {
+            track.coverArt    = tags.coverArt;
+            track._hasCoverArt = true;
+          }
+          updatedTrack = track;
+
+          // Persist to SQLite
+          try {
+            const row = db
+              .prepare("SELECT data FROM tracks WHERE id = ?")
+              .get(trackId);
+            if (row) {
+              const dbTrack = JSON.parse(row.data);
+              Object.assign(dbTrack, {
+                title:  track.title,
+                artist: track.artist,
+                album:  track.album,
+                genre:  track.genre,
+                year:   track.year,
+                ...(tags.coverArt
+                  ? { coverArt: tags.coverArt, _hasCoverArt: true }
+                  : {}),
+              });
+              db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(
+                JSON.stringify(dbTrack),
+                trackId,
+              );
+            }
+          } catch (dbErr) {
+            console.error("[metadata:write-tags] DB update failed:", dbErr.message);
+          }
+
+          // Rebuild binary manifest (search/filter cache)
+          try {
+            const library = getLibrary();
+            const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+            const fingerprint = settings._combinedFingerprint || "";
+            await ManifestIPC.rebuildManifest(library, fingerprint);
+          } catch (manifestErr) {
+            console.error("[metadata:write-tags] Manifest rebuild failed:", manifestErr.message);
+          }
+        }
+
+        return { success: true, updatedTrack };
+      } catch (err) {
+        console.error("[metadata:write-tags]", err.message);
+        return { success: false, error: err.message };
+      }
+    },
+  );
 
   function getAudioMimeType(filePath) {
     const ext = path.extname(filePath).toLowerCase();
@@ -4121,32 +4309,63 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
 
   ipcMain.handle("lyrics:read-local", async (event, filePath) => {
     try {
-      const lrcPath = filePath.replace(path.extname(filePath), ".lrc");
-      if (!fs.existsSync(lrcPath)) {
-        const lrcPathUpper = filePath.replace(path.extname(filePath), ".LRC");
-        if (!fs.existsSync(lrcPathUpper)) {
-          console.log(
-            `[lyrics:read-local] no .lrc found for: ${path.basename(filePath)}`,
-          );
-          return { success: false, error: "No local lyrics file found" };
-        }
-        console.log(
-          `[lyrics:read-local] found .LRC: ${path.basename(lrcPathUpper)}`,
-        );
-        const content = fs.readFileSync(lrcPathUpper, "utf-8");
+      // Task 3: Check lyricz folder first, then fallback to sidecar
+      const fileDir = path.dirname(filePath);
+      const fileBase = path.basename(filePath, path.extname(filePath));
+      const musicDir = fileDir; // The folder where the song lives
+      const lyriczDir = path.join(musicDir, "lyricz");
+
+      // 1. Check lyricz folder
+      const lyriczPath = path.join(lyriczDir, fileBase + ".lrc");
+      if (fs.existsSync(lyriczPath)) {
+        const content = fs.readFileSync(lyriczPath, "utf-8");
         const parsed = parseLRC(content);
-        console.log(
-          `  → ${parsed.synced ? parsed.synced.length + " synced lines" : "plain only"}`,
-        );
+        // Ensure binary map is up to date
+        _lyricsBinaryMap.set(filePath, lyriczPath);
         return { success: true, lyrics: parsed };
       }
-      console.log(`[lyrics:read-local] found .lrc: ${path.basename(lrcPath)}`);
-      const content = fs.readFileSync(lrcPath, "utf-8");
-      const parsed = parseLRC(content);
-      console.log(
-        `  → ${parsed.synced ? parsed.synced.length + " synced lines" : "plain only"}`,
-      );
-      return { success: true, lyrics: parsed };
+
+      // 2. Check sidecar .lrc (old location) — auto-migrate to lyricz/ on the fly
+      const lrcPath = filePath.replace(path.extname(filePath), ".lrc");
+      let sidecarPath = null;
+      if (fs.existsSync(lrcPath)) {
+        sidecarPath = lrcPath;
+      } else {
+        const lrcPathUpper = filePath.replace(path.extname(filePath), ".LRC");
+        if (fs.existsSync(lrcPathUpper)) {
+          sidecarPath = lrcPathUpper;
+        }
+      }
+
+      if (sidecarPath) {
+        const content = fs.readFileSync(sidecarPath, "utf-8");
+        const parsed = parseLRC(content);
+        // Auto-migrate: move sidecar .lrc → lyricz/<name>.lrc
+        try {
+          if (!fs.existsSync(lyriczDir)) {
+            fs.mkdirSync(lyriczDir, { recursive: true });
+          }
+          const dst = path.join(lyriczDir, fileBase + ".lrc");
+          if (!fs.existsSync(dst)) {
+            fs.renameSync(sidecarPath, dst);
+            _lyricsBinaryMap.set(filePath, dst);
+            console.log(
+              `[lyrics:read-local] auto-migrated ${path.basename(sidecarPath)} → lyricz/`,
+            );
+          } else {
+            // lyricz/ already has a file — remove the old sidecar
+            fs.unlinkSync(sidecarPath);
+            _lyricsBinaryMap.set(filePath, dst);
+          }
+        } catch (migErr) {
+          // Migration failed — still return the lyrics, just don't move
+          _lyricsBinaryMap.set(filePath, sidecarPath);
+        }
+        return { success: true, lyrics: parsed };
+      }
+
+      // No lyrics found
+      return { success: false, error: "No local lyrics file found" };
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -4324,16 +4543,32 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
     "lyrics:save-to-track",
     async (event, { trackId, filePath, plain, synced }) => {
       try {
-        const lrcPath = filePath.replace(/\.[^.]+$/, ".lrc");
         const isEmpty = !plain && !synced;
+        // Task 3: Save to lyricz subfolder instead of sidecar
+        const fileDir = path.dirname(filePath);
+        const fileBase = path.basename(filePath, path.extname(filePath));
+        const lyriczDir = path.join(fileDir, "lyricz");
+        const lrcPath = path.join(lyriczDir, fileBase + ".lrc");
 
-        // File write first (fast) — this is the only blocking part
-        if (isEmpty) {
+        if (!isEmpty) {
+          // Ensure lyricz directory exists
+          if (!fs.existsSync(lyriczDir)) {
+            fs.mkdirSync(lyriczDir, { recursive: true });
+          }
+          fs.writeFileSync(lrcPath, synced || plain || "", "utf-8");
+          // Update binary map instantly — next lookup is O(1) with zero I/O discovery
+          _lyricsBinaryMap.set(filePath, lrcPath);
+        } else {
+          // Delete from both lyricz and old sidecar location
           try {
             if (fs.existsSync(lrcPath)) fs.unlinkSync(lrcPath);
           } catch (_) {}
-        } else {
-          fs.writeFileSync(lrcPath, synced || plain || "", "utf-8");
+          const oldLrcPath = filePath.replace(/\.[^.]+$/, ".lrc");
+          try {
+            if (fs.existsSync(oldLrcPath)) fs.unlinkSync(oldLrcPath);
+          } catch (_) {}
+          // Remove from binary map
+          _lyricsBinaryMap.delete(filePath);
         }
 
         // Patch only this one track — no full-table rewrite.
@@ -4369,6 +4604,198 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       }
     },
   );
+
+  // ── Task 3: Migrate existing .lrc files to lyricz folder ──
+  // Also builds a binary map for fast lyrics lookup
+  const _lyricsBinaryMap = new Map(); // filePath → lrcPath (instant lookup)
+
+  ipcMain.handle("lyrics:migrate-to-lyricz", async (event, musicFolders) => {
+    try {
+      let moved = 0;
+      let skipped = 0;
+      let fromSubdirs = 0;
+      const folders = Array.isArray(musicFolders) ? musicFolders : [];
+
+      // Helper: recursively walk a directory and collect all .lrc files
+      function collectLrcFiles(dir) {
+        const results = [];
+        try {
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          for (const entry of entries) {
+            // Skip the lyricz folders themselves — those are already migrated
+            if (entry.isDirectory() && entry.name.toLowerCase() === "lyricz")
+              continue;
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+              results.push(...collectLrcFiles(full));
+            } else if (
+              entry.isFile() &&
+              entry.name.toLowerCase().endsWith(".lrc")
+            ) {
+              results.push({ dir, name: entry.name, fullPath: full });
+            }
+          }
+        } catch (_) {
+          // Permission errors etc — skip
+        }
+        return results;
+      }
+
+      // Collect ALL .lrc files from all scan folders recursively
+      const allLrc = [];
+      for (const folder of folders) {
+        if (!fs.existsSync(folder)) continue;
+        allLrc.push(...collectLrcFiles(folder));
+      }
+
+      if (allLrc.length === 0) {
+        // No .lrc files anywhere — still rebuild the map in case
+        // lyricz/ folders already have files from a previous migration
+        _rebuildLyricsMap();
+        return {
+          success: true,
+          moved: 0,
+          skipped: folders.length,
+          fromSubdirs: 0,
+        };
+      }
+
+      // Move each .lrc file into the lyricz/ subfolder of its parent directory
+      const movedPaths = []; // track src→dst for DB updates
+      for (const lrc of allLrc) {
+        const lyriczDir = path.join(lrc.dir, "lyricz");
+        try {
+          if (!fs.existsSync(lyriczDir)) {
+            fs.mkdirSync(lyriczDir, { recursive: true });
+          }
+          const dst = path.join(lyriczDir, lrc.name);
+          if (!fs.existsSync(dst)) {
+            fs.renameSync(lrc.fullPath, dst);
+            moved++;
+            movedPaths.push({ src: lrc.fullPath, dst, dir: lrc.dir });
+          } else {
+            // Destination already exists (duplicate) — just remove source
+            fs.unlinkSync(lrc.fullPath);
+            movedPaths.push({ src: lrc.fullPath, dst, dir: lrc.dir });
+          }
+          if (lrc.dir !== folders.find((f) => lrc.fullPath.startsWith(f))) {
+            fromSubdirs++;
+          }
+        } catch (_) {
+          // Skip files we can't move (locked, permissions, etc.)
+        }
+      }
+
+      // Update DB records: patch any track whose lyricsPath in the JSON data
+      // pointed to the old sidecar so future lookups hit the lyricz/ path
+      if (db && movedPaths.length > 0) {
+        try {
+          const selectStmt = db.prepare("SELECT id, data FROM tracks");
+          const updateStmt = db.prepare(
+            "UPDATE tracks SET data = ? WHERE id = ?",
+          );
+          const rows = selectStmt.all();
+          for (const row of rows) {
+            try {
+              const track = JSON.parse(row.data);
+              const match = movedPaths.find(
+                (mp) => mp.src === track.lyricsPath,
+              );
+              if (match) {
+                track.lyricsPath = match.dst;
+                updateStmt.run(JSON.stringify(track), row.id);
+              }
+            } catch (_) {
+              // Skip malformed JSON rows
+            }
+          }
+          // Also update in-memory libraryById entries
+          if (libraryById) {
+            for (const [id, track] of libraryById) {
+              if (track.lyricsPath) {
+                const match = movedPaths.find(
+                  (mp) => mp.src === track.lyricsPath,
+                );
+                if (match) {
+                  track.lyricsPath = match.dst;
+                }
+              }
+            }
+          }
+        } catch (dbErr) {
+          console.warn("[lyrics:migrate] DB patch failed:", dbErr.message);
+        }
+      }
+
+      // Rebuild binary map from library — now includes the lyricz/ paths
+      _rebuildLyricsMap();
+
+      return { success: true, moved, skipped, fromSubdirs };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Build fast binary map for lyrics lookup
+  function _rebuildLyricsMap() {
+    _lyricsBinaryMap.clear();
+    if (!libraryById) return;
+    for (const [id, track] of libraryById) {
+      if (track.filePath) {
+        // 1. Fastest: use DB-stored lyricsPath if available and file exists
+        if (track.lyricsPath && fs.existsSync(track.lyricsPath)) {
+          _lyricsBinaryMap.set(track.filePath, track.lyricsPath);
+          continue;
+        }
+        // 2. Check lyricz folder
+        const fileDir = path.dirname(track.filePath);
+        const fileBase = path.basename(
+          track.filePath,
+          path.extname(track.filePath),
+        );
+        const lyriczPath = path.join(fileDir, "lyricz", fileBase + ".lrc");
+        if (fs.existsSync(lyriczPath)) {
+          _lyricsBinaryMap.set(track.filePath, lyriczPath);
+          continue;
+        }
+        // 3. Check sidecar (old location — should be rare after migration)
+        const sidecarPath = track.filePath.replace(/\.[^.]+$/, ".lrc");
+        if (fs.existsSync(sidecarPath)) {
+          _lyricsBinaryMap.set(track.filePath, sidecarPath);
+        }
+      }
+    }
+  }
+
+  // Task 3: Fast lyrics lookup via binary map
+  // Lazy-init: if the map is empty, build it on first call.
+  // After that, lookups are O(1) with zero fs.existsSync overhead.
+  ipcMain.handle("lyrics:fast-lookup", async (event, filePath) => {
+    try {
+      if (_lyricsBinaryMap.size === 0 && libraryById) {
+        _rebuildLyricsMap();
+      }
+      if (_lyricsBinaryMap.has(filePath)) {
+        const lrcPath = _lyricsBinaryMap.get(filePath);
+        const content = fs.readFileSync(lrcPath, "utf-8");
+        const parsed = parseLRC(content);
+        return { success: true, lyrics: parsed };
+      }
+      return { success: false };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Build the binary map on demand (called from renderer after library loads)
+  ipcMain.handle("lyrics:rebuild-map", async () => {
+    try {
+      _rebuildLyricsMap();
+      return { success: true, size: _lyricsBinaryMap.size };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
 }
 
 // ─── LRC Parser ────────────────────────────────────────────────────
@@ -4816,7 +5243,8 @@ ipcMain.handle("thumb-stubs:patch", async (_event, patch) => {
       return { success: false, error: "patch must be an object" };
     }
     const cache = _readThumbStubsSync();
-    let added = 0, removed = 0;
+    let added = 0,
+      removed = 0;
     for (const [k, v] of Object.entries(patch)) {
       if (v === null || v === undefined) {
         if (cache[k] !== undefined) {
@@ -5014,7 +5442,12 @@ async function _downloadArtistImage(url, artistName) {
       const sharp = require("sharp");
       const metadata = await sharp(buffer).metadata();
       // Reject tiny images (< 100×100) — likely icons or placeholders
-      if (!metadata.width || !metadata.height || metadata.width < 100 || metadata.height < 100) {
+      if (
+        !metadata.width ||
+        !metadata.height ||
+        metadata.width < 100 ||
+        metadata.height < 100
+      ) {
         console.log(
           `[artist-image] Rejected "${artistName}" — image too small (${metadata.width}×${metadata.height})`,
         );
@@ -5029,13 +5462,21 @@ async function _downloadArtistImage(url, artistName) {
         .resize(32, 32, { fit: "cover" })
         .raw()
         .toBuffer();
-      let sum = 0, sumSq = 0, n = 0;
-      let rSum = 0, gSum = 0, bSum = 0;
+      let sum = 0,
+        sumSq = 0,
+        n = 0;
+      let rSum = 0,
+        gSum = 0,
+        bSum = 0;
       for (let i = 0; i < tiny.length; i += 4) {
-        const r = tiny[i], g = tiny[i + 1], b = tiny[i + 2];
+        const r = tiny[i],
+          g = tiny[i + 1],
+          b = tiny[i + 2];
         sum += r + g + b;
         sumSq += r * r + g * g + b * b;
-        rSum += r; gSum += g; bSum += b;
+        rSum += r;
+        gSum += g;
+        bSum += b;
         n += 3;
       }
       const mean = sum / n;
@@ -5087,7 +5528,12 @@ async function _validateSavedArtistImage(filePath) {
     const sharp = require("sharp");
     const buffer = fs.readFileSync(filePath);
     const metadata = await sharp(buffer).metadata();
-    if (!metadata.width || !metadata.height || metadata.width < 100 || metadata.height < 100) {
+    if (
+      !metadata.width ||
+      !metadata.height ||
+      metadata.width < 100 ||
+      metadata.height < 100
+    ) {
       return false;
     }
     // v1.2.2 — Same tighter validation as _downloadArtistImage
@@ -5095,13 +5541,21 @@ async function _validateSavedArtistImage(filePath) {
       .resize(32, 32, { fit: "cover" })
       .raw()
       .toBuffer();
-    let sum = 0, sumSq = 0, n = 0;
-    let rSum = 0, gSum = 0, bSum = 0;
+    let sum = 0,
+      sumSq = 0,
+      n = 0;
+    let rSum = 0,
+      gSum = 0,
+      bSum = 0;
     for (let i = 0; i < tiny.length; i += 4) {
-      const r = tiny[i], g = tiny[i + 1], b = tiny[i + 2];
+      const r = tiny[i],
+        g = tiny[i + 1],
+        b = tiny[i + 2];
       sum += r + g + b;
       sumSq += r * r + g * g + b * b;
-      rSum += r; gSum += g; bSum += b;
+      rSum += r;
+      gSum += g;
+      bSum += b;
       n += 3;
     }
     const mean = sum / n;
@@ -5225,7 +5679,9 @@ ipcMain.handle("artist-image:validate-saved", async () => {
         fs.unlinkSync(p);
         _artistImageCache.delete(name);
         deletedCount++;
-        console.log(`[artist-image] Migration deleted invalid image for "${name}"`);
+        console.log(
+          `[artist-image] Migration deleted invalid image for "${name}"`,
+        );
       } catch (_) {}
     }
     _saveArtistImageMap();
@@ -5244,85 +5700,98 @@ ipcMain.handle("artist-image:validate-saved", async () => {
 // The image is cropped/resized to a 600×600 square using Sharp so it always
 // fills the artist card perfectly regardless of the original aspect ratio.
 // The placeholder validator is intentionally bypassed — the user chose this.
-ipcMain.handle("artist-image:save-custom", async (event, { artistName, localFilePath, url } = {}) => {
-  try {
-    const name = (artistName || "").trim();
-    if (!name) return { success: false, error: "No artist name provided" };
-
-    let buffer;
-
-    if (localFilePath) {
-      // Read from disk (file the user picked via dialog)
-      if (!fs.existsSync(localFilePath)) {
-        return { success: false, error: "File not found: " + localFilePath };
-      }
-      buffer = fs.readFileSync(localFilePath);
-    } else if (url) {
-      // Download from URL
-      const resp = await fetch(url, {
-        signal: AbortSignal.timeout(20000),
-        headers: { "User-Agent": "NovaTune/1.2.0" },
-      });
-      if (!resp.ok) {
-        return { success: false, error: `Download failed: HTTP ${resp.status}` };
-      }
-      buffer = Buffer.from(await resp.arrayBuffer());
-    } else {
-      return { success: false, error: "Provide localFilePath or url" };
-    }
-
-    if (!buffer || buffer.length < 100) {
-      return { success: false, error: "Image data is empty or too small" };
-    }
-
-    // Use Sharp to validate + crop to perfect square (cover fit, 600×600)
-    const sharp = require("sharp");
-    let croppedBuffer;
+ipcMain.handle(
+  "artist-image:save-custom",
+  async (event, { artistName, localFilePath, url } = {}) => {
     try {
-      croppedBuffer = await sharp(buffer)
-        .resize(600, 600, { fit: "cover", position: "attention" })
-        .jpeg({ quality: 90 })
-        .toBuffer();
-    } catch (sharpErr) {
-      // Sharp couldn't decode — try to coerce via raw pipeline (handles most corrupt/unusual formats)
+      const name = (artistName || "").trim();
+      if (!name) return { success: false, error: "No artist name provided" };
+
+      let buffer;
+
+      if (localFilePath) {
+        // Read from disk (file the user picked via dialog)
+        if (!fs.existsSync(localFilePath)) {
+          return { success: false, error: "File not found: " + localFilePath };
+        }
+        buffer = fs.readFileSync(localFilePath);
+      } else if (url) {
+        // Download from URL
+        const resp = await fetch(url, {
+          signal: AbortSignal.timeout(20000),
+          headers: { "User-Agent": "NovaTune/1.2.0" },
+        });
+        if (!resp.ok) {
+          return {
+            success: false,
+            error: `Download failed: HTTP ${resp.status}`,
+          };
+        }
+        buffer = Buffer.from(await resp.arrayBuffer());
+      } else {
+        return { success: false, error: "Provide localFilePath or url" };
+      }
+
+      if (!buffer || buffer.length < 100) {
+        return { success: false, error: "Image data is empty or too small" };
+      }
+
+      // Use Sharp to validate + crop to perfect square (cover fit, 600×600)
+      const sharp = require("sharp");
+      let croppedBuffer;
       try {
-        croppedBuffer = await sharp(buffer, { failOnError: false })
+        croppedBuffer = await sharp(buffer)
           .resize(600, 600, { fit: "cover", position: "attention" })
           .jpeg({ quality: 90 })
           .toBuffer();
-      } catch (_) {
-        return { success: false, error: "Could not decode image: " + sharpErr.message };
-      }
-    }
-
-    // Save to the same artist images cache dir
-    const dir = ARTIST_IMAGE_CACHE_DIR();
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const hash = _artistImageHash(name);
-
-    // Clean up any existing image files for this artist
-    try {
-      const existingFiles = fs.readdirSync(dir);
-      for (const f of existingFiles) {
-        if (f.startsWith(hash + "_") || f === hash + ".jpg") {
-          try { fs.unlinkSync(path.join(dir, f)); } catch (_) {}
+      } catch (sharpErr) {
+        // Sharp couldn't decode — try to coerce via raw pipeline (handles most corrupt/unusual formats)
+        try {
+          croppedBuffer = await sharp(buffer, { failOnError: false })
+            .resize(600, 600, { fit: "cover", position: "attention" })
+            .jpeg({ quality: 90 })
+            .toBuffer();
+        } catch (_) {
+          return {
+            success: false,
+            error: "Could not decode image: " + sharpErr.message,
+          };
         }
       }
-    } catch (_) {}
 
-    const localPath = path.join(dir, `${hash}_${Date.now()}.jpg`);
-    fs.writeFileSync(localPath, croppedBuffer);
+      // Save to the same artist images cache dir
+      const dir = ARTIST_IMAGE_CACHE_DIR();
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const hash = _artistImageHash(name);
 
-    // Update in-memory cache + map file
-    _artistImageCache.set(name.toLowerCase(), localPath);
-    _saveArtistImageMap();
+      // Clean up any existing image files for this artist
+      try {
+        const existingFiles = fs.readdirSync(dir);
+        for (const f of existingFiles) {
+          if (f.startsWith(hash + "_") || f === hash + ".jpg") {
+            try {
+              fs.unlinkSync(path.join(dir, f));
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
 
-    console.log(`[artist-image:save-custom] Saved custom image for "${name}" → ${localPath}`);
-    return { success: true, localPath };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
+      const localPath = path.join(dir, `${hash}_${Date.now()}.jpg`);
+      fs.writeFileSync(localPath, croppedBuffer);
+
+      // Update in-memory cache + map file
+      _artistImageCache.set(name.toLowerCase(), localPath);
+      _saveArtistImageMap();
+
+      console.log(
+        `[artist-image:save-custom] Saved custom image for "${name}" → ${localPath}`,
+      );
+      return { success: true, localPath };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
+);
 
 // Load the cache at module initialization (after app is ready)
 // We call this lazily from the first IPC handler.
@@ -5337,101 +5806,101 @@ ipcMain.handle("artist-image:save-custom", async (event, { artistName, localFile
 // (cached_covers/thumbs/<id>_128.webp) — the renderer's <img>/<canvas>
 // just reads the cached file, no Sharp processing needed.
 // v1.1.4: Default size bumped from 48 → 128 for retina quality.
-ipcMain.handle("coverart:ensure-thumbs", async (event, { trackIds, size = 128 } = {}) => {
-  try {
-    if (!Array.isArray(trackIds) || trackIds.length === 0) {
-      return { success: true, thumbs: {}, missing: [] };
-    }
-    const sharp = require("sharp");
-    const thumbDir = path.join(
-      app.getPath("userData"),
-      "cached_covers",
-      "thumbs",
-    );
-    if (!fs.existsSync(thumbDir)) {
-      await fs.promises.mkdir(thumbDir, { recursive: true });
-    }
+ipcMain.handle(
+  "coverart:ensure-thumbs",
+  async (event, { trackIds, size = 128 } = {}) => {
+    try {
+      if (!Array.isArray(trackIds) || trackIds.length === 0) {
+        return { success: true, thumbs: {}, missing: [] };
+      }
+      const sharp = require("sharp");
+      const thumbDir = path.join(
+        app.getPath("userData"),
+        "cached_covers",
+        "thumbs",
+      );
+      if (!fs.existsSync(thumbDir)) {
+        await fs.promises.mkdir(thumbDir, { recursive: true });
+      }
 
-    const thumbs = {};
-    const missing = [];
-    const library = getLibrary();
-    const libById = new Map(library.map((t) => [t.id, t]));
+      const thumbs = {};
+      const missing = [];
+      const library = getLibrary();
+      const libById = new Map(library.map((t) => [t.id, t]));
 
-    // Process in parallel batches of 8 (Sharp is thread-safe; 8 fits
-    // comfortably within libuv's default thread pool of 4 × 2).
-    const BATCH = 8;
-    for (let i = 0; i < trackIds.length; i += BATCH) {
-      const batch = trackIds.slice(i, i + BATCH);
-      await Promise.allSettled(
-        batch.map(async (trackId) => {
-          try {
-            const thumbFile = path.join(
-              thumbDir,
-              `${trackId}_${size}.webp`,
-            );
-            // Fast path: thumb already exists on disk → just return URL
-            const exists = await fs.promises
-              .access(thumbFile)
-              .then(() => true)
-              .catch(() => false);
-            if (exists) {
-              thumbs[trackId] = `nova-media://thumb/${trackId}/${size}`;
-              return;
-            }
-            // Need to generate — look up cover art
-            const track = libById.get(trackId);
-            let coverArt = track?.coverArt || null;
-            if (!coverArt) {
-              // Fall back to track_covers table (where base64 was stored)
-              coverArt = getCoverArtByTrackId(trackId);
-            }
-            if (!coverArt) {
-              missing.push(trackId);
-              return;
-            }
-            // Load source image
-            let inputBuffer;
-            if (coverArt.startsWith("data:")) {
-              const base64 = coverArt.split(",")[1];
-              if (!base64) return;
-              inputBuffer = Buffer.from(base64, "base64");
-            } else {
-              try {
-                inputBuffer = await fs.promises.readFile(coverArt);
-              } catch (_) {
+      // Process in parallel batches of 8 (Sharp is thread-safe; 8 fits
+      // comfortably within libuv's default thread pool of 4 × 2).
+      const BATCH = 8;
+      for (let i = 0; i < trackIds.length; i += BATCH) {
+        const batch = trackIds.slice(i, i + BATCH);
+        await Promise.allSettled(
+          batch.map(async (trackId) => {
+            try {
+              const thumbFile = path.join(thumbDir, `${trackId}_${size}.webp`);
+              // Fast path: thumb already exists on disk → just return URL
+              const exists = await fs.promises
+                .access(thumbFile)
+                .then(() => true)
+                .catch(() => false);
+              if (exists) {
+                thumbs[trackId] = `nova-media://thumb/${trackId}/${size}`;
+                return;
+              }
+              // Need to generate — look up cover art
+              const track = libById.get(trackId);
+              let coverArt = track?.coverArt || null;
+              if (!coverArt) {
+                // Fall back to track_covers table (where base64 was stored)
+                coverArt = getCoverArtByTrackId(trackId);
+              }
+              if (!coverArt) {
                 missing.push(trackId);
                 return;
               }
+              // Load source image
+              let inputBuffer;
+              if (coverArt.startsWith("data:")) {
+                const base64 = coverArt.split(",")[1];
+                if (!base64) return;
+                inputBuffer = Buffer.from(base64, "base64");
+              } else {
+                try {
+                  inputBuffer = await fs.promises.readFile(coverArt);
+                } catch (_) {
+                  missing.push(trackId);
+                  return;
+                }
+              }
+              // Generate square-cropped WebP thumbnail
+              const metadata = await sharp(inputBuffer).metadata();
+              const side = Math.min(metadata.width, metadata.height);
+              const left = Math.floor((metadata.width - side) / 2);
+              const top = Math.floor((metadata.height - side) / 2);
+              const thumbBuffer = await sharp(inputBuffer)
+                .extract({ left, top, width: side, height: side })
+                .resize(size, size, { fit: "cover" })
+                .webp({ quality: 90 }) // v1.1.4: bumped to 90 for retina quality
+                .toBuffer();
+              await fs.promises.writeFile(thumbFile, thumbBuffer);
+              thumbs[trackId] = `nova-media://thumb/${trackId}/${size}`;
+            } catch (_) {
+              missing.push(trackId);
             }
-            // Generate square-cropped WebP thumbnail
-            const metadata = await sharp(inputBuffer).metadata();
-            const side = Math.min(metadata.width, metadata.height);
-            const left = Math.floor((metadata.width - side) / 2);
-            const top = Math.floor((metadata.height - side) / 2);
-            const thumbBuffer = await sharp(inputBuffer)
-              .extract({ left, top, width: side, height: side })
-              .resize(size, size, { fit: "cover" })
-              .webp({ quality: 90 }) // v1.1.4: bumped to 90 for retina quality
-              .toBuffer();
-            await fs.promises.writeFile(thumbFile, thumbBuffer);
-            thumbs[trackId] = `nova-media://thumb/${trackId}/${size}`;
-          } catch (_) {
-            missing.push(trackId);
-          }
-        }),
-      );
-      // Yield between batches so we don't starve the audio thread on HDD.
-      await new Promise((resolve) => setImmediate(resolve));
-      // Back off harder while audio is active
-      if (Date.now() - (global._lastAudioActivity || 0) < 1500) {
-        await new Promise((resolve) => setTimeout(resolve, 40));
+          }),
+        );
+        // Yield between batches so we don't starve the audio thread on HDD.
+        await new Promise((resolve) => setImmediate(resolve));
+        // Back off harder while audio is active
+        if (Date.now() - (global._lastAudioActivity || 0) < 1500) {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+        }
       }
+      return { success: true, thumbs, missing };
+    } catch (err) {
+      return { success: false, error: err.message, thumbs: {}, missing: [] };
     }
-    return { success: true, thumbs, missing };
-  } catch (err) {
-    return { success: false, error: err.message, thumbs: {}, missing: [] };
-  }
-});
+  },
+);
 
 // ─── v1.1.4 — Sibling cover fallback ────────────────────────────────
 // For tracks with NO cover art (common for YouTube rips like

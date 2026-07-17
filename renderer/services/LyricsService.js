@@ -21,6 +21,42 @@ class LyricsService {
   }
 
   /**
+   * Fast binary map lookup — instant if lyrics path is cached.
+   * @param {string} filePath
+   * @returns {Promise<{ synced: Array|null, plain: string, source: string }|null>}
+   */
+  async fastLookup(filePath) {
+    if (!filePath) return null;
+    try {
+      const result = await ipcRenderer.invoke("lyrics:fast-lookup", filePath);
+      if (result.success && result.lyrics) {
+        return {
+          synced: Array.isArray(result.lyrics.synced) ? result.lyrics.synced : null,
+          plain: result.lyrics.plain || "",
+          source: "fast-lookup",
+        };
+      }
+      return null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /**
+   * Migrate existing .lrc files to lyricz folder.
+   * @param {string[]} musicFolders
+   * @returns {Promise<{success: boolean, moved?: number, skipped?: number}>}
+   */
+  async migrateToLyricz(musicFolders) {
+    try {
+      return await ipcRenderer.invoke("lyrics:migrate-to-lyricz", musicFolders);
+    } catch (err) {
+      console.error("[LyricsService] migrateToLyricz failed:", err);
+      return { success: false };
+    }
+  }
+
+  /**
    * Get lyrics for a track using the fastest available source.
    * Always checks DB/local/embedded before going online.
    * @param {{ id?: string, artist: string, title: string, filePath?: string, album?: string, duration?: number }} track
@@ -32,6 +68,15 @@ class LyricsService {
     const trackCacheKey = track.id ? `track:${track.id}` : null;
     if (trackCacheKey && this._cache.has(trackCacheKey)) {
       return this._cache.get(trackCacheKey);
+    }
+
+    // Task 3: Try fast binary map lookup first (instant, no I/O)
+    if (track.filePath) {
+      const fastResult = await this.fastLookup(track.filePath);
+      if (fastResult && (fastResult.synced || fastResult.plain)) {
+        if (trackCacheKey) this._cache.set(trackCacheKey, fastResult);
+        return fastResult;
+      }
     }
 
     // 1. DB-stored lyrics (instant — already scanned or previously saved)

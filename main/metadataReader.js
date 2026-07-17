@@ -664,7 +664,10 @@ class MetadataReader {
     let ytItag = 0;
     if (ytSuffixMatch) {
       ytItag = parseInt(ytSuffixMatch[1], 10) || 0;
-      cleanedName = nameWithoutExt.slice(0, nameWithoutExt.length - ytSuffixMatch[0].length);
+      cleanedName = nameWithoutExt.slice(
+        0,
+        nameWithoutExt.length - ytSuffixMatch[0].length,
+      );
       // Trim any trailing underscores left behind
       cleanedName = cleanedName.replace(/_+$/, "").replace(/^_+/, "");
     }
@@ -689,7 +692,10 @@ class MetadataReader {
       //      and the remaining tokens become the title.
       //   d. If no match, fall back to the old behavior (whole thing
       //      becomes the title, artist stays "Unknown Artist").
-      const tokens = cleanedName.split(/[_]+/).map((t) => t.trim()).filter(Boolean);
+      const tokens = cleanedName
+        .split(/[_]+/)
+        .map((t) => t.trim())
+        .filter(Boolean);
 
       // Build the artist match if knownArtists is provided
       let matchedArtist = null;
@@ -723,7 +729,10 @@ class MetadataReader {
           .trim();
       } else {
         // No artist match — use the whole thing as the title (v1.1.0 behavior)
-        const spaced = cleanedName.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+        const spaced = cleanedName
+          .replace(/_/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
         const titleCased = spaced.replace(/\b\w/g, (c) => c.toUpperCase());
         title = titleCased
           .replace(/\bUnreleased\b/g, "(Unreleased)")
@@ -763,14 +772,24 @@ class MetadataReader {
       let assumedKbps = 128; // default for mp3/aac
       if (ytItag > 0) {
         const itagBitrate = {
-          140: 128, 139: 48, 171: 128, 249: 50, 250: 70, 251: 160,
-          18: 96, 22: 192, 137: 0, 136: 0, 135: 0, // 13x = video-only, no audio
+          140: 128,
+          139: 48,
+          171: 128,
+          249: 50,
+          250: 70,
+          251: 160,
+          18: 96,
+          22: 192,
+          137: 0,
+          136: 0,
+          135: 0, // 13x = video-only, no audio
         };
         if (itagBitrate[ytItag]) assumedKbps = itagBitrate[ytItag];
       } else if (extLower === ".m4a") assumedKbps = 256;
       else if (extLower === ".opus") assumedKbps = 96;
       else if (extLower === ".ogg") assumedKbps = 112;
-      else if (extLower === ".flac") assumedKbps = 900; // ~9:1 vs 1411kbps raw
+      else if (extLower === ".flac")
+        assumedKbps = 900; // ~9:1 vs 1411kbps raw
       else if (extLower === ".wav") assumedKbps = 1411;
 
       if (assumedKbps > 0) {

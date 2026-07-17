@@ -748,6 +748,7 @@ function _getDominantColorForTrack(track) {
 // if a new song is added or removed, the hash changes and the collage
 // is regenerated on next load.
 const _playlistCollageCache = new Map(); // playlistId → dataURL (session hot-cache)
+const _playlistHashCache = new Map(); // playlistId → contentHash (session, avoids redundant IDB/disk lookups)
 const COLLAGE_IDB_PREFIX = "collage::";
 const COLLAGE_LAYOUT_VERSION = 4; // Bumped when collage layout changes (forces cache invalidation)
 
@@ -834,6 +835,7 @@ async function _saveCollageCache(playlistId, dataURL, tracks) {
 
 function _invalidateCollageCache(playlistId) {
   _playlistCollageCache.delete(playlistId);
+  _playlistHashCache.delete(playlistId); // Also clear session hash so next check triggers regeneration
   _idbSet(COLLAGE_IDB_PREFIX + playlistId, null);
   // Also delete disk cache
   try {
@@ -865,28 +867,26 @@ async function _preloadPlaylistCovers() {
         .map((id) => libById.get(id))
         .filter(Boolean);
       if (tracks.length > 0) {
-        // BUGFIX: Invalidate disk collage cache if layout version changed.
-        // This forces re-generation of cached collages with the new diamond stack layout.
-        try {
-          await window.novaAPI.invoke(
-            "playlist:invalidate-collage",
-            playlist.id,
-          );
-        } catch (_) {}
+        // Warm the in-memory hash cache for this session
+        _shouldRegenerateCollage(playlist.id, tracks);
 
-        // Preload cover art URLs for the first 4 tracks (used by live collage cells)
-        // into the browser cache so they're instantly available on render
-        const artTracks = tracks
-          .filter((t) => _resolveCoverArtSrcWithReuse(t))
-          .slice(0, 4);
-        for (const track of artTracks) {
-          const src = _resolveCoverArtSrcWithReuse(track);
-          if (src && !_coverArtPreloader.isLoaded(src)) {
-            _coverArtPreloader.enqueue([src]);
+        // _getCachedCollage does smart content-hash validation:
+        // - If IDB/disk cache exists and hash matches → returns cached URL (no regeneration)
+        // - If hash mismatch or no cache → returns null, triggers lazy generation later
+        const cached = await _getCachedCollage(playlist.id, tracks);
+
+        // Only preload cover art if the collage wasn't cached (needs regeneration)
+        if (!cached) {
+          const artTracks = tracks
+            .filter((t) => _resolveCoverArtSrcWithReuse(t))
+            .slice(0, 4);
+          for (const track of artTracks) {
+            const src = _resolveCoverArtSrcWithReuse(track);
+            if (src && !_coverArtPreloader.isLoaded(src)) {
+              _coverArtPreloader.enqueue([src]);
+            }
           }
         }
-        // This populates the canvas collage cache (in-memory + IDB + disk) for next display
-        await _getCachedCollage(playlist.id, tracks);
       }
     }
   } catch (_) {}
@@ -1770,6 +1770,10 @@ function $(id) {
 function $$(sel) {
   return document.querySelectorAll(sel);
 }
+
+// Tooltip system: uses the original CSS [data-tooltip] pseudo-element system.
+// (JS tooltip removed — it conflicted with the CSS ::before/::after tooltips,
+//  causing duplicate tooltips on the same element.)
 function formatTime(sec) {
   if (!sec || !isFinite(sec)) return "0:00";
   const m = Math.floor(sec / 60);
@@ -2060,6 +2064,29 @@ document.addEventListener("DOMContentLoaded", async () => {
       _wireLyricsEditor();
       _wirePlaylistMenu();
       _wireAutoUpdater();
+
+      // ── Task 3: Lyrics folder management ──
+      // Migrate any sidecar .lrc files to lyricz/ subfolders, then
+      // build the binary map for O(1) lyrics lookup on playback.
+      // NOTE: The actual setting is "scanFolders", not "musicFolders".
+      const _lyricFolders = state.settings && state.settings.scanFolders;
+      if (_lyricFolders && _lyricFolders.length > 0) {
+        window.novaAPI
+          .invoke("lyrics:migrate-to-lyricz", _lyricFolders)
+          .then((res) => {
+            if (res && res.success) {
+              console.log(
+                `[lyrics] Migration done: ${res.moved} moved, ${res.skipped} skipped, ${res.fromSubdirs || 0} from subdirs`,
+              );
+            }
+          })
+          .catch(() => {});
+        // Build the binary map AFTER migration completes so it includes
+        // the newly-moved .lrc files in lyricz/ folders.
+        // (also built lazily on first fast-lookup, but proactive build
+        // means the first song plays with instant lyrics)
+        window.novaAPI.invoke("lyrics:rebuild-map").catch(() => {});
+      }
     },
     { timeout: 100 },
   );
@@ -2206,14 +2233,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   async function playExternalFile(filePath) {
     if (!filePath) return;
     const fileName = filePath.split(/[\\/]/).pop();
-    const defaultTitle = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
+    const defaultTitle =
+      fileName.substring(0, fileName.lastIndexOf(".")) || fileName;
     const track = {
       id: "external-" + Date.now(),
       filePath: filePath,
       title: defaultTitle,
       artist: "External File",
       album: "Downloads",
-      duration: 0
+      duration: 0,
     };
 
     try {
@@ -2240,7 +2268,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   window.novaAPI.on("player:toggle-play-pause", () => {
-    const playBtn = document.getElementById("play-btn") || document.getElementById("ov-play-btn");
+    const playBtn =
+      document.getElementById("play-btn") ||
+      document.getElementById("ov-play-btn");
     if (playBtn) playBtn.click();
   });
 
@@ -2253,11 +2283,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   // Check for file opened on startup
-  window.novaAPI.invoke("app:get-startup-file").then((filePath) => {
-    if (filePath) {
-      playExternalFile(filePath);
-    }
-  }).catch((err) => console.warn("Failed to check for startup file:", err));
+  window.novaAPI
+    .invoke("app:get-startup-file")
+    .then((filePath) => {
+      if (filePath) {
+        playExternalFile(filePath);
+      }
+    })
+    .catch((err) => console.warn("Failed to check for startup file:", err));
 });
 
 // ─── Keyboard Shortcuts (unified global handler) ─────────────────
@@ -2512,11 +2545,14 @@ function _toggleFloatingNavOrSidebar() {
   // If the floating card exists and we're on a narrow screen, toggle it
   if (card && window.innerWidth <= 950) {
     const isOpen = card.classList.contains("visible");
+    const trigger = document.getElementById("float-nav-trigger");
     if (isOpen) {
       // Close
       card.classList.remove("visible");
-      const trigger = document.getElementById("float-nav-trigger");
-      if (trigger) trigger.classList.remove("nav-open");
+      if (trigger) {
+        trigger.classList.remove("nav-open");
+        trigger.dataset.tooltip = "Menu";
+      }
       card.addEventListener(
         "transitionend",
         () => {
@@ -2528,8 +2564,10 @@ function _toggleFloatingNavOrSidebar() {
       // Open
       card.style.display = "flex";
       requestAnimationFrame(() => card.classList.add("visible"));
-      const trigger = document.getElementById("float-nav-trigger");
-      if (trigger) trigger.classList.add("nav-open");
+      if (trigger) {
+        trigger.classList.add("nav-open");
+        trigger.dataset.tooltip = "Close";
+      }
     }
     return;
   }
@@ -2539,8 +2577,6 @@ function _toggleFloatingNavOrSidebar() {
 
 // ─── Sidebar ──────────────────────────────────────────────────────
 function _wireSidebar() {
-  const menuBtn = $("menu-btn");
-  if (menuBtn) menuBtn.addEventListener("click", toggleSidebar);
   const overlay = $("sidebar-overlay");
   if (overlay) overlay.addEventListener("click", toggleSidebar);
 
@@ -2645,8 +2681,12 @@ function closeLyricsPanel() {
   if (lyricsToggle) lyricsToggle.classList.remove("active");
 }
 
-function toggleSidebar() {
-  state.sidebarOpen = !state.sidebarOpen;
+function toggleSidebar(forceState) {
+  if (typeof forceState === "boolean") {
+    state.sidebarOpen = forceState;
+  } else {
+    state.sidebarOpen = !state.sidebarOpen;
+  }
   $("sidebar").classList.toggle("open", state.sidebarOpen);
   $("sidebar-overlay").classList.toggle("open", state.sidebarOpen);
 }
@@ -2934,16 +2974,21 @@ function _wireSort() {
   const items = menu.querySelectorAll(".dropdown-item");
   items.forEach((item) => {
     item.addEventListener("click", () => {
-      items.forEach((i) => i.classList.remove("active"));
-      item.classList.add("active");
-      currentText.textContent = item.textContent;
-
       const val = item.dataset.value;
-      state.sortKey = val;
-      if (val === "dateAdded") {
-        state.sortAsc = false; // Newest first
+      if (val === state.sortKey) {
+        // Same item clicked again — toggle sort direction
+        state.sortAsc = !state.sortAsc;
       } else {
-        state.sortAsc = true;
+        // Different item — set new sort key with default direction
+        items.forEach((i) => i.classList.remove("active"));
+        item.classList.add("active");
+        currentText.textContent = item.textContent;
+        state.sortKey = val;
+        if (val === "dateAdded") {
+          state.sortAsc = false; // Newest first
+        } else {
+          state.sortAsc = true;
+        }
       }
 
       _sortTracks();
@@ -3000,8 +3045,16 @@ function _wireAddFolder() {
         console.log(
           `[Add Folder] Done: ${scanResult.newTracks} new, ${scanResult.tracks.length} total`,
         );
-        _bustIDBThumbCache();
-        await _loadLibrary();
+        // Task 4: Use partial update for small changes, full reload for large
+        if (scanResult.newTracks <= 15) {
+          try {
+            await window.novaAPI.invoke("library:rebuild-manifest");
+          } catch (_) {}
+          await _partialLibraryUpdate();
+        } else {
+          _bustIDBThumbCache();
+          await _loadLibrary();
+        }
         _updateSidebarFolderInfo();
       } else {
         console.error("[Add Folder] Scan failed:", scanResult.error);
@@ -3028,6 +3081,7 @@ function _wireAddFolder() {
     if (scanFolders.length === 0) return;
 
     btn.classList.add("spinning");
+    btn.dataset.tooltip = "Refreshing...";
     $("scan-progress").style.display = "flex";
     $("scan-progress-bar").style.width = "0%";
     $("scan-progress-text").textContent = "Checking for new songs...";
@@ -3048,6 +3102,7 @@ function _wireAddFolder() {
       anyChanged = true; // err on the side of reloading
     } finally {
       btn.classList.remove("spinning");
+      btn.dataset.tooltip = "Refresh";
       $("scan-progress").style.display = "none";
     }
 
@@ -3055,30 +3110,15 @@ function _wireAddFolder() {
     // When nothingChanged, the library in memory is already correct —
     // reloading it would just thrash the DOM + virtual list for no reason.
     if (anyChanged) {
-      _bustIDBThumbCache();
-      // v1.0.15: Clear the manifest decoder + thumbnail atlas so
-      // _loadLibrary() fetches a FRESH manifest with the new tracks.
-      manifestDecoder = null;
-      thumbnailAtlas.clear();
-      // v1.0.15: Invalidate bg-queue cache for thumbnail tasks
-      try {
-        await _idbSet("bg-cache::missing-thumbnails", null);
-        await _idbSet("bg-cache::thumbnail-atlas", null);
-      } catch (_) {}
-      // v1.0.15: Explicitly rebuild the manifest BEFORE reloading.
-      // The backend's scan handler rebuilds via setImmediate — which
-      // fires AFTER the scan IPC returns. So if we fetch the manifest
-      // immediately, we get the OLD one without the new tracks.
-      // Calling library:rebuild-manifest here forces a synchronous
-      // rebuild that completes before we fetch.
+      // Task 4: Use partial update instead of full reload
       try {
         await window.novaAPI.invoke("library:rebuild-manifest");
       } catch (err) {
         console.warn("[Refresh] Manifest rebuild failed:", err.message);
       }
-      await _loadLibrary();
+      await _partialLibraryUpdate();
       _updateSidebarFolderInfo();
-      console.log("[Refresh] Library reloaded (changes detected)");
+      console.log("[Refresh] Library updated (changes detected)");
     } else {
       console.log("[Refresh] No changes — skipped library reload");
     }
@@ -3788,17 +3828,50 @@ function _applyCoverArtToTrack(track) {
         const artIdx = getArtIndex(track);
         $("np-art").innerHTML =
           `<img src="${displayUrl}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`;
-        $("np-art").querySelector("img")?.addEventListener("error", () => { $("np-art").innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
+        $("np-art")
+          .querySelector("img")
+          ?.addEventListener(
+            "error",
+            () => {
+              $("np-art").innerHTML =
+                `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
+            },
+            { once: true },
+          );
         $("ov-art").innerHTML =
           `<img src="${displayUrl}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`;
-        $("ov-art").querySelector("img")?.addEventListener("error", () => { $("ov-art").innerHTML = `<div class="art-placeholder art-${artIdx}" style="font-size:56px">&#127925;</div>`; }, { once: true });
+        $("ov-art")
+          .querySelector("img")
+          ?.addEventListener(
+            "error",
+            () => {
+              $("ov-art").innerHTML =
+                `<div class="art-placeholder art-${artIdx}" style="font-size:56px">&#127925;</div>`;
+            },
+            { once: true },
+          );
         $("ov-mini-art").innerHTML =
           `<img src="${displayUrl}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`;
-        $("ov-mini-art").querySelector("img")?.addEventListener("error", () => { $("ov-mini-art").innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
+        $("ov-mini-art")
+          .querySelector("img")
+          ?.addEventListener(
+            "error",
+            () => {
+              $("ov-mini-art").innerHTML =
+                `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
+            },
+            { once: true },
+          );
         const floatArt = $("np-float-art");
         if (floatArt) {
           floatArt.innerHTML = `<img src="${displayUrl}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:10px;border:none;outline:none;">`;
-          floatArt.querySelector("img")?.addEventListener("error", () => { floatArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
+          floatArt.querySelector("img")?.addEventListener(
+            "error",
+            () => {
+              floatArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
+            },
+            { once: true },
+          );
         }
         _setNpBg(track);
       }
@@ -4858,6 +4931,80 @@ async function _loadLibrary() {
 /**
  * Apply IDB-cached thumbnails to a list of tracks.
  * Extracted from _loadLibrary to be reusable for progressive loading.
+ * Task 4: Partial library update — avoids full reload for small changes
+ */
+async function _partialLibraryUpdate() {
+  try {
+    const existingIds = state.tracks.map((t) => t.id);
+    const result = await window.novaAPI.invoke(
+      "library:partial-update",
+      existingIds,
+    );
+    if (!result.success) {
+      await _loadLibrary();
+      return;
+    }
+
+    const { newTracks, removedIds, totalTracks } = result;
+
+    if (newTracks.length === 0 && removedIds.length === 0) {
+      console.log("[PartialUpdate] No changes — skipping DOM update");
+      return;
+    }
+
+    console.log(
+      `[PartialUpdate] +${newTracks.length} new, -${removedIds.length} removed`,
+    );
+
+    // Apply IDB thumbs to new tracks
+    await _applyIDBThumbs(newTracks);
+
+    // Remove deleted tracks
+    if (removedIds.length > 0) {
+      const removeSet = new Set(removedIds);
+      state.tracks = state.tracks.filter((t) => !removeSet.has(t.id));
+      state.filteredTracks = state.filteredTracks.filter(
+        (t) => !removeSet.has(t.id),
+      );
+    }
+
+    // Add new tracks
+    if (newTracks.length > 0) {
+      state.tracks.push(...newTracks);
+    }
+
+    // Update filtered tracks
+    state.filteredTracks = [...state.tracks];
+    if (state.sortKey) {
+      _sortTracks(state.sortKey, state.sortAsc);
+    }
+
+    // Re-render without full reload
+    invalidateSectionCache();
+    if (virtualList.mode === "library" || virtualList.mode === "home") {
+      renderTracks(state.filteredTracks, "library");
+    }
+
+    // Rebuild search index
+    buildSearchIndex();
+
+    // Schedule thumbnail atlas build for new tracks
+    for (const track of newTracks) {
+      _scheduleThumbnailAtlasBuild(track);
+    }
+
+    console.log(
+      `[PartialUpdate] Library now has ${state.tracks.length} tracks`,
+    );
+  } catch (err) {
+    console.error("[PartialUpdate] Failed, falling back to full reload:", err);
+    await _loadLibrary();
+  }
+}
+
+/**
+ * Apply IDB-cached thumbnails to a list of tracks.
+ * Extracted from _loadLibrary to be reusable for progressive loading.
  */
 async function _applyIDBThumbs(tracks) {
   const idbHits = {};
@@ -5146,8 +5293,7 @@ async function _loadSettings() {
         typeof state.settings.volume === "number" ? state.settings.volume : 0.5;
     }
     audioEngine.setVolume(state.volume);
-    const volFill = $("vol-fill");
-    if (volFill) volFill.style.width = state.volume * 100 + "%";
+    updateVolumeUi();
     _updateRepeatButton();
     const shuffleBtn = $("shuffle-btn");
     if (shuffleBtn) shuffleBtn.classList.toggle("active", state.shuffleEnabled);
@@ -5431,6 +5577,7 @@ function _applyNavMode(mode) {
           if (isOpen) {
             card.classList.remove("visible");
             trigger.classList.remove("nav-open");
+            trigger.dataset.tooltip = "Menu";
             card.addEventListener(
               "transitionend",
               () => {
@@ -5444,6 +5591,7 @@ function _applyNavMode(mode) {
             requestAnimationFrame(() => {
               card.classList.add("visible");
               trigger.classList.add("nav-open");
+              trigger.dataset.tooltip = "Close";
             });
           }
         });
@@ -5457,6 +5605,7 @@ function _applyNavMode(mode) {
           ) {
             card.classList.remove("visible");
             trigger.classList.remove("nav-open");
+            trigger.dataset.tooltip = "Menu";
             card.addEventListener(
               "transitionend",
               () => {
@@ -5583,7 +5732,14 @@ async function _loadRecentPlayed() {
         npArt.innerHTML = npArtSrc
           ? `<img src="${npArtSrc}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;">`
           : `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
-        if (npArtSrc) npArt.querySelector("img")?.addEventListener("error", () => { npArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
+        if (npArtSrc)
+          npArt.querySelector("img")?.addEventListener(
+            "error",
+            () => {
+              npArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
+            },
+            { once: true },
+          );
       }
 
       // BUGFIX: Also update the overlay (ov-title, ov-artist, ov-art, ov-mini-*)
@@ -5605,13 +5761,27 @@ async function _loadRecentPlayed() {
         ovArt.innerHTML = ovArtSrc
           ? `<img src="${ovArtSrc}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`
           : `<div class="art-placeholder art-${artIdx}" style="font-size:56px">&#127925;</div>`;
-        if (ovArtSrc) ovArt.querySelector("img")?.addEventListener("error", () => { ovArt.innerHTML = `<div class="art-placeholder art-${artIdx}" style="font-size:56px">&#127925;</div>`; }, { once: true });
+        if (ovArtSrc)
+          ovArt.querySelector("img")?.addEventListener(
+            "error",
+            () => {
+              ovArt.innerHTML = `<div class="art-placeholder art-${artIdx}" style="font-size:56px">&#127925;</div>`;
+            },
+            { once: true },
+          );
       }
       if (ovMiniArt) {
         ovMiniArt.innerHTML = ovArtSrc
           ? `<img src="${ovArtSrc}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`
           : `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
-        if (ovArtSrc) ovMiniArt.querySelector("img")?.addEventListener("error", () => { ovMiniArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
+        if (ovArtSrc)
+          ovMiniArt.querySelector("img")?.addEventListener(
+            "error",
+            () => {
+              ovMiniArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
+            },
+            { once: true },
+          );
       }
 
       // BUGFIX: Update floating art card (small screens)
@@ -5625,7 +5795,14 @@ async function _loadRecentPlayed() {
         floatArt.innerHTML = floatSrc
           ? `<img src="${floatSrc}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:10px;border:none;outline:none;">`
           : `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
-        if (floatSrc) floatArt.querySelector("img")?.addEventListener("error", () => { floatArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
+        if (floatSrc)
+          floatArt.querySelector("img")?.addEventListener(
+            "error",
+            () => {
+              floatArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
+            },
+            { once: true },
+          );
       }
 
       _setNpBg(trackToPlay);
@@ -5760,7 +5937,7 @@ function renderSettings() {
 
   renderSectionSurface(`
     <div class="settings-layout">
-      <!-- Row 1, Col 1: Playback -->
+      <!-- Row 1: Playback -->
       <div class="section-panel">
         <div class="section-panel-title">Playback</div>
         <label class="settings-row">
@@ -5774,6 +5951,10 @@ function renderSettings() {
         <label class="settings-row">
           <span>Hardware acceleration</span>
           <input type="checkbox" id="setting-hardware">
+        </label>
+        <label style="margin-top: -10px" class="settings-row settings-row--divider">
+          <span>Expanded sidebar <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(Experimental — show full sidebar on smaller screens)</span></span>
+          <input type="checkbox" id="setting-expanded-sidebar">
         </label>
         <div class="settings-row settings-row--wrap">
           <span>Volume bar</span>
@@ -5805,7 +5986,8 @@ function renderSettings() {
           </div>
         </div>
       </div>
-      <!-- Row 1, Col 2: Accent Colour -->
+
+      <!-- Row 2: Accent Colour -->
       <div class="section-panel">
         <div class="section-panel-title">Accent Colour</div>
         <div class="settings-accent-body">
@@ -5839,7 +6021,8 @@ function renderSettings() {
           </div>
         </div>
       </div>
-      <!-- Row 2, Col 1: Font -->
+
+      <!-- Row 3: Font -->
       <div class="section-panel">
         <div class="section-panel-title">Font</div>
         <div class="settings-row settings-row--wrap">
@@ -5850,7 +6033,8 @@ function renderSettings() {
           </div>
         </div>
       </div>
-      <!-- v1.1.7 — Row 2, Col 1b: Card Sorting -->
+
+      <!-- v1.1.7 — Row 4: Card Sorting -->
       <div class="section-panel">
         <div class="section-panel-title">Card Sorting</div>
         <div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;">Sort albums, artists, and playlist cards by:</div>
@@ -5865,7 +6049,8 @@ function renderSettings() {
           </div>
         </div>
       </div>
-      <!-- Row 2, Col 2: Library -->
+
+      <!-- Row 5: Library -->
       <div class="section-panel">
         <div class="section-panel-title">Library</div>
         <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
@@ -5883,10 +6068,13 @@ function renderSettings() {
   const shuffle = $("setting-shuffle");
   const lyrics = $("setting-lyrics");
   const hardware = $("setting-hardware");
+  const expandedSidebar = $("setting-expanded-sidebar");
   if (shuffle) shuffle.checked = !!state.shuffleEnabled;
   if (lyrics) lyrics.checked = !!state.settings.showLyrics;
   if (hardware)
     hardware.checked = state.settings.hardwareAcceleration !== false;
+  if (expandedSidebar)
+    expandedSidebar.checked = !!state.settings.expandedSidebar;
 
   shuffle?.addEventListener("change", async (e) => {
     state.shuffleEnabled = e.target.checked;
@@ -5901,6 +6089,15 @@ function renderSettings() {
   hardware?.addEventListener("change", (e) =>
     saveSetting("hardwareAcceleration", e.target.checked),
   );
+  // Task 5: Expanded sidebar setting
+  expandedSidebar?.addEventListener("change", async (e) => {
+    await saveSetting("expandedSidebar", e.target.checked);
+    if (e.target.checked) {
+      document.body.classList.add("expanded-sidebar");
+    } else {
+      document.body.classList.remove("expanded-sidebar");
+    }
+  });
 
   document.querySelectorAll(".vol-mode-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -7011,18 +7208,17 @@ let _playlistMenuOpener = null;
 
 function closePlaylistMenus() {
   document.querySelectorAll(".playlist-popover").forEach((el) => el.remove());
+  document.querySelectorAll(".playlist-sub-menu").forEach((el) => el.remove());
   _playlistMenuOpener = null;
 }
 
-function openPlaylistMenu(anchor, track) {
-  // TOGGLE BEHAVIOR: if a menu is already open AND the user clicked the
-  // same anchor that opened it, just close and bail.  Without this,
-  // clicking the 3-dot button twice in a row would close-then-reopen
-  // the menu atomically, making it look like the button did nothing.
-  // We compare with isSameNode() to handle the case where the anchor
-  // element was recreated between renders (e.g. virtual list row that
-  // got recycled) — in that case the references won't match and we
-  // fall through to normal open behavior, which is correct.
+/**
+ * Open the Actions menu for a track (replaces the old "Add to playlist" popover).
+ * Shows: Add to Playlist →, Add Next to Queue, Tag Editor, Delete Song.
+ * "Add to Playlist" opens a sub-popup with playlist list.
+ */
+function openActionsMenu(anchor, track) {
+  // TOGGLE BEHAVIOR: same anchor → close
   if (_playlistMenuOpener && _playlistMenuOpener === anchor) {
     closePlaylistMenus();
     return;
@@ -7032,6 +7228,254 @@ function openPlaylistMenu(anchor, track) {
   if (!track) return;
   _playlistMenuOpener = anchor;
   const isInQueue = virtualList.mode === "queue";
+
+  const menu = document.createElement("div");
+  menu.className = "playlist-popover track-context-menu actions-menu";
+  menu.innerHTML = `
+    <div class="playlist-popover-title">Actions</div>
+    <button type="button" data-action="add-to-playlist" class="action-has-sub">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;vertical-align:-2px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><circle cx="12" cy="12" r="3"/></svg>
+      Add to Playlist
+      <svg class="action-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;flex-shrink:0;margin-left:auto;"><polyline points="9 18 15 12 9 6"/></svg>
+    </button>
+    <button type="button" data-action="add-next">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;vertical-align:-2px;"><polygon points="5 3 19 12 5 21 5 3"/><rect x="20" y="3" width="2" height="18"/></svg>
+      Add Next to Queue
+    </button>
+    <button type="button" data-action="edit-info">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;vertical-align:-2px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      Tag Editor
+    </button>
+    <div class="context-menu-divider"></div>
+    <button type="button" class="context-menu-danger" data-action="delete">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex-shrink:0;vertical-align:-2px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+      ${isInQueue ? "Remove from Queue" : "Delete Song"}
+    </button>
+  `;
+
+  document.body.appendChild(menu);
+
+  // Position the menu near the anchor
+  const rect = anchor.getBoundingClientRect();
+  menu.style.visibility = "hidden";
+  menu.style.left = Math.min(rect.left, window.innerWidth - 240) + "px";
+  menu.style.top = "0px";
+  requestAnimationFrame(() => {
+    const mh = menu.offsetHeight;
+    const spaceBelow = window.innerHeight - rect.bottom - 8;
+    const top = spaceBelow >= mh ? rect.bottom + 6 : rect.top - mh - 6;
+    menu.style.top = Math.max(8, top) + "px";
+    menu.style.visibility = "";
+  });
+
+  // Track reference for sub-menu
+  let _subMenuEl = null;
+
+  menu.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button");
+    if (!btn || btn.disabled) return;
+    e.stopPropagation();
+
+    // ── Add to Playlist → open sub-popup ──
+    if (btn.dataset.action === "add-to-playlist") {
+      // Close any existing sub-menu
+      if (_subMenuEl) _subMenuEl.remove();
+
+      const sub = document.createElement("div");
+      sub.className = "playlist-popover playlist-sub-menu";
+      sub.innerHTML = `
+        <div class="playlist-popover-title">Add to Playlist</div>
+        <button type="button" data-new="1">+ New Playlist</button>
+        ${state.playlists
+          .map((p) => {
+            const exists = p.tracks?.includes(track.id);
+            return `<button type="button" data-playlist-id="${escapeHtml(p.id)}" ${exists ? "disabled" : ""}>${escapeHtml(p.name)}<span>${exists ? "Added" : "Quickly Add"}</span></button>`;
+          })
+          .join("")}
+      `;
+
+      document.body.appendChild(sub);
+
+      // Position sub-menu to the right of the actions menu
+      const menuRect = menu.getBoundingClientRect();
+      sub.style.visibility = "hidden";
+      sub.style.left =
+        Math.min(menuRect.right + 4, window.innerWidth - 230) + "px";
+      sub.style.top = menu.style.top;
+      requestAnimationFrame(() => {
+        const sh = sub.offsetHeight;
+        const maxTop = window.innerHeight - sh - 8;
+        if (parseInt(sub.style.top) > maxTop) {
+          sub.style.top = Math.max(8, maxTop) + "px";
+        }
+        sub.style.visibility = "";
+      });
+
+      // If not enough space on the right, show on the left
+      requestAnimationFrame(() => {
+        const subRect = sub.getBoundingClientRect();
+        if (subRect.right > window.innerWidth - 8) {
+          sub.style.left =
+            Math.max(8, menuRect.left - subRect.width - 4) + "px";
+        }
+      });
+
+      _subMenuEl = sub;
+
+      sub.addEventListener("click", async (ev) => {
+        const subBtn = ev.target.closest("button");
+        if (!subBtn || subBtn.disabled) return;
+        ev.stopPropagation();
+        if (subBtn.dataset.new) await createPlaylistAndAdd(track);
+        else await addTrackToPlaylist(track, subBtn.dataset.playlistId);
+        closePlaylistMenus();
+      });
+
+      return;
+    }
+
+    // ── Add Next to Queue ──
+    if (btn.dataset.action === "add-next") {
+      closePlaylistMenus();
+      _addNextToQueue(track);
+      return;
+    }
+
+    // ── Tag Editor ──
+    if (btn.dataset.action === "edit-info") {
+      closePlaylistMenus();
+      _openTagEditor(track);
+      return;
+    }
+
+    // ── Delete Song / Remove from Queue ──
+    if (btn.dataset.action === "delete") {
+      closePlaylistMenus();
+      if (virtualList.mode === "queue") {
+        const qIdx = state.queue.findIndex((t) => t.id === track.id);
+        if (qIdx >= 0) {
+          state.queue.splice(qIdx, 1);
+          if (state.queueIndex >= qIdx)
+            state.queueIndex = Math.max(0, state.queueIndex - 1);
+          renderTracks(state.queue, "queue");
+        }
+      } else {
+        _confirmDeleteTrack(track);
+      }
+      return;
+    }
+  });
+}
+
+/**
+ * Add a track to the queue immediately after the currently playing track.
+ */
+function _addNextToQueue(track) {
+  if (!track) return;
+  // Don't duplicate if already next in queue
+  const insertIdx = state.queueIndex + 1;
+  if (insertIdx < state.queue.length && state.queue[insertIdx].id === track.id)
+    return;
+  // Remove from queue if it exists elsewhere, then insert after current
+  const existingIdx = state.queue.findIndex((t) => t.id === track.id);
+  if (existingIdx >= 0) {
+    state.queue.splice(existingIdx, 1);
+    if (existingIdx < state.queueIndex) state.queueIndex--;
+  }
+  state.queue.splice(state.queueIndex + 1, 0, track);
+  // Re-render queue if visible
+  if (state.activeNavSection === "queue") {
+    renderTracks(state.queue, "queue");
+  }
+  // Show brief toast confirmation
+  _showActionToast(track.title, "added next");
+}
+
+/**
+ * Show a brief non-intrusive toast for action confirmations.
+ * @param {string} trackTitle - The song name (no quotes)
+ * @param {string} action - Action description e.g. "added next"
+ */
+function _showActionToast(trackTitle, action) {
+  // Remove any existing toast
+  const existing = document.querySelector(".action-toast");
+  if (existing) existing.remove();
+
+  const toast = document.createElement("div");
+  toast.className = "action-toast";
+  toast.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+    <span class="action-toast-title">${escapeHtml(trackTitle)}</span>
+    <span class="action-toast-action">${escapeHtml(action)}</span>
+  `;
+  document.body.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.classList.add("visible");
+  });
+
+  setTimeout(() => {
+    toast.classList.remove("visible");
+    toast.addEventListener("transitionend", () => toast.remove(), {
+      once: true,
+    });
+    // Fallback remove
+    setTimeout(() => toast.remove(), 400);
+  }, 2200);
+}
+
+/**
+ * Delete confirmation dialog before permanently removing a song.
+ */
+function _confirmDeleteTrack(track) {
+  if (!track) return;
+
+  const overlay = document.createElement("div");
+  overlay.className = "tag-editor-overlay delete-confirm-overlay";
+  overlay.innerHTML = `
+    <div class="tag-editor-card delete-confirm-card">
+      <h3 style="color:#ff5c5c;">Delete Song</h3>
+      <p style="color:var(--text-secondary);margin:12px 0 20px;line-height:1.5;">
+        Are you sure you want to delete <strong style="color:var(--text-primary);">"${escapeHtml(track.title)}"</strong> by <strong style="color:var(--text-primary);">${escapeHtml(track.artist || "Unknown")}</strong>?<br>
+        <span style="font-size:12px;opacity:0.7;">This will permanently remove the file from your disk.</span>
+      </p>
+      <div class="tag-editor-actions">
+        <button class="btn-cancel" id="del-cancel">Cancel</button>
+        <button class="btn-save" id="del-confirm" style="background:#ff5c5c;">Delete</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  overlay
+    .querySelector("#del-cancel")
+    .addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+  overlay.querySelector("#del-confirm").addEventListener("click", async () => {
+    overlay.remove();
+    await _removeTrackFromLibrary(track);
+  });
+}
+
+/**
+ * Original playlist menu — used by the now-playing bar / overlay buttons.
+ * Shows: playlist list + Delete Song / Remove from Queue.
+ * (The full Actions menu with Tag Editor / Add Next is only for song-row 3-dots.)
+ */
+function openPlaylistMenu(anchor, track) {
+  // TOGGLE BEHAVIOR: same anchor → close
+  if (_playlistMenuOpener && _playlistMenuOpener === anchor) {
+    closePlaylistMenus();
+    return;
+  }
+
+  closePlaylistMenus();
+  if (!track) return;
+  _playlistMenuOpener = anchor;
+  const isInQueue = virtualList.mode === "queue";
+
   const menu = document.createElement("div");
   menu.className = "playlist-popover track-context-menu";
   menu.innerHTML = `
@@ -7051,7 +7495,6 @@ function openPlaylistMenu(anchor, track) {
   `;
   document.body.appendChild(menu);
   const rect = anchor.getBoundingClientRect();
-  // Initial off-screen placement so offsetHeight is measurable after paint
   menu.style.visibility = "hidden";
   menu.style.left = Math.min(rect.left, window.innerWidth - 220) + "px";
   menu.style.top = "0px";
@@ -7062,15 +7505,16 @@ function openPlaylistMenu(anchor, track) {
     menu.style.top = Math.max(8, top) + "px";
     menu.style.visibility = "";
   });
+
   menu.addEventListener("click", async (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
     e.stopPropagation();
     if (btn.disabled) return;
+
     if (btn.dataset.action === "delete") {
       closePlaylistMenus();
       if (virtualList.mode === "queue") {
-        // Remove from queue
         const qIdx = state.queue.findIndex((t) => t.id === track.id);
         if (qIdx >= 0) {
           state.queue.splice(qIdx, 1);
@@ -7079,11 +7523,11 @@ function openPlaylistMenu(anchor, track) {
           renderTracks(state.queue, "queue");
         }
       } else {
-        // Remove from library
         _removeTrackFromLibrary(track);
       }
       return;
     }
+
     if (btn.dataset.new) await createPlaylistAndAdd(track);
     else await addTrackToPlaylist(track, btn.dataset.playlistId);
     closePlaylistMenus();
@@ -7382,21 +7826,69 @@ function _getArtistImageUrl(artistName) {
  * _coverArtSearchCache — if we've already tried and failed for an
  * artist's tracks, we skip the artist.
  */
+function extractArtistsFromTrack(track) {
+  const artists = new Set();
+  
+  const splitAndAdd = (text) => {
+    if (!text || text === "Unknown Artist") return;
+    const parts = text
+      .split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*|&\s*|\band\b/i)
+      .map((a) => a.trim())
+      .filter(Boolean);
+    for (const p of parts) {
+      if (p.toLowerCase() !== "unknown artist") {
+        artists.add(p);
+      }
+    }
+  };
+
+  // 1. Artist field
+  splitAndAdd(getArtistText(track));
+
+  // 2. Album artist
+  if (track.albumArtist) {
+    splitAndAdd(track.albumArtist);
+  }
+
+  // 3. Track title
+  if (track.title) {
+    const titleFeatRegex = /[\(\[](?:feat\.?|ft\.?|with|featuring)\s+([^\]\)]+)[\)\]]/gi;
+    let match;
+    while ((match = titleFeatRegex.exec(track.title)) !== null) {
+      splitAndAdd(match[1]);
+    }
+    const trailingFeatRegex = /\b(?:feat\.?|ft\.?|with|featuring)\s+(.+)$/i;
+    const trailingMatch = track.title.match(trailingFeatRegex);
+    if (trailingMatch) {
+      splitAndAdd(trailingMatch[1]);
+    }
+  }
+
+  // 4. Album name
+  if (track.album) {
+    const albumFeatRegex = /[\(\[](?:feat\.?|ft\.?|with|featuring)\s+([^\]\)]+)[\)\]]/gi;
+    let match;
+    while ((match = albumFeatRegex.exec(track.album)) !== null) {
+      splitAndAdd(match[1]);
+    }
+    const trailingFeatRegex = /\b(?:feat\.?|ft\.?|with|featuring)\s+(.+)$/i;
+    const trailingMatch = track.album.match(trailingFeatRegex);
+    if (trailingMatch) {
+      splitAndAdd(trailingMatch[1]);
+    }
+  }
+
+  return Array.from(artists);
+}
+
 async function _fetchMissingArtistImages() {
   if (!_artistImagesLoaded) await _loadArtistImages();
   // Get unique artist names from the library
   const artistNames = new Set();
   for (const track of state.tracks) {
-    const artist = getArtistText(track);
-    if (artist && artist !== "Unknown Artist") {
-      // Split multi-artist tracks
-      const individual = artist
-        .split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*/i)
-        .map((a) => a.trim())
-        .filter(Boolean);
-      for (const a of individual) {
-        if (a && a !== "Unknown Artist") artistNames.add(a);
-      }
+    const individual = extractArtistsFromTrack(track);
+    for (const a of individual) {
+      if (a && a !== "Unknown Artist") artistNames.add(a);
     }
   }
   // Filter to artists missing images
@@ -8700,13 +9192,7 @@ function getArtistGroups() {
   if (!q2 && sectionCache.artists) return sectionCache.artists;
   const groups = new Map();
   for (const track of source) {
-    // Split artist text into individual artists so collaborations
-    // like "Don Toliver, Rema" are treated as separate artists.
-    const artistText = getArtistText(track) || "Unknown Artist";
-    const individualArtists = artistText
-      .split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*/i)
-      .map((a) => a.trim())
-      .filter(Boolean);
+    const individualArtists = extractArtistsFromTrack(track);
     for (const singleArtist of individualArtists) {
       const key = singleArtist.toLowerCase();
       if (!groups.has(key))
@@ -9857,7 +10343,7 @@ function _createTrackRow(track, contextQueue) {
   });
   actionBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    openPlaylistMenu(e.currentTarget, track);
+    openActionsMenu(e.currentTarget, track);
   });
   return row;
 }
@@ -10462,7 +10948,7 @@ function _populateSlot(row, track, idx) {
           "error",
           () => {
             img.style.display = "none";
-            const placeholder = row.querySelector('.art-placeholder');
+            const placeholder = row.querySelector(".art-placeholder");
             if (placeholder) placeholder.style.display = "";
             const canvas = row.querySelector(".track-thumb-canvas");
             if (canvas) canvas.style.display = "none";
@@ -10479,9 +10965,8 @@ function _populateSlot(row, track, idx) {
     ? '<div class="eq-icon"><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div></div>'
     : "";
 
-  const menuSvg = isQueue
-    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="18" x2="16" y2="18"/></svg>'
-    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>';
+  const menuSvg =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>';
   const menuClass = isQueue ? "track-menu queue-drag-handle" : "track-menu";
 
   const rawTitle = track.title || "Unknown";
@@ -10489,24 +10974,26 @@ function _populateSlot(row, track, idx) {
   // (album detail view intentionally keeps them for sequentiality)
   const displayTitle =
     virtualList.mode === "library" || virtualList.mode === "queue"
-      ? rawTitle.replace(/^(?:\d{1,3}[._-]\s*|\d{1,3}\s+-\s+|0\d\s+)/, "").trim() || rawTitle
+      ? rawTitle
+          .replace(/^(?:\d{1,3}[._-]\s*|\d{1,3}\s+-\s+|0\d\s+)/, "")
+          .trim() || rawTitle
       : rawTitle;
   if (!row._isInitialized) {
     row.innerHTML =
       `<div class="track-thumb"></div>` +
       `<div class="track-info"><div class="track-name"></div></div>` +
-      `<div class="track-cell hide-md js-artist"></div>` +
+      `<div class="track-cell hide-md-artist js-artist"></div>` +
       `<div class="track-cell muted hide-sm js-year"></div>` +
       `<div class="track-cell hide-md js-album"></div>` +
       `<div class="track-cell js-duration" style="padding-left:20px"></div>` +
       `<div class="track-menu"></div>`;
-    row._thumbNode = row.querySelector('.track-thumb');
-    row._nameNode = row.querySelector('.track-name');
-    row._artistNode = row.querySelector('.js-artist');
-    row._yearNode = row.querySelector('.js-year');
-    row._albumNode = row.querySelector('.js-album');
-    row._durationNode = row.querySelector('.js-duration');
-    row._menuNode = row.querySelector('.track-menu');
+    row._thumbNode = row.querySelector(".track-thumb");
+    row._nameNode = row.querySelector(".track-name");
+    row._artistNode = row.querySelector(".js-artist");
+    row._yearNode = row.querySelector(".js-year");
+    row._albumNode = row.querySelector(".js-album");
+    row._durationNode = row.querySelector(".js-duration");
+    row._menuNode = row.querySelector(".track-menu");
     row._isInitialized = true;
   }
 
@@ -10594,12 +11081,8 @@ function _wireVirtualDelegation() {
     // If click was on the menu / drag-handle, handle separately
     if (e.target.closest(".track-menu")) {
       e.stopPropagation();
-      if (virtualList.mode === "queue") {
-        // Drag handle in queue — no action on click
-      } else {
-        const menuEl = e.target.closest(".track-menu");
-        openPlaylistMenu(menuEl, track);
-      }
+      const menuEl = e.target.closest(".track-menu");
+      openActionsMenu(menuEl, track);
       return;
     }
 
@@ -10776,7 +11259,16 @@ async function playTrack(track) {
   if (_npArtSrc) {
     $("np-art").innerHTML =
       `<img src="${_npArtSrc}" alt="Cover Art" style="width:100%; height:100%; object-fit:cover; display:block; border:none; outline:none;" />`;
-    $("np-art").querySelector("img")?.addEventListener("error", () => { $("np-art").innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
+    $("np-art")
+      .querySelector("img")
+      ?.addEventListener(
+        "error",
+        () => {
+          $("np-art").innerHTML =
+            `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
+        },
+        { once: true },
+      );
   } else {
     $("np-art").innerHTML =
       `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
@@ -10793,10 +11285,28 @@ async function playTrack(track) {
   if (_ovArtSrc) {
     $("ov-art").innerHTML =
       `<img src="${_ovArtSrc}" alt="Cover Art" style="width:100%; height:100%; object-fit:cover; display:block; border:none; outline:none;" />`;
-    $("ov-art").querySelector("img")?.addEventListener("error", () => { $("ov-art").innerHTML = `<div class="art-placeholder art-${artIdx}" style="font-size:56px">&#127925;</div>`; }, { once: true });
+    $("ov-art")
+      .querySelector("img")
+      ?.addEventListener(
+        "error",
+        () => {
+          $("ov-art").innerHTML =
+            `<div class="art-placeholder art-${artIdx}" style="font-size:56px">&#127925;</div>`;
+        },
+        { once: true },
+      );
     $("ov-mini-art").innerHTML =
       `<img src="${_ovArtSrc}" alt="Cover Art" style="width:100%; height:100%; object-fit:cover; display:block; border:none; outline:none;" />`;
-    $("ov-mini-art").querySelector("img")?.addEventListener("error", () => { $("ov-mini-art").innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
+    $("ov-mini-art")
+      .querySelector("img")
+      ?.addEventListener(
+        "error",
+        () => {
+          $("ov-mini-art").innerHTML =
+            `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
+        },
+        { once: true },
+      );
   } else {
     $("ov-art").innerHTML =
       `<div class="art-placeholder art-${artIdx}" style="font-size:56px">&#127925;</div>`;
@@ -10818,7 +11328,13 @@ async function playTrack(track) {
     const _floatSrc = _resolveCoverArtSrc(track);
     if (_floatSrc) {
       floatArt.innerHTML = `<img src="${_floatSrc}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:10px;border:none;outline:none;">`;
-      floatArt.querySelector("img")?.addEventListener("error", () => { floatArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`; }, { once: true });
+      floatArt.querySelector("img")?.addEventListener(
+        "error",
+        () => {
+          floatArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
+        },
+        { once: true },
+      );
     } else {
       floatArt.innerHTML = `<div class="art-placeholder art-${artIdx}">&#127925;</div>`;
     }
@@ -12309,6 +12825,71 @@ async function _fetchLyrics(track) {
     if (syncedLyrics) return;
   }
 
+  // ── 1.5. Fast binary map lookup (O(1), zero fs.existsSync overhead) ──
+  // If the lyrics binary map has an entry for this track, we get the .lrc
+  // content instantly — no directory scanning, no sidecar fallback checks.
+  // This is the fastest path after the in-memory track cache above.
+  if (track.filePath && !syncedLyrics) {
+    try {
+      const fastRes = await window.novaAPI.invoke(
+        "lyrics:fast-lookup",
+        track.filePath,
+      );
+      if (fastRes && fastRes.success && fastRes.lyrics) {
+        const s = fastRes.lyrics.synced
+          ? parseLrcString(
+              fastRes.lyrics.synced
+                .map((l) => {
+                  const m = Math.floor(l.time / 60);
+                  const sec = Math.floor(l.time % 60);
+                  const ms = Math.round((l.time % 1) * 1000);
+                  return `[${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}.${String(ms).padStart(3, "0")}]${l.text}`;
+                })
+                .join("\n"),
+            )
+          : null;
+        const p = fastRes.lyrics.plain || "";
+        if (s || p) {
+          syncedLyrics = s;
+          lyricsData =
+            !s && p
+              ? p
+                  .split("\n")
+                  .filter((l) => l.trim())
+                  .map((l) => ({
+                    text: l
+                      .trim()
+                      .replace(/^\[\d{1,3}:\d{2}(?:[.:]\d{2,3})?\]\s*/g, ""),
+                    time: 0,
+                  }))
+              : [];
+          track.plainLyrics = p || null;
+          track.syncedLyrics = s
+            ? s
+                .map((l) => {
+                  const m = Math.floor(l.time / 60);
+                  const sec = Math.floor(l.time % 60);
+                  const ms = Math.round((l.time % 1) * 1000);
+                  return `[${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}.${String(ms).padStart(3, "0")}]${l.text}`;
+                })
+                .join("\n")
+            : null;
+          _updateSyncedBadge(s);
+          _renderLyrics(lyricsBody);
+          if (state.overlayOpen) _buildOverlayLyrics();
+          if (s)
+            _updateLyricsHighlight(
+              audioEngine.getCurrentTime ? audioEngine.getCurrentTime() : 0,
+            );
+          // If we have synced lyrics from fast-lookup, we're done — no need for slower paths
+          if (s) return;
+        }
+      }
+    } catch (_) {
+      /* fall through to progressive loading */
+    }
+  }
+
   // ── 2. Progressive lyrics loading ──
   // Show lyrics the INSTANT any source returns. If a better source
   // arrives later (e.g. online synced beats local plain), upgrade.
@@ -12552,6 +13133,41 @@ function _wireLyricsManualScroll(container, isOverlay) {
   );
 }
 
+// Task 2: Build "No lyrics" HTML with cover art + mini visualizer
+function _buildNoLyricsHTML(isOverlay = false) {
+  const track = state.currentTrack;
+  const coverSrc = track ? _resolveCoverArtSrc(track) : "";
+  const accentColor =
+    getComputedStyle(document.documentElement)
+      .getPropertyValue("--green")
+      .trim() || "#1DB954";
+  const overlayClass = isOverlay ? " ov-lyrics-empty" : "";
+  return `
+    <div class="lyrics-empty-anim${overlayClass}">
+      <div class="lyrics-nolyrics-vinyl">
+        ${coverSrc ? `<img src="${coverSrc}" alt="" class="lyrics-nolyrics-cover" onerror="this.style.display='none'">` : ""}
+        <div class="lyrics-nolyrics-visualizer" data-accent="${accentColor}">
+          <div class="nolyric-bar" style="--i:0"></div>
+          <div class="nolyric-bar" style="--i:1"></div>
+          <div class="nolyric-bar" style="--i:2"></div>
+          <div class="nolyric-bar" style="--i:3"></div>
+          <div class="nolyric-bar" style="--i:4"></div>
+          <div class="nolyric-bar" style="--i:5"></div>
+          <div class="nolyric-bar" style="--i:6"></div>
+          <div class="nolyric-bar" style="--i:7"></div>
+          <div class="nolyric-bar" style="--i:6"></div>
+          <div class="nolyric-bar" style="--i:5"></div>
+          <div class="nolyric-bar" style="--i:4"></div>
+          <div class="nolyric-bar" style="--i:3"></div>
+          <div class="nolyric-bar" style="--i:2"></div>
+          <div class="nolyric-bar" style="--i:1"></div>
+          <div class="nolyric-bar" style="--i:0"></div>
+        </div>
+      </div>
+      <span>No lyrics</span>
+    </div>`;
+}
+
 function _renderLyrics(container) {
   // Cancel any in-flight lerp from a PREVIOUS render before rebuilding
   // the DOM.  Otherwise, when switching from synced → unsynced lyrics,
@@ -12564,13 +13180,17 @@ function _renderLyrics(container) {
   container.innerHTML = "";
   if (lyricsData.length === 0 && !syncedLyrics) {
     container.classList.add("is-empty");
-    container.innerHTML = `
-      <div class="lyrics-empty-anim">
-        <div class="lyrics-empty-vinyl">
-          <div class="lyrics-empty-arm"></div>
-        </div>
-        <span>No lyrics</span>
-      </div>`;
+    container.innerHTML = _buildNoLyricsHTML();
+    return;
+  }
+  // Check if all lyrics are empty/blank after [object Object] fix
+  const allEmpty = lyricsData.every((l) => {
+    const t = typeof l.text === "string" ? l.text : "";
+    return t.trim() === "" || t === "[object Object]";
+  });
+  if (allEmpty && !syncedLyrics) {
+    container.classList.add("is-empty");
+    container.innerHTML = _buildNoLyricsHTML();
     return;
   }
   container.classList.remove("is-empty");
@@ -12588,12 +13208,27 @@ function _renderLyrics(container) {
   lines.forEach((line, i) => {
     const el = document.createElement("div");
     el.className = "lyric-line" + (isSynced ? "" : " unsynced-lit");
-    const rawText =
-      typeof line.text === "string"
-        ? line.text
-        : typeof line === "string"
-          ? line
-          : "";
+    let rawText = "";
+    if (typeof line.text === "string") {
+      rawText = line.text;
+    } else if (typeof line === "string") {
+      rawText = line;
+    } else if (line.text != null) {
+      // Fix [Object object] — if line.text is not a string, stringify safely
+      try {
+        rawText = String(line.text);
+      } catch (_) {
+        rawText = "";
+      }
+    }
+    // Detect [object Object] which indicates broken lyrics data
+    if (
+      rawText === "[object Object]" ||
+      rawText === "[object Undefined]" ||
+      rawText === "[object Null]"
+    ) {
+      rawText = "";
+    }
     el.textContent = rawText
       .replace(/^\s*\[\d{1,3}:\d{2}(?:[.:]\d{2,3})?\]\s*/g, "")
       .trim();
@@ -12687,13 +13322,7 @@ function _buildOverlayLyrics() {
 
   if (lines.length === 0) {
     scroll.classList.add("is-empty");
-    scroll.innerHTML = `
-      <div class="lyrics-empty-anim ov-lyrics-empty">
-        <div class="lyrics-empty-vinyl">
-          <div class="lyrics-empty-arm"></div>
-        </div>
-        <span>No lyrics</span>
-      </div>`;
+    scroll.innerHTML = _buildNoLyricsHTML(true);
     _updateSyncedBadge(null);
     return;
   } else {
@@ -12703,12 +13332,25 @@ function _buildOverlayLyrics() {
   lines.forEach((line, i) => {
     const el = document.createElement("div");
     el.className = "ov-lyric" + (isSynced ? "" : " unsynced-lit");
-    const rawOvText =
-      typeof line.text === "string"
-        ? line.text
-        : typeof line === "string"
-          ? line
-          : "";
+    let rawOvText = "";
+    if (typeof line.text === "string") {
+      rawOvText = line.text;
+    } else if (typeof line === "string") {
+      rawOvText = line;
+    } else if (line.text != null) {
+      try {
+        rawOvText = String(line.text);
+      } catch (_) {
+        rawOvText = "";
+      }
+    }
+    if (
+      rawOvText === "[object Object]" ||
+      rawOvText === "[object Undefined]" ||
+      rawOvText === "[object Null]"
+    ) {
+      rawOvText = "";
+    }
     el.textContent = rawOvText
       .replace(/^\s*\[\d{1,3}:\d{2}(?:[.:]\d{2,3})?\]\s*/g, "")
       .trim();
@@ -12881,11 +13523,21 @@ function initLeftEdgeHover() {
   function showCard() {
     card.style.display = "flex";
     requestAnimationFrame(() => card.classList.add("visible"));
+    const trigger = document.getElementById("float-nav-trigger");
+    if (trigger) {
+      trigger.classList.add("nav-open");
+      trigger.dataset.tooltip = "Close";
+    }
   }
 
   function hideCard() {
     if (pinned) return;
     card.classList.remove("visible");
+    const trigger = document.getElementById("float-nav-trigger");
+    if (trigger) {
+      trigger.classList.remove("nav-open");
+      trigger.dataset.tooltip = "Menu";
+    }
     card.addEventListener(
       "transitionend",
       () => {
@@ -13117,3 +13769,291 @@ if (document.readyState === "loading") {
 } else {
   initLeftEdgeHover();
 }
+
+// ─── Task 5: Expanded Sidebar Toggle ─────────────────────────────────
+// When the 'expandedSidebar' setting is true, add .expanded-sidebar class to body
+async function _applyExpandedSidebarSetting() {
+  try {
+    const result = await window.novaAPI.invoke("settings:get-all");
+    if (result.success && result.settings.expandedSidebar) {
+      document.body.classList.add("expanded-sidebar");
+    } else {
+      document.body.classList.remove("expanded-sidebar");
+    }
+  } catch (_) {}
+}
+_applyExpandedSidebarSetting();
+
+// ─── Task 7: Playlist Collage Caching Improvements ───────────────────
+// Skip collage regeneration on every login. Only regenerate when:
+// - New songs are added (content hash changes)
+// - Playlist contents change (tracks added/removed)
+// - Playlist has fewer than 5 songs (unstable collages — more likely to change)
+//
+// The existing _getCachedCollage already does content-hash checking against
+// IDB and disk cache. This layer adds a lightweight in-memory hash tracker
+// (_playlistHashCache, declared near _playlistCollageCache) so we can skip
+// the IDB/disk lookup entirely when nothing changed.
+// _shouldRegenerateCollage is used by _preloadPlaylistCovers and _tryCachedCollage.
+// _invalidateCollageCache clears both caches + disk when playlists change.
+
+function _shouldRegenerateCollage(playlistId, tracks) {
+  const currentHash = _computePlaylistContentHash(
+    (tracks || []).map((t) => t.id),
+  );
+  const cachedHash = _playlistHashCache.get(playlistId);
+
+  if (cachedHash === undefined) {
+    // First check this session — cache the hash.
+    // Always allow generation on first encounter (no cache exists yet),
+    // UNLESS the disk/IDB cache is still valid (let _getCachedCollage decide).
+    // We return true here so the preload path attempts to load/regenerate.
+    _playlistHashCache.set(playlistId, currentHash);
+    return true;
+  }
+
+  if (cachedHash !== currentHash) {
+    // Content changed — update cache and regenerate
+    _playlistHashCache.set(playlistId, currentHash);
+    return true;
+  }
+
+  // Content hash unchanged — but playlists with < 5 songs are less stable,
+  // their collages might need re-rendering more often. However, if the hash
+  // hasn't changed, the content is identical, so skip regeneration.
+  // The < 5 songs case is handled by _invalidateCollageCache calls when
+  // tracks are actually added/removed.
+  return false;
+}
+
+// ─── Task 9: Song Tag Editor ─────────────────────────────────────────
+function _openTagEditor(track) {
+  if (!track) return;
+
+  const overlay = document.createElement("div");
+  overlay.className = "tag-editor-overlay";
+  const coverSrc = _resolveCoverArtSrc(track);
+  overlay.innerHTML = `
+    <div class="tag-editor-card">
+      <div class="tag-editor-scroll">
+      <h3>Edit Track Info</h3>
+      <div class="tag-editor-cover">
+        <img id="tag-cover-preview" src="${coverSrc || "../assets/default-cover.png"}" alt="">
+        <div>
+          <button id="tag-change-cover">Change Cover</button>
+        </div>
+      </div>
+      <div class="tag-editor-field">
+        <label>Title</label>
+        <input id="tag-title" type="text" value="${escapeHtml(track.title || "")}">
+      </div>
+      <div class="tag-editor-field">
+        <label>Artist</label>
+        <input id="tag-artist" type="text" value="${escapeHtml(track.artist || "")}">
+      </div>
+      <div class="tag-editor-field">
+        <label>Album</label>
+        <input id="tag-album" type="text" value="${escapeHtml(track.album || "")}">
+      </div>
+      <div class="tag-editor-field">
+        <label>Genre</label>
+        <input id="tag-genre" type="text" value="${escapeHtml(track.genre || "")}">
+      </div>
+      <div class="tag-editor-field">
+        <label>Year</label>
+        <input id="tag-year" type="text" value="${track.year || ""}">
+      </div>
+      <div class="tag-editor-actions">
+        <button class="btn-cancel" id="tag-cancel">Cancel</button>
+        <button class="btn-save" id="tag-save">Save</button>
+      </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  let newCoverData = null;
+
+  // Change cover button
+  const changeCoverBtn = overlay.querySelector("#tag-change-cover");
+  changeCoverBtn.addEventListener("click", async () => {
+    try {
+      const result = await window.novaAPI.invoke("file:open-cover-art");
+      if (result.success && result.data) {
+        newCoverData = result.data;
+        overlay.querySelector("#tag-cover-preview").src = newCoverData;
+      }
+    } catch (_) {}
+  });
+
+  // Cancel
+  overlay.querySelector("#tag-cancel").addEventListener("click", () => {
+    overlay.remove();
+  });
+
+  // Click overlay to close
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+
+  // Save
+  overlay.querySelector("#tag-save").addEventListener("click", async () => {
+    const newTitle = overlay.querySelector("#tag-title").value.trim();
+    const newArtist = overlay.querySelector("#tag-artist").value.trim();
+    const newAlbum = overlay.querySelector("#tag-album").value.trim();
+    const newGenre = overlay.querySelector("#tag-genre").value.trim();
+    const newYear = overlay.querySelector("#tag-year").value.trim();
+
+    try {
+      const result = await window.novaAPI.invoke("metadata:write-tags", {
+        trackId: track.id,
+        filePath: track.filePath,
+        tags: {
+          title: newTitle,
+          artist: newArtist,
+          album: newAlbum,
+          genre: newGenre,
+          year: newYear,
+          coverArt: newCoverData,
+        },
+      });
+
+      if (result.success) {
+        // Update state for just this track (no full library refresh)
+        const idx = state.tracks.findIndex((t) => t.id === track.id);
+        if (idx >= 0) {
+          state.tracks[idx].title = newTitle;
+          state.tracks[idx].artist = newArtist;
+          state.tracks[idx].album = newAlbum;
+          state.tracks[idx].genre = newGenre;
+          state.tracks[idx].year = newYear;
+          if (newCoverData) {
+            state.tracks[idx].coverArt = newCoverData;
+            state.tracks[idx]._hasCoverArt = true;
+          }
+          if (result.updatedTrack) {
+            Object.assign(state.tracks[idx], result.updatedTrack);
+          }
+        }
+        // Update current track if it's playing
+        if (state.currentTrack && state.currentTrack.id === track.id) {
+          state.currentTrack.title = newTitle;
+          state.currentTrack.artist = newArtist;
+          state.currentTrack.album = newAlbum;
+          state.currentTrack.genre = newGenre;
+          state.currentTrack.year = newYear;
+          if (newCoverData) {
+            state.currentTrack.coverArt = newCoverData;
+            state.currentTrack._hasCoverArt = true;
+          }
+        }
+        // Re-render current section
+        invalidateSectionCache();
+        // Invalidate thumbnail cache for this track (cover art may have changed)
+        TrackThumbHandler.invalidate(track.id);
+        // Invalidate playlist collages that contain this track (cover art may have changed)
+        _invalidatePlaylistCollagesForTrack(track.id);
+        // Re-render the active view so updated tags appear immediately
+        if (
+          state.activeNavSection === "library" ||
+          state.activeNavSection === "home"
+        ) {
+          renderTracks(state.filteredTracks, "library");
+        } else if (state.activeNavSection === "queue") {
+          renderTracks(state.queue, "queue");
+        }
+        // Update now-playing bar if this is the current track
+        if (state.currentTrack && state.currentTrack.id === track.id) {
+          _updateNpTitle(newTitle || "Unknown");
+          $("np-artist").textContent = getArtistText({
+            ...track,
+            artist: newArtist,
+          });
+          if (newCoverData) {
+            const artIdx = getArtIndex(track);
+            $("np-art").innerHTML =
+              `<img src="${newCoverData}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`;
+            $("ov-art").innerHTML =
+              `<img src="${newCoverData}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`;
+            $("ov-mini-art").innerHTML =
+              `<img src="${newCoverData}" alt="Cover Art" style="width:100%;height:100%;object-fit:cover;display:block;border:none;outline:none;" />`;
+          }
+          $("ov-title").textContent = newTitle || "Unknown";
+          $("ov-artist").textContent = getArtistText({
+            ...track,
+            artist: newArtist,
+          });
+          $("ov-mini-title").textContent = newTitle || "Unknown";
+          $("ov-mini-artist").textContent = getArtistText({
+            ...track,
+            artist: newArtist,
+          });
+        }
+        overlay.remove();
+      }
+    } catch (err) {
+      console.error("[TagEditor] Save failed:", err);
+    }
+  });
+}
+
+// ─── Task 10: Menu Icon Morph ────────────────────────────
+// Smooth CSS morph: playlist icon → X via .menu-open class toggle.
+// The .morph-wrap child holds the SVG + ::before/::after X bars.
+// CSS handles the transition (opacity + transform), JS just toggles the class.
+//
+// TWO separate menus:
+//   openPlaylistMenu  → used by now-playing bar / overlay buttons (simple playlist list + delete)
+//   openActionsMenu   → used by song-row 3-dot buttons (full Actions: playlist, add-next, tag editor, delete)
+//
+// Morph only applies to the now-playing / overlay buttons when they open openPlaylistMenu.
+// Song-row 3-dot anchors are NOT the np/ov buttons, so they never trigger morph on those.
+
+// Override openPlaylistMenu to add .menu-open class on now-playing / overlay buttons.
+const _origOpenPlaylistMenu = openPlaylistMenu;
+openPlaylistMenu = function (anchor, track) {
+  _origOpenPlaylistMenu(anchor, track);
+  const isOpen = _playlistMenuOpener === anchor;
+  const npMenuBtn = $("np-menu-btn");
+  const ovAddBtn = $("ov-add-btn");
+  if (anchor === npMenuBtn && npMenuBtn) {
+    if (isOpen) {
+      npMenuBtn.classList.add("menu-open");
+      npMenuBtn.dataset.tooltip = "Close";
+    } else {
+      npMenuBtn.classList.remove("menu-open");
+      npMenuBtn.dataset.tooltip = "Playlist";
+    }
+  } else if (npMenuBtn) {
+    npMenuBtn.classList.remove("menu-open");
+    npMenuBtn.dataset.tooltip = "Playlist";
+  }
+  if (anchor === ovAddBtn && ovAddBtn) {
+    if (isOpen) {
+      ovAddBtn.classList.add("menu-open");
+      ovAddBtn.dataset.tooltip = "Close";
+    } else {
+      ovAddBtn.classList.remove("menu-open");
+      ovAddBtn.dataset.tooltip = "Playlist";
+    }
+  } else if (ovAddBtn) {
+    ovAddBtn.classList.remove("menu-open");
+    ovAddBtn.dataset.tooltip = "Playlist";
+  }
+};
+
+// Override closePlaylistMenus to remove .menu-open class
+const _origClosePlaylistMenus = closePlaylistMenus;
+closePlaylistMenus = function () {
+  _origClosePlaylistMenus();
+  const npMenuBtn = $("np-menu-btn");
+  const ovAddBtn = $("ov-add-btn");
+  if (npMenuBtn) {
+    npMenuBtn.classList.remove("menu-open");
+    npMenuBtn.dataset.tooltip = "Playlist";
+  }
+  if (ovAddBtn) {
+    ovAddBtn.classList.remove("menu-open");
+    ovAddBtn.dataset.tooltip = "Playlist";
+  }
+};

@@ -11,6 +11,7 @@ esbuild
       "better-sqlite3",
       "sharp",
       "music-metadata",
+      "node-id3", // Must be external — MP3 tag writing
       "electron-updater", // Must be external — contains dynamic requires
       "chokidar", // Must be external — used by electron-updater
     ],

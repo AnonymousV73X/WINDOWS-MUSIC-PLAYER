@@ -28,7 +28,8 @@ class SettingsService {
       alwaysOnTop: false,
       hardwareAcceleration: true,
       outputDevice: 'default',
-      language: 'en'
+      language: 'en',
+      expandedSidebar: false, // Task 5: Experimental expanded sidebar for smaller screens
     };
     this._onChangedCallbacks = [];
     this._loaded = false;
