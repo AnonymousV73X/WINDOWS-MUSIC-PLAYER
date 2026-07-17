@@ -1069,6 +1069,14 @@ async function ensureThumbarIcons() {
   const pausePath = path.join(assetDir, "pause.png");
   const nextPath = path.join(assetDir, "next.png");
 
+  console.log("[thumbar] Asset paths:", { prevPath, playPath, pausePath, nextPath });
+  console.log("[thumbar] Asset existence:", {
+    prev: fs.existsSync(prevPath),
+    play: fs.existsSync(playPath),
+    pause: fs.existsSync(pausePath),
+    next: fs.existsSync(nextPath)
+  });
+
   const fallbackDir = path.join(app.getPath("userData"), "thumbar-icons");
   const fallbackPrev = path.join(fallbackDir, "prev.png");
   const fallbackPlay = path.join(fallbackDir, "play.png");
@@ -1079,6 +1087,8 @@ async function ensureThumbarIcons() {
   const usePlay = fs.existsSync(playPath) ? playPath : fallbackPlay;
   const usePause = fs.existsSync(pausePath) ? pausePath : fallbackPause;
   const useNext = fs.existsSync(nextPath) ? nextPath : fallbackNext;
+
+  console.log("[thumbar] Using paths:", { usePrev, usePlay, usePause, useNext });
 
   if (!fs.existsSync(usePrev) || !fs.existsSync(usePlay) || !fs.existsSync(usePause) || !fs.existsSync(useNext)) {
     try {
@@ -1096,12 +1106,23 @@ async function ensureThumbarIcons() {
       if (!fs.existsSync(fallbackPause)) await sharp(Buffer.from(pauseSvg)).png().toFile(fallbackPause);
       if (!fs.existsSync(fallbackNext)) await sharp(Buffer.from(nextSvg)).png().toFile(fallbackNext);
     } catch (err) {
-      console.error("Failed to generate fallback taskbar icons using sharp:", err.message);
+      console.error("[thumbar] Failed to generate fallback taskbar icons using sharp:", err.message);
     }
   }
 
+  const prevImg = nativeImage.createFromPath(fs.existsSync(usePrev) ? usePrev : fallbackPrev);
+  const playImg = nativeImage.createFromPath(fs.existsSync(usePlay) ? usePlay : fallbackPlay);
+  const pauseImg = nativeImage.createFromPath(fs.existsSync(usePause) ? usePause : fallbackPause);
+  const nextImg = nativeImage.createFromPath(fs.existsSync(useNext) ? useNext : fallbackNext);
+
+  console.log("[thumbar] NativeImage empty checks:", {
+    prev: prevImg.isEmpty(),
+    play: playImg.isEmpty(),
+    pause: pauseImg.isEmpty(),
+    next: nextImg.isEmpty()
+  });
+
   return {
-    prev: nativeImage.createFromPath(fs.existsSync(usePrev) ? usePrev : fallbackPrev),
     play: nativeImage.createFromPath(fs.existsSync(usePlay) ? usePlay : fallbackPlay),
     pause: nativeImage.createFromPath(fs.existsSync(usePause) ? usePause : fallbackPause),
     next: nativeImage.createFromPath(fs.existsSync(useNext) ? useNext : fallbackNext)
