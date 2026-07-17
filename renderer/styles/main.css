@@ -6131,7 +6131,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   content: '';
   position: absolute;
   right: 18px;
-  top: 51%;
+  top: 52%;
   width: 14px;
   height: 14px;
   margin-top: -8px;
