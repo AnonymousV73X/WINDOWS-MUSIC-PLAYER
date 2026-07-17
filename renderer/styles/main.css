@@ -1547,7 +1547,6 @@ textarea {
   }
 }
 
-
 /* ── Pause vinyl/visualizer animations when not playing ── */
 body:not(.is-playing) .lyrics-empty-vinyl::before,
 body:not(.is-playing) .lyrics-nolyrics-cover {
