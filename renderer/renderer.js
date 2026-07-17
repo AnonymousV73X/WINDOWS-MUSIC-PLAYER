@@ -163,6 +163,7 @@ const state = {
   activePlaylistId: null,
   playingPlaylistId: null,
   _playingFromPlaylistCard: false,
+  queueSource: null, // { type: 'artist'|'album'|'playlist', name: string } | null (null = music library)
   settings: {},
   equalizer: new Array(10).fill(0),
   eqEnabled: true,
@@ -843,53 +844,39 @@ function _invalidateCollageCache(playlistId) {
   } catch (_) {}
 }
 
-/**
- * Preload all playlist collage covers after library is loaded.
- * This ensures cached collages from previous sessions are immediately
- * available when the user navigates to the playlists section.
- *
- * BUGFIX v3: Also preloads the cover art URLs for all tracks that appear
- * in playlist collages. This way, when the user navigates to Playlists,
- * the live collage cells' <img> elements hit the browser cache instead
- * of making fresh protocol requests. Combined with the collage canvas cache,
- * this makes the Playlists section render instantly with all images visible.
- */
 async function _preloadPlaylistCovers() {
   try {
     const playlists = state.playlists || [];
-    if (playlists.length === 0) {
-      // Playlists may not be loaded yet — wait for them
-      return;
-    }
+    if (playlists.length === 0) return;
+    
     const libById = new Map(state.tracks.map((t) => [t.id, t]));
     for (const playlist of playlists) {
       const tracks = (playlist.tracks || [])
         .map((id) => libById.get(id))
         .filter(Boolean);
-      if (tracks.length > 0) {
+        
+      if (tracks.length >= 5) {
         // Warm the in-memory hash cache for this session
-        _shouldRegenerateCollage(playlist.id, tracks);
+        const currentHash = _computePlaylistContentHash(tracks.map((t) => t.id));
+        _playlistHashCache.set(playlist.id, currentHash);
 
-        // _getCachedCollage does smart content-hash validation:
-        // - If IDB/disk cache exists and hash matches → returns cached URL (no regeneration)
-        // - If hash mismatch or no cache → returns null, triggers lazy generation later
-        const cached = await _getCachedCollage(playlist.id, tracks);
-
-        // Only preload cover art if the collage wasn't cached (needs regeneration)
-        if (!cached) {
-          const artTracks = tracks
-            .filter((t) => _resolveCoverArtSrcWithReuse(t))
-            .slice(0, 4);
-          for (const track of artTracks) {
-            const src = _resolveCoverArtSrcWithReuse(track);
-            if (src && !_coverArtPreloader.isLoaded(src)) {
-              _coverArtPreloader.enqueue([src]);
-            }
+        // AVOID DB/FILE OPS DURING STARTUP:
+        // We do NOT call _getCachedCollage here anymore. It will be called lazily
+        // when the Playlists tab is opened.
+        // We still preload the raw track cover arts into the browser cache so that
+        // live-rendering (used for < 5 songs, or during cache miss) renders instantly.
+        const artTracks = tracks.filter((t) => _resolveCoverArtSrcWithReuse(t));
+        for (let i = 0; i < Math.min(4, artTracks.length); i++) {
+          const src = _resolveCoverArtSrcWithReuse(artTracks[i]);
+          if (src && !_coverArtPreloader.isLoaded(src)) {
+            _coverArtPreloader.enqueue([src]);
           }
         }
       }
     }
-  } catch (_) {}
+  } catch (err) {
+    console.error("Failed to preload playlist covers:", err);
+  }
 }
 
 /**
@@ -2778,7 +2765,7 @@ function _navigateTo(section) {
       requestIdleCallback(() => _auditCardImages(), { timeout: 1000 });
       break;
     case "queue":
-      title.textContent = "Play Queue";
+      _updateQueueHeaderTitle();
       _showVirtual();
       renderTracks(state.queue, "queue");
       break;
@@ -3189,6 +3176,7 @@ function _wireShufflePlay() {
     const shuffled = [...state.tracks].sort(() => Math.random() - 0.5);
     state.queue = shuffled;
     state.queueIndex = 0;
+    state.queueSource = null; // playing from library
     playTrack(state.queue[0]);
   });
 }
@@ -5317,11 +5305,22 @@ async function saveSetting(key, value) {
   }
 }
 
+function _updateQueueHeaderTitle() {
+  const title = $("content-title");
+  if (!title) return;
+  if (state.queueSource && state.queueSource.name) {
+    title.innerHTML = `Play Queue <span class="queue-source-badge">${escapeHtml(state.queueSource.name)}</span>`;
+  } else {
+    title.textContent = "Play Queue";
+  }
+}
+
 function _persistQueue() {
   try {
     window.novaAPI.invoke("settings:set", "_queue", {
       ids: state.queue.map((t) => t.id),
       index: state.queueIndex,
+      source: state.queueSource,
     });
   } catch (_) {}
 }
@@ -5497,6 +5496,7 @@ function createMiniTrackButton(track) {
       state.queue = [track];
     }
     state.queueIndex = 0;
+    state.queueSource = null; // playing from library / recently played
     playTrack(track);
   });
   return button;
@@ -5690,6 +5690,7 @@ async function _loadRecentPlayed() {
 
   const saved = state.settings._queue;
   if (saved && Array.isArray(saved.ids) && saved.ids.length > 0) {
+    state.queueSource = saved.source || null;
     state.queueIndex = Math.max(
       0,
       Math.min(saved.index || 0, saved.ids.length - 1),
@@ -7296,6 +7297,7 @@ function openActionsMenu(anchor, track) {
 
       document.body.appendChild(sub);
 
+      
       // Position sub-menu to the right of the actions menu
       const menuRect = menu.getBoundingClientRect();
       sub.style.visibility = "hidden";
@@ -7828,7 +7830,30 @@ function _getArtistImageUrl(artistName) {
  */
 function extractArtistsFromTrack(track) {
   const artists = new Set();
-  
+
+  /**
+   * Returns true if the candidate string looks like a real artist name
+   * rather than a file-name artifact, numbered track prefix, or label tag.
+   */
+  function _looksLikeArtist(name) {
+    if (!name || name.length < 2) return false;
+    const n = name.trim();
+    // Reject anything starting with ( or [ — these are always file/label artifacts
+    // e.g. "(Lyrics", "(Lyrics)", "(Lyrics)(128k)", "[128k]"
+    if (/^[\(\[]/.test(n)) return false;
+    // Reject if starts with a number followed by a dot/dash/space (track prefix): "01. Jazzworx", "12. JAZZWRLD"
+    if (/^\d{1,3}[\.\-\s]/.test(n)) return false;
+    // Reject if it starts with a non-letter/non-dollar/non-digit symbol: "+ Right"
+    if (/^[+\-=_*\/\\|@#%^~`<>]/.test(n)) return false;
+    // Reject pure number strings
+    if (/^\d+$/.test(n)) return false;
+    // Reject very long strings (>60 chars) — likely a song title, not an artist
+    if (n.length > 60) return false;
+    // Reject if it contains only a year and nothing else
+    if (/^\s*(19|20)\d{2}\s*$/.test(n)) return false;
+    return true;
+  }
+
   const splitAndAdd = (text) => {
     if (!text || text === "Unknown Artist") return;
     const parts = text
@@ -7836,13 +7861,13 @@ function extractArtistsFromTrack(track) {
       .map((a) => a.trim())
       .filter(Boolean);
     for (const p of parts) {
-      if (p.toLowerCase() !== "unknown artist") {
+      if (p.toLowerCase() !== "unknown artist" && _looksLikeArtist(p)) {
         artists.add(p);
       }
     }
   };
 
-  // 1. Artist field
+  // 1. Artist field (primary — always include)
   splitAndAdd(getArtistText(track));
 
   // 2. Album artist
@@ -7850,7 +7875,7 @@ function extractArtistsFromTrack(track) {
     splitAndAdd(track.albumArtist);
   }
 
-  // 3. Track title
+  // 3. Track title — only extract featured artists in parentheses/brackets
   if (track.title) {
     const titleFeatRegex = /[\(\[](?:feat\.?|ft\.?|with|featuring)\s+([^\]\)]+)[\)\]]/gi;
     let match;
@@ -7864,7 +7889,7 @@ function extractArtistsFromTrack(track) {
     }
   }
 
-  // 4. Album name
+  // 4. Album name — only extract featured artists in parentheses/brackets
   if (track.album) {
     const albumFeatRegex = /[\(\[](?:feat\.?|ft\.?|with|featuring)\s+([^\]\)]+)[\)\]]/gi;
     let match;
@@ -9150,12 +9175,13 @@ function renderAlbumDetail(albumKey) {
   surface
     .querySelector(".playlist-back-btn")
     .addEventListener("click", () => _reRenderPanel("albums", renderAlbums));
+  const albumSource = { type: 'album', name: album.album };
   surface
     .querySelector('[data-action="sequential"]')
-    .addEventListener("click", () => playPlaylistTracks(album.tracks, false));
+    .addEventListener("click", () => playPlaylistTracks(album.tracks, false, albumSource));
   surface
     .querySelector('[data-action="shuffle"]')
-    .addEventListener("click", () => playPlaylistTracks(album.tracks, true));
+    .addEventListener("click", () => playPlaylistTracks(album.tracks, true, albumSource));
   const list = surface.querySelector(".playlist-detail-list");
   $("content-subtitle").textContent =
     `${album.tracks.length} song${album.tracks.length === 1 ? "" : "s"}`;
@@ -9163,7 +9189,7 @@ function renderAlbumDetail(albumKey) {
   const frag = document.createDocumentFragment();
   album.tracks
     .slice(0, CHUNK)
-    .forEach((track) => frag.appendChild(_createTrackRow(track, album.tracks)));
+    .forEach((track) => frag.appendChild(_createTrackRow(track, album.tracks, albumSource)));
   list.appendChild(frag);
   if (album.tracks.length > CHUNK) {
     let idx = CHUNK;
@@ -9176,7 +9202,7 @@ function renderAlbumDetail(albumKey) {
       ) {
         const end = Math.min(idx + CHUNK, album.tracks.length);
         for (; idx < end; idx++)
-          cf.appendChild(_createTrackRow(album.tracks[idx], album.tracks));
+          cf.appendChild(_createTrackRow(album.tracks[idx], album.tracks, albumSource));
       }
       list.appendChild(cf);
       if (idx < album.tracks.length)
@@ -9844,12 +9870,13 @@ function renderArtistDetail(artistKey) {
   surface
     .querySelector(".playlist-back-btn")
     .addEventListener("click", () => _reRenderPanel("artists", renderArtists));
+  const artistSource = { type: 'artist', name: artist.artist };
   surface
     .querySelector('[data-action="sequential"]')
-    .addEventListener("click", () => playPlaylistTracks(artist.tracks, false));
+    .addEventListener("click", () => playPlaylistTracks(artist.tracks, false, artistSource));
   surface
     .querySelector('[data-action="shuffle"]')
-    .addEventListener("click", () => playPlaylistTracks(artist.tracks, true));
+    .addEventListener("click", () => playPlaylistTracks(artist.tracks, true, artistSource));
   const list = surface.querySelector(".playlist-detail-list");
   $("content-subtitle").textContent =
     `${artist.tracks.length} song${artist.tracks.length === 1 ? "" : "s"}`;
@@ -9858,7 +9885,7 @@ function renderArtistDetail(artistKey) {
   artist.tracks
     .slice(0, CHUNK)
     .forEach((track) =>
-      frag.appendChild(_createTrackRow(track, artist.tracks)),
+      frag.appendChild(_createTrackRow(track, artist.tracks, artistSource)),
     );
   list.appendChild(frag);
   if (artist.tracks.length > CHUNK) {
@@ -9872,7 +9899,7 @@ function renderArtistDetail(artistKey) {
       ) {
         const end = Math.min(idx + CHUNK, artist.tracks.length);
         for (; idx < end; idx++)
-          cf.appendChild(_createTrackRow(artist.tracks[idx], artist.tracks));
+          cf.appendChild(_createTrackRow(artist.tracks[idx], artist.tracks, artistSource));
       }
       list.appendChild(cf);
       if (idx < artist.tracks.length)
@@ -9968,6 +9995,10 @@ function buildPlaylistCover(tracks, playlistId) {
  */
 async function _tryCachedCollage(playlistId, tracks) {
   if (!playlistId) return null;
+  // User request: Playlists with fewer than 5 songs use live DOM rendering
+  // and are NEVER cached to disk. This ensures they refresh instantly.
+  if (!tracks || tracks.length < 5) return null;
+
   const cached = await _getCachedCollage(playlistId, tracks);
   if (cached) {
     // Replace the live-rendered cover with the cached collage image
@@ -10010,7 +10041,8 @@ async function _tryCachedCollage(playlistId, tracks) {
  * Previously, the canvas was tainted and collage generation silently failed.
  */
 async function _generateAndCacheCollage(playlistId, tracks) {
-  if (!playlistId || !tracks || tracks.length === 0) return;
+  // Do not generate or cache static collages for playlists with < 5 songs
+  if (!playlistId || !tracks || tracks.length < 5) return;
 
   // REVFIX v2: Upped collage resolution to 800 for crisp retina display.
   // Also uses PARALLEL image loading (4x faster than v1's sequential loop).
@@ -10219,7 +10251,7 @@ async function _generateAndCacheCollage(playlistId, tracks) {
   }
 }
 
-function _createTrackRow(track, contextQueue) {
+function _createTrackRow(track, contextQueue, sourceContext) {
   const row = document.createElement("div");
   row.className = "playlist-song-row";
   // CHANGED v1.0.9: Add data-track-id so updateActiveTrackRows() can
@@ -10400,10 +10432,10 @@ function renderPlaylistDetail(playlistId) {
     );
   container
     .querySelector('[data-action="sequential"]')
-    .addEventListener("click", () => playPlaylistTracks(tracks, false));
+    .addEventListener("click", () => playPlaylistTracks(tracks, false, { type: 'playlist', name: playlist.name }));
   container
     .querySelector('[data-action="shuffle"]')
-    .addEventListener("click", () => playPlaylistTracks(tracks, true));
+    .addEventListener("click", () => playPlaylistTracks(tracks, true, { type: 'playlist', name: playlist.name }));
   container
     .querySelector('[data-action="export"]')
     ?.addEventListener("click", () => exportPlaylistById(playlistId));
@@ -10477,6 +10509,7 @@ function renderPlaylistDetail(playlistId) {
     row.addEventListener("click", () => {
       prefetchLyrics(track); // start lyrics race before audio init
       state.shuffleEnabled = false;
+      state.queueSource = { type: 'playlist', name: playlist.name };
       // BUGFIX: Previously the queue was built as `[track, ...remaining]`
       // where `remaining = tracks.filter(t => t.id !== track.id)`. This put
       // the clicked song first but then resumed from song #1 of the
@@ -10542,13 +10575,14 @@ function renderPlaylistDetail(playlistId) {
   });
 }
 
-function playPlaylistTracks(tracks, shuffle) {
+function playPlaylistTracks(tracks, shuffle, sourceContext) {
   if (!tracks.length) return;
   state.shuffleEnabled = shuffle;
   state.queue = shuffle
     ? [...tracks].sort(() => Math.random() - 0.5)
     : [...tracks];
   state.queueIndex = 0;
+  state.queueSource = sourceContext || null;
   $("shuffle-btn").classList.toggle("active", shuffle);
   state._playingFromPlaylistCard = true;
   playTrack(state.queue[0]);
@@ -11100,6 +11134,7 @@ function _wireVirtualDelegation() {
       const sorted = virtualList.items;
       state.queue = sorted;
       state.queueIndex = idx;
+      state.queueSource = null; // playing from main library
     }
     playTrack(track);
   });
@@ -13810,11 +13845,13 @@ function _shouldRegenerateCollage(playlistId, tracks) {
   );
   const cachedHash = _playlistHashCache.get(playlistId);
 
+  // Playlists with fewer than 5 songs are always refreshed (live rendered)
+  if (!tracks || tracks.length < 5) {
+    _playlistHashCache.set(playlistId, currentHash);
+    return true;
+  }
+
   if (cachedHash === undefined) {
-    // First check this session — cache the hash.
-    // Always allow generation on first encounter (no cache exists yet),
-    // UNLESS the disk/IDB cache is still valid (let _getCachedCollage decide).
-    // We return true here so the preload path attempts to load/regenerate.
     _playlistHashCache.set(playlistId, currentHash);
     return true;
   }
@@ -13825,11 +13862,6 @@ function _shouldRegenerateCollage(playlistId, tracks) {
     return true;
   }
 
-  // Content hash unchanged — but playlists with < 5 songs are less stable,
-  // their collages might need re-rendering more often. However, if the hash
-  // hasn't changed, the content is identical, so skip regeneration.
-  // The < 5 songs case is handled by _invalidateCollageCache calls when
-  // tracks are actually added/removed.
   return false;
 }
 

@@ -577,21 +577,14 @@ function saveLibrary(library) {
 
     for (const track of tracks) {
       const newCoverArt = track.coverArt;
-
-      // Determine whether this track has cover art:
-      // 1. track.coverArt present → fresh data from a full metadata read
-      // 2. track._hasCoverArt = true → art was in track_covers before (will be restored below)
       const hasCoverArt = !!(newCoverArt || track._hasCoverArt);
-
       const { coverArt: _, ...strippedTrack } = track;
       strippedTrack._hasCoverArt = hasCoverArt;
 
       insertTrack.run({
         id: track.id,
         title: track.title || "",
-        artist: Array.isArray(track.artist)
-          ? track.artist.join(", ")
-          : track.artist || "",
+        artist: Array.isArray(track.artist) ? track.artist.join(", ") : track.artist || "",
         album: track.album || "",
         genre: track.genre || "",
         year: Number(track.year) || null,
@@ -602,23 +595,15 @@ function saveLibrary(library) {
       });
 
       if (newCoverArt) {
-        // Fresh cover art from metadata read — save it immediately
         insertCover.run(track.id, newCoverArt);
       }
-      // If no fresh coverArt but _hasCoverArt was true, the restore step
-      // outside this tx will copy old art back from preExistingCovers.
     }
   });
 
-  // Snapshot existing cover art BEFORE wiping, so we can restore entries
-  // for tracks that were cached (have _hasCoverArt but no new coverArt in memory).
   let preExistingCovers;
   try {
     preExistingCovers = new Map(
-      db
-        .prepare("SELECT trackId, coverArt FROM track_covers")
-        .all()
-        .map((r) => [r.trackId, r.coverArt]),
+      db.prepare("SELECT trackId, coverArt FROM track_covers").all().map((r) => [r.trackId, r.coverArt])
     );
   } catch (_) {
     preExistingCovers = new Map();
@@ -626,26 +611,81 @@ function saveLibrary(library) {
 
   tx(library);
 
-  // Restore cover art for cached tracks whose art was in track_covers but
-  // wasn't re-read during this scan (track._hasCoverArt=true, track.coverArt=undefined).
   if (preExistingCovers.size > 0) {
-    const restoreInsert = db.prepare(
-      "INSERT OR IGNORE INTO track_covers (trackId, coverArt) VALUES (?, ?)",
-    );
+    const restoreInsert = db.prepare("INSERT OR IGNORE INTO track_covers (trackId, coverArt) VALUES (?, ?)");
     const restoreTx = db.transaction(() => {
       for (const track of library) {
         if (!track.coverArt && track._hasCoverArt) {
           const oldArt = preExistingCovers.get(track.id);
-          if (oldArt) {
-            restoreInsert.run(track.id, oldArt);
-          }
+          if (oldArt) restoreInsert.run(track.id, oldArt);
         }
       }
     });
     restoreTx();
   }
 
-  // Clear the cover-art lookup cache so fresh DB data is used on next request
+  if (typeof _coverArtByIdCache !== "undefined") _coverArtByIdCache.clear();
+  try {
+    const mainModule = require("./main");
+    if (mainModule && typeof mainModule.clearProtocolCache === "function") {
+      mainModule.clearProtocolCache();
+    }
+  } catch (_) {}
+  return true;
+}
+
+function partialSaveLibrary(fullLibrary, newOrUpdatedTracks, removedIds) {
+  libraryCache = fullLibrary;
+  _libraryJsonCache = fullLibrary; 
+  libraryById = new Map(fullLibrary.map((track) => [track.id, track]));
+
+  const tx = db.transaction((tracksToUpdate, idsToRemove) => {
+    const deleteTrack = db.prepare("DELETE FROM tracks WHERE id = ?");
+    const deleteCover = db.prepare("DELETE FROM track_covers WHERE trackId = ?");
+    
+    for (const id of idsToRemove) {
+      deleteTrack.run(id);
+      deleteCover.run(id);
+    }
+
+    const insertTrack = db.prepare(`
+      INSERT OR REPLACE INTO tracks
+      (id, title, artist, album, genre, year, duration, dateAdded, filePath, data)
+      VALUES (@id, @title, @artist, @album, @genre, @year, @duration, @dateAdded, @filePath, @data)
+    `);
+    const insertCover = db.prepare(`
+      INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)
+    `);
+
+    for (const track of tracksToUpdate) {
+      const newCoverArt = track.coverArt;
+      
+      // If updating, preserve existing cover art flag if it had one
+      const hasCoverArt = !!(newCoverArt || track._hasCoverArt);
+      const { coverArt: _, ...strippedTrack } = track;
+      strippedTrack._hasCoverArt = hasCoverArt;
+
+      insertTrack.run({
+        id: track.id,
+        title: track.title || "",
+        artist: Array.isArray(track.artist) ? track.artist.join(", ") : track.artist || "",
+        album: track.album || "",
+        genre: track.genre || "",
+        year: Number(track.year) || null,
+        duration: Number(track.duration) || 0,
+        dateAdded: Number(track.dateAdded) || Date.now(),
+        filePath: track.filePath || "",
+        data: JSON.stringify(strippedTrack),
+      });
+
+      if (newCoverArt) {
+        insertCover.run(track.id, newCoverArt);
+      }
+    }
+  });
+
+  tx(newOrUpdatedTracks, removedIds || []);
+
   if (typeof _coverArtByIdCache !== "undefined") _coverArtByIdCache.clear();
   try {
     const mainModule = require("./main");
@@ -1714,6 +1754,8 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
 
       // Clear any tracks from existingMap2 that were in this scan's folder (handles deleted/skipped files)
       const normalizedFolder = folderPath.replace(/\\/g, "/").toLowerCase();
+      const removedIds = [];
+      const tracksFromFolder = new Set(tracks.map(t => t.id));
       for (const [id, t] of existingMap2.entries()) {
         if (
           t.filePath &&
@@ -1723,6 +1765,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             .startsWith(normalizedFolder)
         ) {
           existingMap2.delete(id);
+          if (!tracksFromFolder.has(id)) {
+            removedIds.push(id);
+          }
         }
       }
 
@@ -1734,6 +1779,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       for (const [id, track] of existingMap2.entries()) {
         if (track.duration <= 0) {
           existingMap2.delete(id);
+          removedIds.push(id);
         }
       }
 
@@ -1762,6 +1808,8 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         Object.keys(newlyFailedFiles).length === 0 &&
         mergedLibrary.length === existingLibrary2.length;
 
+      let isPartialUpdate = false;
+
       if (nothingChanged) {
         console.log(
           `[library:scan] No changes detected — skipping saveLibrary + dateAdded refresh + manifest rebuild. (${totalFiles} files checked, all cached)`,
@@ -1780,7 +1828,22 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             await new Promise((resolve) => setImmediate(resolve));
           }
         }
-        saveLibrary(mergedLibrary);
+        
+        // Fast path for small changes: if < 50 new/updated tracks and < 50 removed,
+        // do a partial save instead of wiping the whole SQLite table.
+        // To compute new/updated tracks, we compare existingLibrary2 size with mergedLibrary.
+        // But we actually just processed `tracks` array which has all new + cached tracks for the folder.
+        // Since we are scanning a folder, `tracks` can be large if the folder has many cached files.
+        // Wait, if `tracks.length` is huge, partial update might be slower than a full transaction?
+        // Actually SQLite `INSERT OR REPLACE` in a transaction is very fast. 
+        // We will just use partial update if `tracks.length <= 50`.
+        if (tracks.length <= 50 && removedIds.length <= 50) {
+          isPartialUpdate = true;
+          partialSaveLibrary(mergedLibrary, tracks, removedIds);
+          console.log(`[library:scan] Used partial DB update (${tracks.length} updated, ${removedIds.length} removed)`);
+        } else {
+          saveLibrary(mergedLibrary);
+        }
       }
 
       // Clean up worker pool
@@ -1872,7 +1935,10 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       // ── Rebuild binary manifest so next startup reads ONE file ──
       // CHANGED v1.0.12: Skip manifest rebuild when nothingChanged —
       // the manifest is already up to date.
-      if (ManifestIPC.isFeatureFlagEnabled() && !nothingChanged) {
+      // CHANGED: Also skip manifest rebuild if this was a partial update (< 50 changes)
+      // to avoid blocking UI for minutes on large libraries. The UI updates instantly via IPC
+      // and the manifest will eventually get rebuilt on next app start or large scan.
+      if (ManifestIPC.isFeatureFlagEnabled() && !nothingChanged && !isPartialUpdate) {
         const rebuildStart = Date.now();
         setImmediate(async () => {
           try {
@@ -3314,15 +3380,11 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             console.error("[metadata:write-tags] DB update failed:", dbErr.message);
           }
 
-          // Rebuild binary manifest (search/filter cache)
-          try {
-            const library = getLibrary();
-            const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
-            const fingerprint = settings._combinedFingerprint || "";
-            await ManifestIPC.rebuildManifest(library, fingerprint);
-          } catch (manifestErr) {
-            console.error("[metadata:write-tags] Manifest rebuild failed:", manifestErr.message);
-          }
+          // We no longer rebuild the binary manifest synchronously here.
+          // The renderer applies the metadata edits to its in-memory state instantly,
+          // so the UI updates accurately and quickly. The disk manifest will catch up
+          // on the next full app restart or full library scan. This solves the minutes-long 
+          // freeze when editing tags in large libraries.
         }
 
         return { success: true, updatedTrack };
