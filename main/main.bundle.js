@@ -3139,21 +3139,69 @@ var require_ipc = __commonJS({
       }
       tx(library2);
       if (preExistingCovers.size > 0) {
-        const restoreInsert = db.prepare(
-          "INSERT OR IGNORE INTO track_covers (trackId, coverArt) VALUES (?, ?)"
-        );
+        const restoreInsert = db.prepare("INSERT OR IGNORE INTO track_covers (trackId, coverArt) VALUES (?, ?)");
         const restoreTx = db.transaction(() => {
           for (const track of library2) {
             if (!track.coverArt && track._hasCoverArt) {
               const oldArt = preExistingCovers.get(track.id);
-              if (oldArt) {
-                restoreInsert.run(track.id, oldArt);
-              }
+              if (oldArt) restoreInsert.run(track.id, oldArt);
             }
           }
         });
         restoreTx();
       }
+      if (typeof _coverArtByIdCache !== "undefined") _coverArtByIdCache.clear();
+      try {
+        const mainModule = require_main();
+        if (mainModule && typeof mainModule.clearProtocolCache === "function") {
+          mainModule.clearProtocolCache();
+        }
+      } catch (_) {
+      }
+      return true;
+    }
+    function partialSaveLibrary(fullLibrary, newOrUpdatedTracks, removedIds) {
+      libraryCache = fullLibrary;
+      _libraryJsonCache = fullLibrary;
+      libraryById = new Map(fullLibrary.map((track) => [track.id, track]));
+      const tx = db.transaction((tracksToUpdate, idsToRemove) => {
+        const deleteTrack = db.prepare("DELETE FROM tracks WHERE id = ?");
+        const deleteCover = db.prepare("DELETE FROM track_covers WHERE trackId = ?");
+        for (const id of idsToRemove) {
+          deleteTrack.run(id);
+          deleteCover.run(id);
+        }
+        const insertTrack = db.prepare(`
+      INSERT OR REPLACE INTO tracks
+      (id, title, artist, album, genre, year, duration, dateAdded, filePath, data)
+      VALUES (@id, @title, @artist, @album, @genre, @year, @duration, @dateAdded, @filePath, @data)
+    `);
+        const insertCover = db.prepare(`
+      INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)
+    `);
+        for (const track of tracksToUpdate) {
+          const newCoverArt = track.coverArt;
+          const hasCoverArt = !!(newCoverArt || track._hasCoverArt);
+          const { coverArt: _, ...strippedTrack } = track;
+          strippedTrack._hasCoverArt = hasCoverArt;
+          insertTrack.run({
+            id: track.id,
+            title: track.title || "",
+            artist: Array.isArray(track.artist) ? track.artist.join(", ") : track.artist || "",
+            album: track.album || "",
+            genre: track.genre || "",
+            year: Number(track.year) || null,
+            duration: Number(track.duration) || 0,
+            dateAdded: Number(track.dateAdded) || Date.now(),
+            filePath: track.filePath || "",
+            data: JSON.stringify(strippedTrack)
+          });
+          if (newCoverArt) {
+            insertCover.run(track.id, newCoverArt);
+          }
+        }
+      });
+      tx(newOrUpdatedTracks, removedIds || []);
       if (typeof _coverArtByIdCache !== "undefined") _coverArtByIdCache.clear();
       try {
         const mainModule = require_main();
@@ -3863,9 +3911,14 @@ var require_ipc = __commonJS({
           const existingLibrary2 = getLibrary();
           const existingMap2 = new Map(existingLibrary2.map((t) => [t.id, t]));
           const normalizedFolder = folderPath.replace(/\\/g, "/").toLowerCase();
+          const removedIds = [];
+          const tracksFromFolder = new Set(tracks.map((t) => t.id));
           for (const [id, t] of existingMap2.entries()) {
             if (t.filePath && t.filePath.replace(/\\/g, "/").toLowerCase().startsWith(normalizedFolder)) {
               existingMap2.delete(id);
+              if (!tracksFromFolder.has(id)) {
+                removedIds.push(id);
+              }
             }
           }
           for (const track of tracks) {
@@ -3874,10 +3927,12 @@ var require_ipc = __commonJS({
           for (const [id, track] of existingMap2.entries()) {
             if (track.duration <= 0) {
               existingMap2.delete(id);
+              removedIds.push(id);
             }
           }
           const mergedLibrary = Array.from(existingMap2.values());
           const nothingChanged = skippedCount === totalFiles && Object.keys(newlyFailedFiles).length === 0 && mergedLibrary.length === existingLibrary2.length;
+          let isPartialUpdate = false;
           if (nothingChanged) {
             console.log(
               `[library:scan] No changes detected \u2014 skipping saveLibrary + dateAdded refresh + manifest rebuild. (${totalFiles} files checked, all cached)`
@@ -3891,7 +3946,13 @@ var require_ipc = __commonJS({
                 await new Promise((resolve) => setImmediate(resolve));
               }
             }
-            saveLibrary(mergedLibrary);
+            if (tracks.length <= 50 && removedIds.length <= 50) {
+              isPartialUpdate = true;
+              partialSaveLibrary(mergedLibrary, tracks, removedIds);
+              console.log(`[library:scan] Used partial DB update (${tracks.length} updated, ${removedIds.length} removed)`);
+            } else {
+              saveLibrary(mergedLibrary);
+            }
           }
           for (const w of workerPool) w.shutdown();
           workerPool = [];
@@ -3952,7 +4013,7 @@ var require_ipc = __commonJS({
             } catch (_) {
             }
           }
-          if (ManifestIPC.isFeatureFlagEnabled() && !nothingChanged) {
+          if (ManifestIPC.isFeatureFlagEnabled() && !nothingChanged && !isPartialUpdate) {
             const rebuildStart = Date.now();
             setImmediate(async () => {
               try {
@@ -5033,14 +5094,6 @@ var require_ipc = __commonJS({
                 }
               } catch (dbErr) {
                 console.error("[metadata:write-tags] DB update failed:", dbErr.message);
-              }
-              try {
-                const library2 = getLibrary();
-                const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
-                const fingerprint = settings._combinedFingerprint || "";
-                await ManifestIPC.rebuildManifest(library2, fingerprint);
-              } catch (manifestErr) {
-                console.error("[metadata:write-tags] Manifest rebuild failed:", manifestErr.message);
               }
             }
             return { success: true, updatedTrack };
