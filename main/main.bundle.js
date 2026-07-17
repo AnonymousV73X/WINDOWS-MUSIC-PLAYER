@@ -1285,7 +1285,10 @@ var require_metadataReader = __commonJS({
         let ytItag = 0;
         if (ytSuffixMatch) {
           ytItag = parseInt(ytSuffixMatch[1], 10) || 0;
-          cleanedName = nameWithoutExt.slice(0, nameWithoutExt.length - ytSuffixMatch[0].length);
+          cleanedName = nameWithoutExt.slice(
+            0,
+            nameWithoutExt.length - ytSuffixMatch[0].length
+          );
           cleanedName = cleanedName.replace(/_+$/, "").replace(/^_+/, "");
         }
         let title = cleanedName;
@@ -1353,7 +1356,8 @@ var require_metadataReader = __commonJS({
           } else if (extLower === ".m4a") assumedKbps = 256;
           else if (extLower === ".opus") assumedKbps = 96;
           else if (extLower === ".ogg") assumedKbps = 112;
-          else if (extLower === ".flac") assumedKbps = 900;
+          else if (extLower === ".flac")
+            assumedKbps = 900;
           else if (extLower === ".wav") assumedKbps = 1411;
           if (assumedKbps > 0) {
             const estimated = Math.floor(fileSize * 8 / (assumedKbps * 1e3));
@@ -2653,6 +2657,7 @@ var require_package = __commonJS({
         chokidar: "^3.5.3",
         "electron-updater": "^6.8.9",
         "music-metadata": "^11.13.0",
+        "node-id3": "^0.2.9",
         "node-vibrant": "^4.0.4",
         sharp: "^0.34.5",
         "v8-compile-cache": "^2.4.0"
@@ -3087,10 +3092,10 @@ var require_ipc = __commonJS({
       }
       return track;
     }
-    function saveLibrary(library) {
-      libraryCache = library;
-      _libraryJsonCache = library;
-      libraryById = new Map(library.map((track) => [track.id, track]));
+    function saveLibrary(library2) {
+      libraryCache = library2;
+      _libraryJsonCache = library2;
+      libraryById = new Map(library2.map((track) => [track.id, track]));
       const tx = db.transaction((tracks) => {
         db.prepare("DELETE FROM tracks").run();
         db.prepare("DELETE FROM track_covers").run();
@@ -3132,13 +3137,13 @@ var require_ipc = __commonJS({
       } catch (_) {
         preExistingCovers = /* @__PURE__ */ new Map();
       }
-      tx(library);
+      tx(library2);
       if (preExistingCovers.size > 0) {
         const restoreInsert = db.prepare(
           "INSERT OR IGNORE INTO track_covers (trackId, coverArt) VALUES (?, ?)"
         );
         const restoreTx = db.transaction(() => {
-          for (const track of library) {
+          for (const track of library2) {
             if (!track.coverArt && track._hasCoverArt) {
               const oldArt = preExistingCovers.get(track.id);
               if (oldArt) {
@@ -3330,14 +3335,14 @@ var require_ipc = __commonJS({
               console.log(
                 "[manifest] missing on startup \u2014 building from SQLite library..."
               );
-              const library = getLibrary();
-              if (library && library.length > 0) {
+              const library2 = getLibrary();
+              if (library2 && library2.length > 0) {
                 const settings = readJSON(SETTINGS_FILE, {
                   ...DEFAULT_SETTINGS
                 });
                 const existingFp = settings._combinedFingerprint || "";
                 const result = await ManifestIPC.rebuildManifest(
-                  library,
+                  library2,
                   existingFp
                 );
                 if (result.ok) {
@@ -3365,7 +3370,7 @@ var require_ipc = __commonJS({
                       console.log(
                         "[manifest] fingerprints persisted \u2014 next launch will skip fingerprint check"
                       );
-                      await ManifestIPC.rebuildManifest(library, combined);
+                      await ManifestIPC.rebuildManifest(library2, combined);
                     } catch (fpErr) {
                       console.warn(
                         "[manifest] fingerprint computation failed:",
@@ -3510,7 +3515,10 @@ var require_ipc = __commonJS({
               continue;
             }
             const hasUnderscores = /_/.test(file.fileName || "");
-            const nameNoExt = path.basename(file.fileName, path.extname(file.fileName));
+            const nameNoExt = path.basename(
+              file.fileName,
+              path.extname(file.fileName)
+            );
             const needsV113Rescan = hasUnderscores && existing && existing.dateModified === file.modifiedTime && (!existing.artist || existing.artist === "Unknown Artist");
             const needsV116Rescan = hasUnderscores && existing && existing.dateModified === file.modifiedTime && (!existing.title || existing.title === file.fileName || existing.title === nameNoExt);
             const needsV117Rescan = hasUnderscores && existing && existing.dateModified === file.modifiedTime;
@@ -3545,7 +3553,7 @@ var require_ipc = __commonJS({
             for (const t of existingLib) {
               const artistText = (t.artist || "").trim();
               if (artistText && artistText !== "Unknown Artist") {
-                const individuals = artistText.split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*/i).map((a) => a.trim()).filter(Boolean);
+                const individuals = artistText.split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*|&\s*|\band\b/i).map((a) => a.trim()).filter(Boolean);
                 for (const a of individuals) {
                   const lower = a.toLowerCase();
                   if (!knownArtists.has(lower)) {
@@ -3555,9 +3563,12 @@ var require_ipc = __commonJS({
                 if (t.albumArtist) {
                   const aa = t.albumArtist.trim();
                   if (aa && aa !== "Unknown Artist") {
-                    const aaLower = aa.toLowerCase();
-                    if (!knownArtists.has(aaLower)) {
-                      knownArtists.set(aaLower, aa);
+                    const individualsAA = aa.split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*|&\s*|\band\b/i).map((a) => a.trim()).filter(Boolean);
+                    for (const a of individualsAA) {
+                      const lower = a.toLowerCase();
+                      if (!knownArtists.has(lower)) {
+                        knownArtists.set(lower, a);
+                      }
                     }
                   }
                 }
@@ -3573,12 +3584,21 @@ var require_ipc = __commonJS({
                 if (useWorker && workerPool.length > 0) {
                   const worker = workerPool[wi % workerPool.length];
                   try {
-                    metadata = await worker.readMetadata(file.filePath, knownArtists);
+                    metadata = await worker.readMetadata(
+                      file.filePath,
+                      knownArtists
+                    );
                   } catch (_) {
-                    metadata = await metadataReader.readMetadata(file.filePath, knownArtists);
+                    metadata = await metadataReader.readMetadata(
+                      file.filePath,
+                      knownArtists
+                    );
                   }
                 } else {
-                  metadata = await metadataReader.readMetadata(file.filePath, knownArtists);
+                  metadata = await metadataReader.readMetadata(
+                    file.filePath,
+                    knownArtists
+                  );
                 }
                 return { file, metadata };
               })
@@ -3619,8 +3639,7 @@ var require_ipc = __commonJS({
                       knownArtists
                     );
                     metadata.duration = estimatedDuration;
-                    if (!metadata.bitrate)
-                      metadata.bitrate = fallback.bitrate || 0;
+                    if (!metadata.bitrate) metadata.bitrate = fallback.bitrate || 0;
                     const hasUnderscores = /_/.test(file.fileName || "");
                     const hasYtSuffix = /__(?:[A-Za-z0-9_-]{8,})_\d{2,4}$/.test(
                       file.fileName || ""
@@ -3661,7 +3680,8 @@ var require_ipc = __commonJS({
                         metadata.artist = fallback.artist;
                         if (!metadata.album || metadata.album === "Unknown Album")
                           metadata.album = fallback.album;
-                        if (!metadata.coverArt) metadata.coverArt = fallback.coverArt;
+                        if (!metadata.coverArt)
+                          metadata.coverArt = fallback.coverArt;
                         console.log(
                           `[library:scan] Underscored file parsed: "${file.fileName}" \u2192 artist="${fallback.artist}", title="${fallback.title}"`
                         );
@@ -3983,8 +4003,8 @@ var require_ipc = __commonJS({
       });
       ipcMain.handle("library:get-all", async () => {
         try {
-          const library = getLibrary();
-          return { success: true, tracks: library };
+          const library2 = getLibrary();
+          return { success: true, tracks: library2 };
         } catch (err) {
           return { success: false, error: err.message };
         }
@@ -4040,64 +4060,67 @@ var require_ipc = __commonJS({
           return { success: false, error: err.message };
         }
       });
-      ipcMain.handle("coverart:get-thumb", async (event, { trackId, size } = {}) => {
-        try {
-          if (!trackId) return { success: false, error: "No trackId" };
-          const targetSize = size || 128;
-          const thumbDir = path.join(
-            app.getPath("userData"),
-            "cached_covers",
-            "thumbs"
-          );
-          const thumbFile = path.join(thumbDir, `${trackId}_${targetSize}.webp`);
-          const exists = await fs.promises.access(thumbFile).then(() => true).catch(() => false);
-          if (exists) {
+      ipcMain.handle(
+        "coverart:get-thumb",
+        async (event, { trackId, size } = {}) => {
+          try {
+            if (!trackId) return { success: false, error: "No trackId" };
+            const targetSize = size || 128;
+            const thumbDir = path.join(
+              app.getPath("userData"),
+              "cached_covers",
+              "thumbs"
+            );
+            const thumbFile = path.join(thumbDir, `${trackId}_${targetSize}.webp`);
+            const exists = await fs.promises.access(thumbFile).then(() => true).catch(() => false);
+            if (exists) {
+              return {
+                success: true,
+                url: `nova-media://thumb/${trackId}/${targetSize}`
+              };
+            }
+            const library2 = getLibrary();
+            const track = library2.find((t) => t.id === trackId);
+            if (!track || !track.coverArt && !track._hasCoverArt) {
+              return { success: false, error: "No cover art for track" };
+            }
+            const sharp = require("sharp");
+            if (!fs.existsSync(thumbDir))
+              fs.mkdirSync(thumbDir, { recursive: true });
+            let inputBuffer;
+            if (track.coverArt && track.coverArt.startsWith("data:")) {
+              const base64 = track.coverArt.split(",")[1];
+              if (!base64) return { success: false, error: "Invalid data URI" };
+              inputBuffer = Buffer.from(base64, "base64");
+            } else if (track.coverArt && fs.existsSync(track.coverArt)) {
+              inputBuffer = await fs.promises.readFile(track.coverArt);
+            } else if (track._hasCoverArt) {
+              return {
+                success: true,
+                url: `nova-media://art/${encodeURIComponent(trackId)}`
+              };
+            } else {
+              return { success: false, error: "Cover art not found on disk" };
+            }
+            const metadata = await sharp(inputBuffer).metadata();
+            const side = Math.min(metadata.width, metadata.height);
+            const left = Math.floor((metadata.width - side) / 2);
+            const top = Math.floor((metadata.height - side) / 2);
+            const thumbBuffer = await sharp(inputBuffer).extract({ left, top, width: side, height: side }).resize(targetSize, targetSize, { fit: "cover" }).webp({ quality: 90 }).toBuffer();
+            await fs.promises.writeFile(thumbFile, thumbBuffer);
             return {
               success: true,
               url: `nova-media://thumb/${trackId}/${targetSize}`
             };
+          } catch (err) {
+            return { success: false, error: err.message };
           }
-          const library = getLibrary();
-          const track = library.find((t) => t.id === trackId);
-          if (!track || !track.coverArt && !track._hasCoverArt) {
-            return { success: false, error: "No cover art for track" };
-          }
-          const sharp = require("sharp");
-          if (!fs.existsSync(thumbDir))
-            fs.mkdirSync(thumbDir, { recursive: true });
-          let inputBuffer;
-          if (track.coverArt && track.coverArt.startsWith("data:")) {
-            const base64 = track.coverArt.split(",")[1];
-            if (!base64) return { success: false, error: "Invalid data URI" };
-            inputBuffer = Buffer.from(base64, "base64");
-          } else if (track.coverArt && fs.existsSync(track.coverArt)) {
-            inputBuffer = await fs.promises.readFile(track.coverArt);
-          } else if (track._hasCoverArt) {
-            return {
-              success: true,
-              url: `nova-media://art/${encodeURIComponent(trackId)}`
-            };
-          } else {
-            return { success: false, error: "Cover art not found on disk" };
-          }
-          const metadata = await sharp(inputBuffer).metadata();
-          const side = Math.min(metadata.width, metadata.height);
-          const left = Math.floor((metadata.width - side) / 2);
-          const top = Math.floor((metadata.height - side) / 2);
-          const thumbBuffer = await sharp(inputBuffer).extract({ left, top, width: side, height: side }).resize(targetSize, targetSize, { fit: "cover" }).webp({ quality: 90 }).toBuffer();
-          await fs.promises.writeFile(thumbFile, thumbBuffer);
-          return {
-            success: true,
-            url: `nova-media://thumb/${trackId}/${targetSize}`
-          };
-        } catch (err) {
-          return { success: false, error: err.message };
         }
-      });
+      );
       ipcMain.handle("coverart:get-all-thumbs", async (event, { size } = {}) => {
         try {
           const sharp = require("sharp");
-          const library = getLibrary();
+          const library2 = getLibrary();
           const targetSize = size || 128;
           const thumbDir = path.join(
             app.getPath("userData"),
@@ -4109,7 +4132,7 @@ var require_ipc = __commonJS({
           const thumbs = {};
           const thumbHashes = {};
           const BATCH = 8;
-          const tracks = library.filter(
+          const tracks = library2.filter(
             (t) => (t.coverArt || t._hasCoverArt) && t.id
           );
           for (let i = 0; i < tracks.length; i += BATCH) {
@@ -4336,6 +4359,25 @@ var require_ipc = __commonJS({
           return { success: false, error: err.message };
         }
       });
+      ipcMain.handle("library:partial-update", async (event, existingIds) => {
+        try {
+          getLibrary();
+          const currentIds = new Set(library.map((t) => t.id));
+          const existingSet = new Set(
+            Array.isArray(existingIds) ? existingIds : []
+          );
+          const newTracks = library.filter((t) => !existingSet.has(t.id));
+          const removedIds = [...existingSet].filter((id) => !currentIds.has(id));
+          return {
+            success: true,
+            newTracks,
+            removedIds,
+            totalTracks: library.length
+          };
+        } catch (err) {
+          return { success: false, error: err.message };
+        }
+      });
       ipcMain.handle("library:clear", async () => {
         try {
           saveLibrary([]);
@@ -4350,17 +4392,20 @@ var require_ipc = __commonJS({
       });
       ipcMain.handle("library:remove-track", async (event, trackId) => {
         try {
-          const library = getLibrary();
-          const track = library.find((t) => t.id === trackId);
+          const library2 = getLibrary();
+          const track = library2.find((t) => t.id === trackId);
           if (!track) return { success: true, removed: false };
-          const filtered = library.filter((t) => t.id !== trackId);
+          const filtered = library2.filter((t) => t.id !== trackId);
           saveLibrary(filtered);
           if (track.filePath && fs.existsSync(track.filePath)) {
             try {
               await fs.promises.unlink(track.filePath);
               console.log(`[library] Deleted file from storage: ${track.filePath}`);
             } catch (e) {
-              console.warn(`[library] Failed to delete file ${track.filePath} from storage:`, e.message);
+              console.warn(
+                `[library] Failed to delete file ${track.filePath} from storage:`,
+                e.message
+              );
             }
           }
           return { success: true, removed: true };
@@ -4915,6 +4960,96 @@ var require_ipc = __commonJS({
           return { success: false, error: err.message };
         }
       });
+      ipcMain.handle(
+        "metadata:write-tags",
+        async (event, { trackId, filePath, tags }) => {
+          try {
+            console.log("[metadata:write-tags] Request received for trackId:", trackId, "filePath:", filePath);
+            if (!filePath || !fs.existsSync(filePath)) {
+              console.error("[metadata:write-tags] File not found:", filePath);
+              return { success: false, error: "File not found" };
+            }
+            getLibrary();
+            const ext = path.extname(filePath).toLowerCase();
+            if (ext === ".mp3") {
+              const NodeID3 = require("node-id3");
+              const id3Tags = {};
+              if (tags.title !== void 0) id3Tags.title = tags.title || "";
+              if (tags.artist !== void 0) id3Tags.artist = tags.artist || "";
+              if (tags.album !== void 0) id3Tags.album = tags.album || "";
+              if (tags.genre !== void 0) id3Tags.genre = tags.genre || "";
+              if (tags.year !== void 0) id3Tags.year = tags.year ? String(tags.year) : "";
+              if (tags.coverArt) {
+                try {
+                  const match = tags.coverArt.match(/^data:([^;]+);base64,(.+)$/);
+                  if (match) {
+                    const mime = match[1];
+                    const buf = Buffer.from(match[2], "base64");
+                    id3Tags.image = {
+                      mime,
+                      type: { id: 3, name: "front cover" },
+                      description: "Cover",
+                      imageBuffer: buf
+                    };
+                  }
+                } catch (coverErr) {
+                  console.warn("[metadata:write-tags] cover art parse failed:", coverErr.message);
+                }
+              }
+              const written = NodeID3.update(id3Tags, filePath);
+              if (written !== true) {
+                console.warn("[metadata:write-tags] node-id3 write returned:", written);
+              }
+            }
+            let updatedTrack = null;
+            if (libraryById && libraryById.has(trackId)) {
+              const track = libraryById.get(trackId);
+              if (tags.title !== void 0) track.title = tags.title;
+              if (tags.artist !== void 0) track.artist = tags.artist;
+              if (tags.album !== void 0) track.album = tags.album;
+              if (tags.genre !== void 0) track.genre = tags.genre;
+              if (tags.year !== void 0) track.year = tags.year;
+              if (tags.coverArt) {
+                track.coverArt = tags.coverArt;
+                track._hasCoverArt = true;
+              }
+              updatedTrack = track;
+              try {
+                const row = db.prepare("SELECT data FROM tracks WHERE id = ?").get(trackId);
+                if (row) {
+                  const dbTrack = JSON.parse(row.data);
+                  Object.assign(dbTrack, {
+                    title: track.title,
+                    artist: track.artist,
+                    album: track.album,
+                    genre: track.genre,
+                    year: track.year,
+                    ...tags.coverArt ? { coverArt: tags.coverArt, _hasCoverArt: true } : {}
+                  });
+                  db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(
+                    JSON.stringify(dbTrack),
+                    trackId
+                  );
+                }
+              } catch (dbErr) {
+                console.error("[metadata:write-tags] DB update failed:", dbErr.message);
+              }
+              try {
+                const library2 = getLibrary();
+                const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+                const fingerprint = settings._combinedFingerprint || "";
+                await ManifestIPC.rebuildManifest(library2, fingerprint);
+              } catch (manifestErr) {
+                console.error("[metadata:write-tags] Manifest rebuild failed:", manifestErr.message);
+              }
+            }
+            return { success: true, updatedTrack };
+          } catch (err) {
+            console.error("[metadata:write-tags]", err.message);
+            return { success: false, error: err.message };
+          }
+        }
+      );
       function getAudioMimeType(filePath) {
         const ext = path.extname(filePath).toLowerCase();
         const mimeMap = {
@@ -5219,18 +5354,18 @@ var require_ipc = __commonJS({
               const raw = Array.isArray(data) ? data : Array.isArray(data.tracks) ? data.tracks : [];
               entries = raw.map((t) => ({ filePath: t.filePath || t.path || t.file || "" })).filter((e) => e.filePath);
               if (entries.length === 0 && Array.isArray(data.trackIds)) {
-                const library2 = getLibrary();
+                const library3 = getLibrary();
                 const idSet = new Set(data.trackIds);
-                entries = library2.filter((t) => idSet.has(t.id)).map((t) => ({ filePath: t.filePath, resolvedId: t.id }));
+                entries = library3.filter((t) => idSet.has(t.id)).map((t) => ({ filePath: t.filePath, resolvedId: t.id }));
               }
             } catch (_) {
             }
           }
           if (entries.length === 0)
             return { success: false, error: "No tracks found in playlist file" };
-          const library = getLibrary();
+          const library2 = getLibrary();
           const pathToId = new Map(
-            library.filter((t) => t?.filePath).map((t) => [t.filePath, t.id])
+            library2.filter((t) => t?.filePath).map((t) => [t.filePath, t.id])
           );
           const crossBasename = (fp) => {
             const posix = String(fp || "").replace(/\\/g, "/");
@@ -5239,7 +5374,7 @@ var require_ipc = __commonJS({
           };
           const fileNameToTrack = /* @__PURE__ */ new Map();
           const fileNameNoExtToTrack = /* @__PURE__ */ new Map();
-          for (const t of library) {
+          for (const t of library2) {
             if (!t?.filePath) continue;
             const fname = crossBasename(t.filePath).toLowerCase();
             if (!fileNameToTrack.has(fname)) fileNameToTrack.set(fname, t);
@@ -5319,8 +5454,8 @@ var require_ipc = __commonJS({
             return { success: false, canceled: true };
           const filePath = saveResult.filePath;
           const ext = path.extname(filePath).toLowerCase().replace(".", "");
-          const library = getLibrary();
-          const libMap = new Map(library.map((t) => [t.id, t]));
+          const library2 = getLibrary();
+          const libMap = new Map(library2.map((t) => [t.id, t]));
           const tracks = playlist.tracks.map((id) => libMap.get(id)).filter(Boolean);
           let content = "";
           if (ext === "m3u" || ext === "m3u8") {
@@ -5689,32 +5824,51 @@ ${items}
       });
       ipcMain.handle("lyrics:read-local", async (event, filePath) => {
         try {
-          const lrcPath = filePath.replace(path.extname(filePath), ".lrc");
-          if (!fs.existsSync(lrcPath)) {
-            const lrcPathUpper = filePath.replace(path.extname(filePath), ".LRC");
-            if (!fs.existsSync(lrcPathUpper)) {
-              console.log(
-                `[lyrics:read-local] no .lrc found for: ${path.basename(filePath)}`
-              );
-              return { success: false, error: "No local lyrics file found" };
-            }
-            console.log(
-              `[lyrics:read-local] found .LRC: ${path.basename(lrcPathUpper)}`
-            );
-            const content2 = fs.readFileSync(lrcPathUpper, "utf-8");
-            const parsed2 = parseLRC(content2);
-            console.log(
-              `  \u2192 ${parsed2.synced ? parsed2.synced.length + " synced lines" : "plain only"}`
-            );
-            return { success: true, lyrics: parsed2 };
+          const fileDir = path.dirname(filePath);
+          const fileBase = path.basename(filePath, path.extname(filePath));
+          const musicDir = fileDir;
+          const lyriczDir = path.join(musicDir, "lyricz");
+          const lyriczPath = path.join(lyriczDir, fileBase + ".lrc");
+          if (fs.existsSync(lyriczPath)) {
+            const content = fs.readFileSync(lyriczPath, "utf-8");
+            const parsed = parseLRC(content);
+            _lyricsBinaryMap.set(filePath, lyriczPath);
+            return { success: true, lyrics: parsed };
           }
-          console.log(`[lyrics:read-local] found .lrc: ${path.basename(lrcPath)}`);
-          const content = fs.readFileSync(lrcPath, "utf-8");
-          const parsed = parseLRC(content);
-          console.log(
-            `  \u2192 ${parsed.synced ? parsed.synced.length + " synced lines" : "plain only"}`
-          );
-          return { success: true, lyrics: parsed };
+          const lrcPath = filePath.replace(path.extname(filePath), ".lrc");
+          let sidecarPath = null;
+          if (fs.existsSync(lrcPath)) {
+            sidecarPath = lrcPath;
+          } else {
+            const lrcPathUpper = filePath.replace(path.extname(filePath), ".LRC");
+            if (fs.existsSync(lrcPathUpper)) {
+              sidecarPath = lrcPathUpper;
+            }
+          }
+          if (sidecarPath) {
+            const content = fs.readFileSync(sidecarPath, "utf-8");
+            const parsed = parseLRC(content);
+            try {
+              if (!fs.existsSync(lyriczDir)) {
+                fs.mkdirSync(lyriczDir, { recursive: true });
+              }
+              const dst = path.join(lyriczDir, fileBase + ".lrc");
+              if (!fs.existsSync(dst)) {
+                fs.renameSync(sidecarPath, dst);
+                _lyricsBinaryMap.set(filePath, dst);
+                console.log(
+                  `[lyrics:read-local] auto-migrated ${path.basename(sidecarPath)} \u2192 lyricz/`
+                );
+              } else {
+                fs.unlinkSync(sidecarPath);
+                _lyricsBinaryMap.set(filePath, dst);
+              }
+            } catch (migErr) {
+              _lyricsBinaryMap.set(filePath, sidecarPath);
+            }
+            return { success: true, lyrics: parsed };
+          }
+          return { success: false, error: "No local lyrics file found" };
         } catch (err) {
           return { success: false, error: err.message };
         }
@@ -5835,15 +5989,28 @@ ${items}
         "lyrics:save-to-track",
         async (event, { trackId, filePath, plain, synced }) => {
           try {
-            const lrcPath = filePath.replace(/\.[^.]+$/, ".lrc");
             const isEmpty = !plain && !synced;
-            if (isEmpty) {
+            const fileDir = path.dirname(filePath);
+            const fileBase = path.basename(filePath, path.extname(filePath));
+            const lyriczDir = path.join(fileDir, "lyricz");
+            const lrcPath = path.join(lyriczDir, fileBase + ".lrc");
+            if (!isEmpty) {
+              if (!fs.existsSync(lyriczDir)) {
+                fs.mkdirSync(lyriczDir, { recursive: true });
+              }
+              fs.writeFileSync(lrcPath, synced || plain || "", "utf-8");
+              _lyricsBinaryMap.set(filePath, lrcPath);
+            } else {
               try {
                 if (fs.existsSync(lrcPath)) fs.unlinkSync(lrcPath);
               } catch (_) {
               }
-            } else {
-              fs.writeFileSync(lrcPath, synced || plain || "", "utf-8");
+              const oldLrcPath = filePath.replace(/\.[^.]+$/, ".lrc");
+              try {
+                if (fs.existsSync(oldLrcPath)) fs.unlinkSync(oldLrcPath);
+              } catch (_) {
+              }
+              _lyricsBinaryMap.delete(filePath);
             }
             try {
               const row = db.prepare("SELECT data FROM tracks WHERE id = ?").get(trackId);
@@ -5874,6 +6041,160 @@ ${items}
           }
         }
       );
+      const _lyricsBinaryMap = /* @__PURE__ */ new Map();
+      ipcMain.handle("lyrics:migrate-to-lyricz", async (event, musicFolders) => {
+        try {
+          let collectLrcFiles2 = function(dir) {
+            const results = [];
+            try {
+              const entries = fs.readdirSync(dir, { withFileTypes: true });
+              for (const entry of entries) {
+                if (entry.isDirectory() && entry.name.toLowerCase() === "lyricz")
+                  continue;
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                  results.push(...collectLrcFiles2(full));
+                } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".lrc")) {
+                  results.push({ dir, name: entry.name, fullPath: full });
+                }
+              }
+            } catch (_) {
+            }
+            return results;
+          };
+          var collectLrcFiles = collectLrcFiles2;
+          let moved = 0;
+          let skipped = 0;
+          let fromSubdirs = 0;
+          const folders = Array.isArray(musicFolders) ? musicFolders : [];
+          const allLrc = [];
+          for (const folder of folders) {
+            if (!fs.existsSync(folder)) continue;
+            allLrc.push(...collectLrcFiles2(folder));
+          }
+          if (allLrc.length === 0) {
+            _rebuildLyricsMap();
+            return {
+              success: true,
+              moved: 0,
+              skipped: folders.length,
+              fromSubdirs: 0
+            };
+          }
+          const movedPaths = [];
+          for (const lrc of allLrc) {
+            const lyriczDir = path.join(lrc.dir, "lyricz");
+            try {
+              if (!fs.existsSync(lyriczDir)) {
+                fs.mkdirSync(lyriczDir, { recursive: true });
+              }
+              const dst = path.join(lyriczDir, lrc.name);
+              if (!fs.existsSync(dst)) {
+                fs.renameSync(lrc.fullPath, dst);
+                moved++;
+                movedPaths.push({ src: lrc.fullPath, dst, dir: lrc.dir });
+              } else {
+                fs.unlinkSync(lrc.fullPath);
+                movedPaths.push({ src: lrc.fullPath, dst, dir: lrc.dir });
+              }
+              if (lrc.dir !== folders.find((f) => lrc.fullPath.startsWith(f))) {
+                fromSubdirs++;
+              }
+            } catch (_) {
+            }
+          }
+          if (db && movedPaths.length > 0) {
+            try {
+              const selectStmt = db.prepare("SELECT id, data FROM tracks");
+              const updateStmt = db.prepare(
+                "UPDATE tracks SET data = ? WHERE id = ?"
+              );
+              const rows = selectStmt.all();
+              for (const row of rows) {
+                try {
+                  const track = JSON.parse(row.data);
+                  const match = movedPaths.find(
+                    (mp) => mp.src === track.lyricsPath
+                  );
+                  if (match) {
+                    track.lyricsPath = match.dst;
+                    updateStmt.run(JSON.stringify(track), row.id);
+                  }
+                } catch (_) {
+                }
+              }
+              if (libraryById) {
+                for (const [id, track] of libraryById) {
+                  if (track.lyricsPath) {
+                    const match = movedPaths.find(
+                      (mp) => mp.src === track.lyricsPath
+                    );
+                    if (match) {
+                      track.lyricsPath = match.dst;
+                    }
+                  }
+                }
+              }
+            } catch (dbErr) {
+              console.warn("[lyrics:migrate] DB patch failed:", dbErr.message);
+            }
+          }
+          _rebuildLyricsMap();
+          return { success: true, moved, skipped, fromSubdirs };
+        } catch (err) {
+          return { success: false, error: err.message };
+        }
+      });
+      function _rebuildLyricsMap() {
+        _lyricsBinaryMap.clear();
+        if (!libraryById) return;
+        for (const [id, track] of libraryById) {
+          if (track.filePath) {
+            if (track.lyricsPath && fs.existsSync(track.lyricsPath)) {
+              _lyricsBinaryMap.set(track.filePath, track.lyricsPath);
+              continue;
+            }
+            const fileDir = path.dirname(track.filePath);
+            const fileBase = path.basename(
+              track.filePath,
+              path.extname(track.filePath)
+            );
+            const lyriczPath = path.join(fileDir, "lyricz", fileBase + ".lrc");
+            if (fs.existsSync(lyriczPath)) {
+              _lyricsBinaryMap.set(track.filePath, lyriczPath);
+              continue;
+            }
+            const sidecarPath = track.filePath.replace(/\.[^.]+$/, ".lrc");
+            if (fs.existsSync(sidecarPath)) {
+              _lyricsBinaryMap.set(track.filePath, sidecarPath);
+            }
+          }
+        }
+      }
+      ipcMain.handle("lyrics:fast-lookup", async (event, filePath) => {
+        try {
+          if (_lyricsBinaryMap.size === 0 && libraryById) {
+            _rebuildLyricsMap();
+          }
+          if (_lyricsBinaryMap.has(filePath)) {
+            const lrcPath = _lyricsBinaryMap.get(filePath);
+            const content = fs.readFileSync(lrcPath, "utf-8");
+            const parsed = parseLRC(content);
+            return { success: true, lyrics: parsed };
+          }
+          return { success: false };
+        } catch (err) {
+          return { success: false, error: err.message };
+        }
+      });
+      ipcMain.handle("lyrics:rebuild-map", async () => {
+        try {
+          _rebuildLyricsMap();
+          return { success: true, size: _lyricsBinaryMap.size };
+        } catch (err) {
+          return { success: false, error: err.message };
+        }
+      });
     }
     function parseLRC(content) {
       if (typeof content !== "string") return { synced: null, plain: "" };
@@ -6523,7 +6844,9 @@ ${items}
             fs.unlinkSync(p);
             _artistImageCache.delete(name);
             deletedCount++;
-            console.log(`[artist-image] Migration deleted invalid image for "${name}"`);
+            console.log(
+              `[artist-image] Migration deleted invalid image for "${name}"`
+            );
           } catch (_) {
           }
         }
@@ -6536,154 +6859,165 @@ ${items}
         return { success: false, error: err.message };
       }
     });
-    ipcMain.handle("artist-image:save-custom", async (event, { artistName, localFilePath, url } = {}) => {
-      try {
-        const name = (artistName || "").trim();
-        if (!name) return { success: false, error: "No artist name provided" };
-        let buffer;
-        if (localFilePath) {
-          if (!fs.existsSync(localFilePath)) {
-            return { success: false, error: "File not found: " + localFilePath };
-          }
-          buffer = fs.readFileSync(localFilePath);
-        } else if (url) {
-          const resp = await fetch(url, {
-            signal: AbortSignal.timeout(2e4),
-            headers: { "User-Agent": "NovaTune/1.2.0" }
-          });
-          if (!resp.ok) {
-            return { success: false, error: `Download failed: HTTP ${resp.status}` };
-          }
-          buffer = Buffer.from(await resp.arrayBuffer());
-        } else {
-          return { success: false, error: "Provide localFilePath or url" };
-        }
-        if (!buffer || buffer.length < 100) {
-          return { success: false, error: "Image data is empty or too small" };
-        }
-        const sharp = require("sharp");
-        let croppedBuffer;
+    ipcMain.handle(
+      "artist-image:save-custom",
+      async (event, { artistName, localFilePath, url } = {}) => {
         try {
-          croppedBuffer = await sharp(buffer).resize(600, 600, { fit: "cover", position: "attention" }).jpeg({ quality: 90 }).toBuffer();
-        } catch (sharpErr) {
+          const name = (artistName || "").trim();
+          if (!name) return { success: false, error: "No artist name provided" };
+          let buffer;
+          if (localFilePath) {
+            if (!fs.existsSync(localFilePath)) {
+              return { success: false, error: "File not found: " + localFilePath };
+            }
+            buffer = fs.readFileSync(localFilePath);
+          } else if (url) {
+            const resp = await fetch(url, {
+              signal: AbortSignal.timeout(2e4),
+              headers: { "User-Agent": "NovaTune/1.2.0" }
+            });
+            if (!resp.ok) {
+              return {
+                success: false,
+                error: `Download failed: HTTP ${resp.status}`
+              };
+            }
+            buffer = Buffer.from(await resp.arrayBuffer());
+          } else {
+            return { success: false, error: "Provide localFilePath or url" };
+          }
+          if (!buffer || buffer.length < 100) {
+            return { success: false, error: "Image data is empty or too small" };
+          }
+          const sharp = require("sharp");
+          let croppedBuffer;
           try {
-            croppedBuffer = await sharp(buffer, { failOnError: false }).resize(600, 600, { fit: "cover", position: "attention" }).jpeg({ quality: 90 }).toBuffer();
-          } catch (_) {
-            return { success: false, error: "Could not decode image: " + sharpErr.message };
-          }
-        }
-        const dir = ARTIST_IMAGE_CACHE_DIR();
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        const hash = _artistImageHash(name);
-        try {
-          const existingFiles = fs.readdirSync(dir);
-          for (const f of existingFiles) {
-            if (f.startsWith(hash + "_") || f === hash + ".jpg") {
-              try {
-                fs.unlinkSync(path.join(dir, f));
-              } catch (_) {
-              }
+            croppedBuffer = await sharp(buffer).resize(600, 600, { fit: "cover", position: "attention" }).jpeg({ quality: 90 }).toBuffer();
+          } catch (sharpErr) {
+            try {
+              croppedBuffer = await sharp(buffer, { failOnError: false }).resize(600, 600, { fit: "cover", position: "attention" }).jpeg({ quality: 90 }).toBuffer();
+            } catch (_) {
+              return {
+                success: false,
+                error: "Could not decode image: " + sharpErr.message
+              };
             }
           }
-        } catch (_) {
+          const dir = ARTIST_IMAGE_CACHE_DIR();
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          const hash = _artistImageHash(name);
+          try {
+            const existingFiles = fs.readdirSync(dir);
+            for (const f of existingFiles) {
+              if (f.startsWith(hash + "_") || f === hash + ".jpg") {
+                try {
+                  fs.unlinkSync(path.join(dir, f));
+                } catch (_) {
+                }
+              }
+            }
+          } catch (_) {
+          }
+          const localPath = path.join(dir, `${hash}_${Date.now()}.jpg`);
+          fs.writeFileSync(localPath, croppedBuffer);
+          _artistImageCache.set(name.toLowerCase(), localPath);
+          _saveArtistImageMap();
+          console.log(
+            `[artist-image:save-custom] Saved custom image for "${name}" \u2192 ${localPath}`
+          );
+          return { success: true, localPath };
+        } catch (err) {
+          return { success: false, error: err.message };
         }
-        const localPath = path.join(dir, `${hash}_${Date.now()}.jpg`);
-        fs.writeFileSync(localPath, croppedBuffer);
-        _artistImageCache.set(name.toLowerCase(), localPath);
-        _saveArtistImageMap();
-        console.log(`[artist-image:save-custom] Saved custom image for "${name}" \u2192 ${localPath}`);
-        return { success: true, localPath };
-      } catch (err) {
-        return { success: false, error: err.message };
       }
-    });
-    ipcMain.handle("coverart:ensure-thumbs", async (event, { trackIds, size = 128 } = {}) => {
-      try {
-        if (!Array.isArray(trackIds) || trackIds.length === 0) {
-          return { success: true, thumbs: {}, missing: [] };
-        }
-        const sharp = require("sharp");
-        const thumbDir = path.join(
-          app.getPath("userData"),
-          "cached_covers",
-          "thumbs"
-        );
-        if (!fs.existsSync(thumbDir)) {
-          await fs.promises.mkdir(thumbDir, { recursive: true });
-        }
-        const thumbs = {};
-        const missing = [];
-        const library = getLibrary();
-        const libById = new Map(library.map((t) => [t.id, t]));
-        const BATCH = 8;
-        for (let i = 0; i < trackIds.length; i += BATCH) {
-          const batch = trackIds.slice(i, i + BATCH);
-          await Promise.allSettled(
-            batch.map(async (trackId) => {
-              try {
-                const thumbFile = path.join(
-                  thumbDir,
-                  `${trackId}_${size}.webp`
-                );
-                const exists = await fs.promises.access(thumbFile).then(() => true).catch(() => false);
-                if (exists) {
-                  thumbs[trackId] = `nova-media://thumb/${trackId}/${size}`;
-                  return;
-                }
-                const track = libById.get(trackId);
-                let coverArt = track?.coverArt || null;
-                if (!coverArt) {
-                  coverArt = getCoverArtByTrackId(trackId);
-                }
-                if (!coverArt) {
-                  missing.push(trackId);
-                  return;
-                }
-                let inputBuffer;
-                if (coverArt.startsWith("data:")) {
-                  const base64 = coverArt.split(",")[1];
-                  if (!base64) return;
-                  inputBuffer = Buffer.from(base64, "base64");
-                } else {
-                  try {
-                    inputBuffer = await fs.promises.readFile(coverArt);
-                  } catch (_) {
+    );
+    ipcMain.handle(
+      "coverart:ensure-thumbs",
+      async (event, { trackIds, size = 128 } = {}) => {
+        try {
+          if (!Array.isArray(trackIds) || trackIds.length === 0) {
+            return { success: true, thumbs: {}, missing: [] };
+          }
+          const sharp = require("sharp");
+          const thumbDir = path.join(
+            app.getPath("userData"),
+            "cached_covers",
+            "thumbs"
+          );
+          if (!fs.existsSync(thumbDir)) {
+            await fs.promises.mkdir(thumbDir, { recursive: true });
+          }
+          const thumbs = {};
+          const missing = [];
+          const library2 = getLibrary();
+          const libById = new Map(library2.map((t) => [t.id, t]));
+          const BATCH = 8;
+          for (let i = 0; i < trackIds.length; i += BATCH) {
+            const batch = trackIds.slice(i, i + BATCH);
+            await Promise.allSettled(
+              batch.map(async (trackId) => {
+                try {
+                  const thumbFile = path.join(thumbDir, `${trackId}_${size}.webp`);
+                  const exists = await fs.promises.access(thumbFile).then(() => true).catch(() => false);
+                  if (exists) {
+                    thumbs[trackId] = `nova-media://thumb/${trackId}/${size}`;
+                    return;
+                  }
+                  const track = libById.get(trackId);
+                  let coverArt = track?.coverArt || null;
+                  if (!coverArt) {
+                    coverArt = getCoverArtByTrackId(trackId);
+                  }
+                  if (!coverArt) {
                     missing.push(trackId);
                     return;
                   }
+                  let inputBuffer;
+                  if (coverArt.startsWith("data:")) {
+                    const base64 = coverArt.split(",")[1];
+                    if (!base64) return;
+                    inputBuffer = Buffer.from(base64, "base64");
+                  } else {
+                    try {
+                      inputBuffer = await fs.promises.readFile(coverArt);
+                    } catch (_) {
+                      missing.push(trackId);
+                      return;
+                    }
+                  }
+                  const metadata = await sharp(inputBuffer).metadata();
+                  const side = Math.min(metadata.width, metadata.height);
+                  const left = Math.floor((metadata.width - side) / 2);
+                  const top = Math.floor((metadata.height - side) / 2);
+                  const thumbBuffer = await sharp(inputBuffer).extract({ left, top, width: side, height: side }).resize(size, size, { fit: "cover" }).webp({ quality: 90 }).toBuffer();
+                  await fs.promises.writeFile(thumbFile, thumbBuffer);
+                  thumbs[trackId] = `nova-media://thumb/${trackId}/${size}`;
+                } catch (_) {
+                  missing.push(trackId);
                 }
-                const metadata = await sharp(inputBuffer).metadata();
-                const side = Math.min(metadata.width, metadata.height);
-                const left = Math.floor((metadata.width - side) / 2);
-                const top = Math.floor((metadata.height - side) / 2);
-                const thumbBuffer = await sharp(inputBuffer).extract({ left, top, width: side, height: side }).resize(size, size, { fit: "cover" }).webp({ quality: 90 }).toBuffer();
-                await fs.promises.writeFile(thumbFile, thumbBuffer);
-                thumbs[trackId] = `nova-media://thumb/${trackId}/${size}`;
-              } catch (_) {
-                missing.push(trackId);
-              }
-            })
-          );
-          await new Promise((resolve) => setImmediate(resolve));
-          if (Date.now() - (global._lastAudioActivity || 0) < 1500) {
-            await new Promise((resolve) => setTimeout(resolve, 40));
+              })
+            );
+            await new Promise((resolve) => setImmediate(resolve));
+            if (Date.now() - (global._lastAudioActivity || 0) < 1500) {
+              await new Promise((resolve) => setTimeout(resolve, 40));
+            }
           }
+          return { success: true, thumbs, missing };
+        } catch (err) {
+          return { success: false, error: err.message, thumbs: {}, missing: [] };
         }
-        return { success: true, thumbs, missing };
-      } catch (err) {
-        return { success: false, error: err.message, thumbs: {}, missing: [] };
       }
-    });
+    );
     ipcMain.handle("coverart:sibling-cover", async (event, { trackId } = {}) => {
       try {
         if (!trackId) return { success: false, error: "trackId required" };
-        const library = getLibrary();
-        const track = library.find((t) => t.id === trackId);
+        const library2 = getLibrary();
+        const track = library2.find((t) => t.id === trackId);
         if (!track || !track.filePath) {
           return { success: true, coverArt: null };
         }
         const dir = path.dirname(track.filePath);
-        const siblings = library.filter(
+        const siblings = library2.filter(
           (t) => t.id !== trackId && t.filePath && path.dirname(t.filePath) === dir && (t.coverArt || t._hasCoverArt)
         );
         if (siblings.length === 0) {
