@@ -210,7 +210,7 @@ class Sidebar {
     const dialog = document.createElement('div');
     dialog.className = 'playlist-create-dialog';
     dialog.innerHTML = `
-      <input type="text" class="playlist-input" placeholder="Playlist name..." maxlength="100" autofocus>
+      <input type="text" class="playlist-input" placeholder="Playlist name..." maxlength="100" autofocus spellcheck="false">
       <div class="playlist-dialog-actions">
         <button class="btn btn-small" style="background:var(--surface);color:var(--text-secondary);">Cancel</button>
         <button class="btn btn-small" style="background:var(--green);color:#000;">Create</button>
@@ -244,7 +244,7 @@ class Sidebar {
     const dialog = document.createElement('div');
     dialog.className = 'playlist-create-dialog';
     dialog.innerHTML = `
-      <input type="text" class="playlist-input" value="${this._escapeHtml(playlist.name)}" maxlength="100" autofocus>
+      <input type="text" class="playlist-input" value="${this._escapeHtml(playlist.name)}" maxlength="100" autofocus spellcheck="false">
       <div class="playlist-dialog-actions">
         <button class="btn btn-small" style="background:var(--surface);color:var(--text-secondary);">Cancel</button>
         <button class="btn btn-small" style="background:var(--green);color:#000;">Rename</button>

@@ -3483,6 +3483,39 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   background: var(--green-hover);
 }
 
+.help-version-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 10px 20px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  text-decoration: none;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.help-version-btn:hover {
+  background: var(--surface-hover);
+  border-color: var(--green);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.help-version-btn .version-badge {
+  background: var(--green);
+  color: #000;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .help-sections {
   display: flex;
   flex-direction: column;

@@ -7165,7 +7165,7 @@ function showAppDialog({
         <div class="app-dialog-title">${escapeHtml(title || "NovaTune")}</div>
         ${message ? `<div class="app-dialog-message">${escapeHtml(message)}</div>` : ""}
         ${detailsHtml}
-        ${input ? '<input class="app-dialog-input" type="text" maxlength="100" autocomplete="off">' : ""}
+        ${input ? '<input class="app-dialog-input" type="text" maxlength="100" autocomplete="off" spellcheck="false">' : ""}
         <div class="app-dialog-actions">
           ${cancelText != null ? `<button type="button" class="app-dialog-btn secondary" data-action="cancel">${escapeHtml(cancelText)}</button>` : ""}
           <button type="button" class="app-dialog-btn primary${danger ? " danger" : ""}" data-action="confirm">${escapeHtml(confirmText)}</button>
@@ -8871,6 +8871,8 @@ function renderHelp() {
       </div>
 
       <div class="help-sections">
+        
+
         <div class="section-panel">
           <div class="section-panel-title">Getting Started</div>
           <div class="help-item">
@@ -9417,7 +9419,7 @@ function _openArtistImageEditor(artistName) {
         </div>
         <div class="aie-panel" id="aie-panel-url">
           <div class="aie-url-row">
-            <input type="text" class="aie-url-input" id="aie-url-input" placeholder="https://example.com/artist.jpg">
+            <input type="text" class="aie-url-input" id="aie-url-input" placeholder="https://example.com/artist.jpg" spellcheck="false">
             <button class="aie-url-preview-btn" id="aie-url-preview-btn">Preview</button>
           </div>
           <div class="aie-preview-row" id="aie-url-preview-row" style="display:none;">
@@ -13524,7 +13526,7 @@ function _createFloatingNavCard() {
     <button class="fn-btn" id="fn-search-btn" data-label="Search" aria-label="Search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
     </button>
-    <input type="text" class="fn-search-input" id="fn-search-input" placeholder="Search…">
+    <input type="text" class="fn-search-input" id="fn-search-input" placeholder="Search…" spellcheck="false">
   </div>`;
   html += `<button class="fn-btn fn-help-btn" id="fn-help-btn" data-section="help" data-label="Help" aria-label="Help">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
@@ -13884,23 +13886,23 @@ function _openTagEditor(track) {
       </div>
       <div class="tag-editor-field">
         <label>Title</label>
-        <input id="tag-title" type="text" value="${escapeHtml(track.title || "")}">
+        <input id="tag-title" type="text" value="${escapeHtml(track.title || "")}" spellcheck="false">
       </div>
       <div class="tag-editor-field">
         <label>Artist</label>
-        <input id="tag-artist" type="text" value="${escapeHtml(track.artist || "")}">
+        <input id="tag-artist" type="text" value="${escapeHtml(track.artist || "")}" spellcheck="false">
       </div>
       <div class="tag-editor-field">
         <label>Album</label>
-        <input id="tag-album" type="text" value="${escapeHtml(track.album || "")}">
+        <input id="tag-album" type="text" value="${escapeHtml(track.album || "")}" spellcheck="false">
       </div>
       <div class="tag-editor-field">
         <label>Genre</label>
-        <input id="tag-genre" type="text" value="${escapeHtml(track.genre || "")}">
+        <input id="tag-genre" type="text" value="${escapeHtml(track.genre || "")}" spellcheck="false">
       </div>
       <div class="tag-editor-field">
         <label>Year</label>
-        <input id="tag-year" type="text" value="${track.year || ""}">
+        <input id="tag-year" type="text" value="${track.year || ""}" spellcheck="false">
       </div>
       <div class="tag-editor-actions">
         <button class="btn-cancel" id="tag-cancel">Cancel</button>
