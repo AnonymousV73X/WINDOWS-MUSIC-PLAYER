@@ -11419,6 +11419,12 @@ function _smtcStatus(status) {
   if (!("mediaSession" in navigator)) return;
   navigator.mediaSession.playbackState =
     status === "playing" ? "playing" : "paused";
+
+  if (window.novaAPI && typeof window.novaAPI.invoke === "function") {
+    window.novaAPI.invoke("smtc:update-status", status).catch((err) => {
+      console.warn("Failed to send smtc:update-status:", err.message);
+    });
+  }
 }
 
 function _updateMediaSession(track) {
@@ -13996,6 +14002,7 @@ function _openTagEditor(track) {
     }
   });
 }
+
 
 // ─── Task 10: Menu Icon Morph ────────────────────────────
 // Smooth CSS morph: playlist icon → X via .menu-open class toggle.
