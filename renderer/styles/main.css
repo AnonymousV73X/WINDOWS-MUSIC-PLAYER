@@ -6132,7 +6132,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   position: absolute;
   right: 16px;
   top: 50.1%;
-  width: 15px;
+  width: 14px;
   height: 15px;
   margin-top: -8px;
   border: 2px solid rgba(255,255,255,0.15);
