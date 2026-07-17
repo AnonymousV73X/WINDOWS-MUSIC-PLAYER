@@ -1632,6 +1632,12 @@ body:not(.is-playing) .nolyric-bar {
   height: 100%;
   z-index: 2;
   pointer-events: none;
+  opacity: 0.3;
+  transition: opacity 0.25s ease;
+}
+
+body:not(.is-playing) .lyrics-nolyrics-visualizer {
+  opacity: 0;
 }
 
 .nolyric-bar {
