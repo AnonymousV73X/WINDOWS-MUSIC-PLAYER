@@ -6130,7 +6130,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 .playlist-song-row.track-loading::after {
   content: '';
   position: absolute;
-  right: 17px;
+  right: 18px;
   top: 51%;
   width: 14px;
   height: 14px;
