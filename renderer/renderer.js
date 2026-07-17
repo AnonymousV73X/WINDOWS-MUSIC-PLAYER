@@ -8898,7 +8898,7 @@ function renderHelp() {
           </div>
           <div class="help-item">
             <div class="help-item-title">Customization</div>
-            <div class="help-item-body">
+            <div class="help-item-body" style="padding-left: 10px;">
               <ul>
                 <li><strong>Vinyl Player Enhancements:</strong> When no lyrics are found, the spinning vinyl smoothly displays a gorgeous, dynamic visualizer customized to your color palette.</li>
                 <li><strong>Song Tag Editor:</strong> Seamlessly edit Title, Artist, Album, Year, and Cover Art directly inside the app, saving changes instantly to the actual file metadata.</li>
