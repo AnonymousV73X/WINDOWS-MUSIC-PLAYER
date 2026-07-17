@@ -8875,7 +8875,7 @@ function renderHelp() {
           <div class="section-panel-title">What's New in v1.1.2</div>
           <div class="help-item">
             <div class="help-item-title">UI & Navigation Refinements</div>
-            <div class="help-item-body" style="padding-left: 10px;">
+            <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
                 <li><strong>Added Tooltips:</strong> Helpful tooltips for the Sidebar Menu toggle and Lyrics pill.</li>
                 <li><strong>Active Indicator:</strong> A sleek new visual indicator highlights your active menu item in the sidebar.</li>
