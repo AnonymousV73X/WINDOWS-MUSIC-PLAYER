@@ -11602,6 +11602,7 @@ function _updateRepeatButton() {
 }
 
 function _updatePlayPauseIcon(playing) {
+  document.body.classList.toggle("is-playing", playing);
   const pauseIcon =
     '<rect x="6.5" y="4" width="3" height="16" rx="1.5" ry="1.5"/><rect x="14.5" y="4" width="3" height="16" rx="1.5" ry="1.5"/>';
   const playIcon =
