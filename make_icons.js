@@ -82,14 +82,14 @@ async function main() {
   await sharp(svg).resize(512, 512).png().toFile(path.join(iconDir, "icon.png"));
   await sharp(svg).resize(32, 32).png().toFile(path.join(iconDir, "tray.png"));
 
-  // Modern rounded icons — filled triangles with round corners (Spotify-style)
+  // Modern rounded icons — outline (hollow) triangles with round corners (Spotify-style)
   const prevSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
     <rect x="7" y="7" width="3.5" height="18" rx="1.75" fill="white"/>
-    <path d="M25 8 L13 16 L25 24 Z" fill="white" stroke="white" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M24 8 L12 16 L24 24 Z" fill="none" stroke="white" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
   </svg>`;
 
   const playSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-    <path d="M10 7.5 L25 16 L10 24.5 Z" fill="white" stroke="white" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M10 7.5 L25 16 L10 24.5 Z" fill="none" stroke="white" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
   </svg>`;
 
   const pauseSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
@@ -98,7 +98,7 @@ async function main() {
   </svg>`;
 
   const nextSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-    <path d="M7 8 L19 16 L7 24 Z" fill="white" stroke="white" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M8 8 L20 16 L8 24 Z" fill="none" stroke="white" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
     <rect x="21.5" y="7" width="3.5" height="18" rx="1.75" fill="white"/>
   </svg>`;
 
@@ -114,6 +114,4 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-
-
 
