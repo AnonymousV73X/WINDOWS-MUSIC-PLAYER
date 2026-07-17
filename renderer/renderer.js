@@ -8887,7 +8887,7 @@ function renderHelp() {
           </div>
           <div class="help-item">
             <div class="help-item-title">Performance & Library</div>
-            <div class="help-item-body">
+            <div class="help-item-body" style="padding-left: 10px;">
               <ul>
                 <li><strong>Blazing Fast Refreshes:</strong> Partial library updates completely eliminate the long waits when adding a handful of songs or updating cover art.</li>
                 <li><strong>Playlist Collage Logic:</strong> Playlists under 5 songs no longer cache collages, and existing collages instantly adapt to content changes without startup delays.</li>
