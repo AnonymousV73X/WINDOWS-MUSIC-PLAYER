@@ -9000,7 +9000,7 @@ function renderHelp() {
         </div>
       </div>
 
-      <div class="section-panel" id="help-updates-section" style="padding-left:>
+      <div class="section-panel" id="help-updates-section" style="padding>
           <div class="section-panel-title">What's New in v1.1.2</div>
           <div class="help-item">
             <div class="help-item-title">UI & Navigation Refinements</div>
