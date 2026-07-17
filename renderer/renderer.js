@@ -8888,7 +8888,7 @@ function renderHelp() {
           <div class="help-item">
             <div class="help-item-title">Performance & Library</div>
             <div class="help-item-body" style="padding-left: 15px;">
-              <ul>
+              <ul style="padding-left: 10px;">
                 <li><strong>Blazing Fast Refreshes:</strong> Partial library updates completely eliminate the long waits when adding a handful of songs or updating cover art.</li>
                 <li><strong>Playlist Collage Logic:</strong> Playlists under 5 songs no longer cache collages, and existing collages instantly adapt to content changes without startup delays.</li>
                 <li><strong>Proper Lyrics Management:</strong> Added a dedicated <code>lyricz</code> folder for accurate, lightning-fast offline lyric retrieval without cluttering your music folders.</li>
