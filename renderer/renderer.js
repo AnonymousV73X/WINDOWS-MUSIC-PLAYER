@@ -9000,6 +9000,43 @@ function renderHelp() {
         </div>
       </div>
 
+      <div class="section-panel" id="help-updates-section">
+          <div class="section-panel-title">What's New in v1.1.2</div>
+          <div class="help-item">
+            <div class="help-item-title">UI & Navigation Refinements</div>
+            <div class="help-item-body">
+              <ul>
+                <li><strong>Added Tooltips:</strong> Helpful tooltips for the Sidebar Menu toggle and Lyrics pill.</li>
+                <li><strong>Active Indicator:</strong> A sleek new visual indicator highlights your active menu item in the sidebar.</li>
+                <li><strong>Menu/X Icon Sync:</strong> The hamburger menu perfectly transitions to a close (X) icon when the sidebar is toggled.</li>
+                <li><strong>Playlist Add Interactions:</strong> The playlist "Add" button now smoothly morphs into an X to cancel out of the creation menu.</li>
+                <li><strong>Taskbar Playback:</strong> Added Windows taskbar thumbnail controls (Thumbar icons) for quick access.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="help-item">
+            <div class="help-item-title">Performance & Library</div>
+            <div class="help-item-body">
+              <ul>
+                <li><strong>Blazing Fast Refreshes:</strong> Partial library updates completely eliminate the long waits when adding a handful of songs or updating cover art.</li>
+                <li><strong>Playlist Collage Logic:</strong> Playlists under 5 songs no longer cache collages, and existing collages instantly adapt to content changes without startup delays.</li>
+                <li><strong>Proper Lyrics Management:</strong> Added a dedicated <code>lyricz</code> folder for accurate, lightning-fast offline lyric retrieval without cluttering your music folders.</li>
+                <li><strong>Improved Search Sorting:</strong> Added Ascending (A-Z) and Descending (Z-A) sorting options to the search results.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="help-item">
+            <div class="help-item-title">Customization</div>
+            <div class="help-item-body">
+              <ul>
+                <li><strong>Vinyl Player Enhancements:</strong> When no lyrics are found, the spinning vinyl smoothly displays a gorgeous, dynamic visualizer customized to your color palette.</li>
+                <li><strong>Song Tag Editor:</strong> Seamlessly edit Title, Artist, Album, Year, and Cover Art directly inside the app, saving changes instantly to the actual file metadata.</li>
+                <li><strong>Desktop Menu Visibility:</strong> Added experimental support for keeping the full sidebar visible on smaller desktop/tablet screens.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
         NovaTune v1.1.1 &bull; Made with love for music lovers
       </div>
