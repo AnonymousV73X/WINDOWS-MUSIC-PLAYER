@@ -8873,7 +8873,7 @@ function renderHelp() {
       <div class="help-sections">
         <div class="section-panel" id="help-updates-section">
           <div class="section-panel-title">What's New in v1.1.2</div>
-          <div class="help-item" style=">
+          <div class="help-item" style="padding-left>
             <div class="help-item-title">UI & Navigation Refinements</div>
             <div class="help-item-body">
               <ul>
