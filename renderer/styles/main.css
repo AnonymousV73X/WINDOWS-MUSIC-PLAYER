@@ -1631,7 +1631,7 @@ body:not(.is-playing) .nolyric-bar {
   height: 100%;
   z-index: 2;
   pointer-events: none;
-  opacity: 0.3;
+  opacity: 0.5;
   transition: opacity 0.25s ease;
 }
 
