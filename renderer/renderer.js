@@ -8876,7 +8876,7 @@ function renderHelp() {
           <div class="help-item" style="padding-left: 10px;">
             <div class="help-item-title">UI & Navigation Refinements</div>
             <div class="help-item-body" style="padding-left: 10px;">
-              <ul>
+              <ul style="padding-left: 10px;">
                 <li><strong>Added Tooltips:</strong> Helpful tooltips for the Sidebar Menu toggle and Lyrics pill.</li>
                 <li><strong>Active Indicator:</strong> A sleek new visual indicator highlights your active menu item in the sidebar.</li>
                 <li><strong>Menu/X Icon Sync:</strong> The hamburger menu perfectly transitions to a close (X) icon when the sidebar is toggled.</li>
