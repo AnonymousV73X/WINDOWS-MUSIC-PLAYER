@@ -14050,6 +14050,7 @@ openPlaylistMenu = function (anchor, track) {
   }
 };
 
+
 // Override closePlaylistMenus to remove .menu-open class
 const _origClosePlaylistMenus = closePlaylistMenus;
 closePlaylistMenus = function () {
