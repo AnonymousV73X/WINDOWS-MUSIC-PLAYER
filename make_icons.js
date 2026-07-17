@@ -82,17 +82,30 @@ async function main() {
   await sharp(svg).resize(512, 512).png().toFile(path.join(iconDir, "icon.png"));
   await sharp(svg).resize(32, 32).png().toFile(path.join(iconDir, "tray.png"));
 
-  const prevSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M10 6 L10 26 M24 6 L12 16 L24 26 Z" fill="#ffffff"/></svg>`;
-  const playSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M8 6 L26 16 L8 26 Z" fill="#ffffff"/></svg>`;
-  const pauseSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="6" width="5" height="20" fill="#ffffff"/><rect x="19" y="6" width="5" height="20" fill="#ffffff"/></svg>`;
-  const nextSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M6 6 L18 16 L6 26 M22 6 L22 26" fill="#ffffff"/></svg>`;
+  // Modern rounded icons — filled triangles with round corners (Spotify-style)
+  const prevSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+    <rect x="7" y="7" width="3.5" height="18" rx="1.75" fill="white"/>
+    <path d="M25 8 L13 16 L25 24 Z" fill="white" stroke="white" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+  </svg>`;
 
+  const playSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+    <path d="M10 7.5 L25 16 L10 24.5 Z" fill="white" stroke="white" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+  </svg>`;
+
+  const pauseSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+    <rect x="8" y="7" width="5" height="18" rx="2.5" fill="white"/>
+    <rect x="19" y="7" width="5" height="18" rx="2.5" fill="white"/>
+  </svg>`;
+
+  const nextSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+    <path d="M7 8 L19 16 L7 24 Z" fill="white" stroke="white" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <rect x="21.5" y="7" width="3.5" height="18" rx="1.75" fill="white"/>
+  </svg>`;
 
   await sharp(Buffer.from(prevSvg)).png().toFile(path.join(iconDir, "prev.png"));
   await sharp(Buffer.from(playSvg)).png().toFile(path.join(iconDir, "play.png"));
   await sharp(Buffer.from(pauseSvg)).png().toFile(path.join(iconDir, "pause.png"));
   await sharp(Buffer.from(nextSvg)).png().toFile(path.join(iconDir, "next.png"));
-
 
   console.log("Wrote assets/icons/icon.ico, icon.png, tray.png, and thumbar icons (prev.png, play.png, pause.png, next.png)");
 }

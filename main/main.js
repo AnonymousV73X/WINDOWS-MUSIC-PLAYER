@@ -334,6 +334,7 @@ function createMainWindow() {
     thumbarIcons = icons;
     global.updateThumbarButtons = (isPlaying) => {
       if (!mainWindow || mainWindow.isDestroyed() || !thumbarIcons) return;
+      global._thumbarIsPlaying = !!isPlaying; // track state for restore handler
       try {
         const res = mainWindow.setThumbarButtons([
           {
@@ -358,13 +359,13 @@ function createMainWindow() {
             }
           }
         ]);
-        console.log("[thumbar] setThumbarButtons result:", res);
+        console.log("[thumbar] setThumbarButtons result:", res, "isPlaying:", isPlaying);
       } catch (err) {
         console.warn("[thumbar] Failed to set thumbar buttons:", err.message);
       }
     };
-    // Initial taskbar buttons state
-    global.updateThumbarButtons(false);
+    // NOTE: Don't call updateThumbarButtons here — the window isn't shown yet.
+    // The 'show' event listener (added after _showWindow) handles the first call.
   }).catch(err => {
     console.error("Failed to initialize thumbar icons:", err);
   });
@@ -398,10 +399,37 @@ function createMainWindow() {
       } catch (_) {}
     }
     mainWindow.show();
-    if (global.updateThumbarButtons) {
-      global.updateThumbarButtons(false);
-    }
+    // NOTE: Do NOT call setThumbarButtons synchronously here.
+    // Windows has not registered the taskbar HWND yet at this point,
+    // so the call returns true but does nothing. The 'show' event
+    // below fires asynchronously after the window is truly visible
+    // in the taskbar, at which point the delay gives Windows enough
+    // time to finish setting up the taskbar button before we attach.
   }
+
+  // ─── Thumbar: attach after window is truly in taskbar ─────────────
+  // The 'show' event fires asynchronously after the window becomes
+  // visible. The 200ms delay ensures Windows has created the taskbar
+  // button (HWND association) before setThumbarButtons is called.
+  mainWindow.on("show", () => {
+    setTimeout(() => {
+      if (global.updateThumbarButtons && mainWindow && !mainWindow.isDestroyed()) {
+        console.log("[thumbar] Applying buttons after show event + 200ms delay");
+        global.updateThumbarButtons(false);
+      }
+    }, 200);
+  });
+
+  // Re-apply after restore from minimized — Windows can drop the
+  // thumbar when the window is minimized and re-shown.
+  mainWindow.on("restore", () => {
+    setTimeout(() => {
+      if (global.updateThumbarButtons && mainWindow && !mainWindow.isDestroyed()) {
+        const isPlaying = !!global._thumbarIsPlaying;
+        global.updateThumbarButtons(isPlaying);
+      }
+    }, 100);
+  });
 
   mainWindow.once("ready-to-show", () => _showWindow("ready-to-show"));
 
@@ -1096,10 +1124,10 @@ async function ensureThumbarIcons() {
       if (!fs.existsSync(fallbackDir)) {
         fs.mkdirSync(fallbackDir, { recursive: true });
       }
-      const prevSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M10 6 L10 26 M24 6 L12 16 L24 26 Z" fill="#ffffff"/></svg>`;
-      const playSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M8 6 L26 16 L8 26 Z" fill="#ffffff"/></svg>`;
-      const pauseSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="6" width="5" height="20" fill="#ffffff"/><rect x="19" y="6" width="5" height="20" fill="#ffffff"/></svg>`;
-      const nextSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M6 6 L18 16 L6 26 M22 6 L22 26" fill="#ffffff"/></svg>`;
+      const prevSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><rect x="7" y="7" width="3.5" height="18" rx="1.75" fill="white"/><path d="M25 8 L13 16 L25 24 Z" fill="white" stroke="white" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+      const playSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M10 7.5 L25 16 L10 24.5 Z" fill="white" stroke="white" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+      const pauseSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="7" width="5" height="18" rx="2.5" fill="white"/><rect x="19" y="7" width="5" height="18" rx="2.5" fill="white"/></svg>`;
+      const nextSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M7 8 L19 16 L7 24 Z" fill="white" stroke="white" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><rect x="21.5" y="7" width="3.5" height="18" rx="1.75" fill="white"/></svg>`;
 
       const sharp = require("sharp");
       if (!fs.existsSync(fallbackPrev)) await sharp(Buffer.from(prevSvg)).png().toFile(fallbackPrev);
