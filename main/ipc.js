@@ -584,7 +584,9 @@ function saveLibrary(library) {
       insertTrack.run({
         id: track.id,
         title: track.title || "",
-        artist: Array.isArray(track.artist) ? track.artist.join(", ") : track.artist || "",
+        artist: Array.isArray(track.artist)
+          ? track.artist.join(", ")
+          : track.artist || "",
         album: track.album || "",
         genre: track.genre || "",
         year: Number(track.year) || null,
@@ -603,7 +605,10 @@ function saveLibrary(library) {
   let preExistingCovers;
   try {
     preExistingCovers = new Map(
-      db.prepare("SELECT trackId, coverArt FROM track_covers").all().map((r) => [r.trackId, r.coverArt])
+      db
+        .prepare("SELECT trackId, coverArt FROM track_covers")
+        .all()
+        .map((r) => [r.trackId, r.coverArt]),
     );
   } catch (_) {
     preExistingCovers = new Map();
@@ -612,7 +617,9 @@ function saveLibrary(library) {
   tx(library);
 
   if (preExistingCovers.size > 0) {
-    const restoreInsert = db.prepare("INSERT OR IGNORE INTO track_covers (trackId, coverArt) VALUES (?, ?)");
+    const restoreInsert = db.prepare(
+      "INSERT OR IGNORE INTO track_covers (trackId, coverArt) VALUES (?, ?)",
+    );
     const restoreTx = db.transaction(() => {
       for (const track of library) {
         if (!track.coverArt && track._hasCoverArt) {
@@ -636,13 +643,15 @@ function saveLibrary(library) {
 
 function partialSaveLibrary(fullLibrary, newOrUpdatedTracks, removedIds) {
   libraryCache = fullLibrary;
-  _libraryJsonCache = fullLibrary; 
+  _libraryJsonCache = fullLibrary;
   libraryById = new Map(fullLibrary.map((track) => [track.id, track]));
 
   const tx = db.transaction((tracksToUpdate, idsToRemove) => {
     const deleteTrack = db.prepare("DELETE FROM tracks WHERE id = ?");
-    const deleteCover = db.prepare("DELETE FROM track_covers WHERE trackId = ?");
-    
+    const deleteCover = db.prepare(
+      "DELETE FROM track_covers WHERE trackId = ?",
+    );
+
     for (const id of idsToRemove) {
       deleteTrack.run(id);
       deleteCover.run(id);
@@ -659,7 +668,7 @@ function partialSaveLibrary(fullLibrary, newOrUpdatedTracks, removedIds) {
 
     for (const track of tracksToUpdate) {
       const newCoverArt = track.coverArt;
-      
+
       // If updating, preserve existing cover art flag if it had one
       const hasCoverArt = !!(newCoverArt || track._hasCoverArt);
       const { coverArt: _, ...strippedTrack } = track;
@@ -668,7 +677,9 @@ function partialSaveLibrary(fullLibrary, newOrUpdatedTracks, removedIds) {
       insertTrack.run({
         id: track.id,
         title: track.title || "",
-        artist: Array.isArray(track.artist) ? track.artist.join(", ") : track.artist || "",
+        artist: Array.isArray(track.artist)
+          ? track.artist.join(", ")
+          : track.artist || "",
         album: track.album || "",
         genre: track.genre || "",
         year: Number(track.year) || null,
@@ -1755,7 +1766,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       // Clear any tracks from existingMap2 that were in this scan's folder (handles deleted/skipped files)
       const normalizedFolder = folderPath.replace(/\\/g, "/").toLowerCase();
       const removedIds = [];
-      const tracksFromFolder = new Set(tracks.map(t => t.id));
+      const tracksFromFolder = new Set(tracks.map((t) => t.id));
       for (const [id, t] of existingMap2.entries()) {
         if (
           t.filePath &&
@@ -1828,19 +1839,21 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             await new Promise((resolve) => setImmediate(resolve));
           }
         }
-        
+
         // Fast path for small changes: if < 50 new/updated tracks and < 50 removed,
         // do a partial save instead of wiping the whole SQLite table.
         // To compute new/updated tracks, we compare existingLibrary2 size with mergedLibrary.
         // But we actually just processed `tracks` array which has all new + cached tracks for the folder.
         // Since we are scanning a folder, `tracks` can be large if the folder has many cached files.
         // Wait, if `tracks.length` is huge, partial update might be slower than a full transaction?
-        // Actually SQLite `INSERT OR REPLACE` in a transaction is very fast. 
+        // Actually SQLite `INSERT OR REPLACE` in a transaction is very fast.
         // We will just use partial update if `tracks.length <= 50`.
         if (tracks.length <= 50 && removedIds.length <= 50) {
           isPartialUpdate = true;
           partialSaveLibrary(mergedLibrary, tracks, removedIds);
-          console.log(`[library:scan] Used partial DB update (${tracks.length} updated, ${removedIds.length} removed)`);
+          console.log(
+            `[library:scan] Used partial DB update (${tracks.length} updated, ${removedIds.length} removed)`,
+          );
         } else {
           saveLibrary(mergedLibrary);
         }
@@ -1938,7 +1951,11 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       // CHANGED: Also skip manifest rebuild if this was a partial update (< 50 changes)
       // to avoid blocking UI for minutes on large libraries. The UI updates instantly via IPC
       // and the manifest will eventually get rebuilt on next app start or large scan.
-      if (ManifestIPC.isFeatureFlagEnabled() && !nothingChanged && !isPartialUpdate) {
+      if (
+        ManifestIPC.isFeatureFlagEnabled() &&
+        !nothingChanged &&
+        !isPartialUpdate
+      ) {
         const rebuildStart = Date.now();
         setImmediate(async () => {
           try {
@@ -3283,7 +3300,12 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
     "metadata:write-tags",
     async (event, { trackId, filePath, tags }) => {
       try {
-        console.log("[metadata:write-tags] Request received for trackId:", trackId, "filePath:", filePath);
+        console.log(
+          "[metadata:write-tags] Request received for trackId:",
+          trackId,
+          "filePath:",
+          filePath,
+        );
         if (!filePath || !fs.existsSync(filePath)) {
           console.error("[metadata:write-tags] File not found:", filePath);
           return { success: false, error: "File not found" };
@@ -3302,19 +3324,20 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
 
           // Build the ID3 tag object (only include fields the user actually changed)
           const id3Tags = {};
-          if (tags.title  !== undefined) id3Tags.title  = tags.title  || "";
+          if (tags.title !== undefined) id3Tags.title = tags.title || "";
           if (tags.artist !== undefined) id3Tags.artist = tags.artist || "";
-          if (tags.album  !== undefined) id3Tags.album  = tags.album  || "";
-          if (tags.genre  !== undefined) id3Tags.genre  = tags.genre  || "";
-          if (tags.year   !== undefined) id3Tags.year   = tags.year   ? String(tags.year) : "";
+          if (tags.album !== undefined) id3Tags.album = tags.album || "";
+          if (tags.genre !== undefined) id3Tags.genre = tags.genre || "";
+          if (tags.year !== undefined)
+            id3Tags.year = tags.year ? String(tags.year) : "";
 
           // Cover art — coverArt arrives as a data-URI ("data:image/...;base64,...")
           if (tags.coverArt) {
             try {
               const match = tags.coverArt.match(/^data:([^;]+);base64,(.+)$/);
               if (match) {
-                const mime   = match[1];              // e.g. "image/jpeg"
-                const buf    = Buffer.from(match[2], "base64");
+                const mime = match[1]; // e.g. "image/jpeg"
+                const buf = Buffer.from(match[2], "base64");
                 id3Tags.image = {
                   mime,
                   type: { id: 3, name: "front cover" },
@@ -3323,14 +3346,20 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                 };
               }
             } catch (coverErr) {
-              console.warn("[metadata:write-tags] cover art parse failed:", coverErr.message);
+              console.warn(
+                "[metadata:write-tags] cover art parse failed:",
+                coverErr.message,
+              );
             }
           }
 
           // node-id3.update() merges with existing tags; returns true on success
           const written = NodeID3.update(id3Tags, filePath);
           if (written !== true) {
-            console.warn("[metadata:write-tags] node-id3 write returned:", written);
+            console.warn(
+              "[metadata:write-tags] node-id3 write returned:",
+              written,
+            );
           }
         }
         // For FLAC / M4A / OGG / WAV — these formats need separate libraries
@@ -3343,13 +3372,13 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         let updatedTrack = null;
         if (libraryById && libraryById.has(trackId)) {
           const track = libraryById.get(trackId);
-          if (tags.title  !== undefined) track.title  = tags.title;
+          if (tags.title !== undefined) track.title = tags.title;
           if (tags.artist !== undefined) track.artist = tags.artist;
-          if (tags.album  !== undefined) track.album  = tags.album;
-          if (tags.genre  !== undefined) track.genre  = tags.genre;
-          if (tags.year   !== undefined) track.year   = tags.year;
+          if (tags.album !== undefined) track.album = tags.album;
+          if (tags.genre !== undefined) track.genre = tags.genre;
+          if (tags.year !== undefined) track.year = tags.year;
           if (tags.coverArt) {
-            track.coverArt    = tags.coverArt;
+            track.coverArt = tags.coverArt;
             track._hasCoverArt = true;
           }
           updatedTrack = track;
@@ -3362,11 +3391,11 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             if (row) {
               const dbTrack = JSON.parse(row.data);
               Object.assign(dbTrack, {
-                title:  track.title,
+                title: track.title,
                 artist: track.artist,
-                album:  track.album,
-                genre:  track.genre,
-                year:   track.year,
+                album: track.album,
+                genre: track.genre,
+                year: track.year,
                 ...(tags.coverArt
                   ? { coverArt: tags.coverArt, _hasCoverArt: true }
                   : {}),
@@ -3377,14 +3406,48 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
               );
             }
           } catch (dbErr) {
-            console.error("[metadata:write-tags] DB update failed:", dbErr.message);
+            console.error(
+              "[metadata:write-tags] DB update failed:",
+              dbErr.message,
+            );
           }
 
           // We no longer rebuild the binary manifest synchronously here.
           // The renderer applies the metadata edits to its in-memory state instantly,
           // so the UI updates accurately and quickly. The disk manifest will catch up
-          // on the next full app restart or full library scan. This solves the minutes-long 
+          // on the next full app restart or full library scan. This solves the minutes-long
           // freeze when editing tags in large libraries.
+          // ── 3. Sync the binary manifest in the BACKGROUND ──────────────
+          // The renderer's fast startup path reads from library.bin, not
+          // SQLite. Without this, an edited tag looks "saved" in the UI
+          // but reverts to the old value on next launch because the
+          // renderer loads the stale manifest instead of the updated DB
+          // row. We fire this off without awaiting it so the IPC reply
+          // (and the UI) stays instant — the rebuild itself is a single
+          // in-memory buffer build + one atomic file write, done here on
+          // whatever tracks are already parsed in RAM (no re-scan, no
+          // re-read of the DB), so it's cheap even for large libraries.
+          if (ManifestIPC.isFeatureFlagEnabled()) {
+            setImmediate(() => {
+              try {
+                const tracksForManifest =
+                  typeof module.exports.getLibraryForManifest === "function"
+                    ? module.exports.getLibraryForManifest()
+                    : getLibrary();
+                ManifestIPC.rebuildManifest(tracksForManifest).catch((err) => {
+                  console.warn(
+                    "[metadata:write-tags] background manifest resync failed:",
+                    err.message,
+                  );
+                });
+              } catch (syncErr) {
+                console.warn(
+                  "[metadata:write-tags] background manifest resync failed:",
+                  syncErr.message,
+                );
+              }
+            });
+          }
         }
 
         return { success: true, updatedTrack };
