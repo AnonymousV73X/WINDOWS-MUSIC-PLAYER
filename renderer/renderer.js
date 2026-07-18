@@ -9021,7 +9021,7 @@ function renderHelp() {
             <div class="help-item-body">NovaTune supports the following audio formats: <strong>MP3</strong> (.mp3), <strong>FLAC</strong> (.flac), <strong>WAV</strong> (.wav), <strong>OGG Vorbis</strong> (.ogg), <strong>M4A/AAC</strong> (.m4a, .aac), and <strong>WMA</strong> (.wma). Cover art is automatically extracted from file tags and displayed. If no embedded art is found, NovaTune searches for cover images (cover.jpg, folder.jpg, etc.) in the same directory.</div>
 
             <div class="help-item-body">
-            Click the button below to download HQ Music from Spotify, Apple Music, D</div>
+            Click the button below to download HQ Music from Spotify, Apple Music, Deezer.</div>
           </div>
 
           <a href="https://t.me/MusicsHunter" target="_blank" class="help-contact-btn" style="text-decoration:none; color:black; ">
