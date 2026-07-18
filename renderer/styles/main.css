@@ -4778,7 +4778,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   color: var(--text-primary);
   font-size: 11px;
   font-weight: 500;
-  padding: 8px 16px;
+  padding: 8px 12px;
   border-radius: 6px;
   white-space: nowrap;
   pointer-events: none;
