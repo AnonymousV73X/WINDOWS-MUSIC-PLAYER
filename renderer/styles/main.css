@@ -577,7 +577,7 @@ textarea {
 #float-nav-trigger[data-tooltip]:hover::after,
 #lyrics-toggle-btn[data-tooltip]:hover::before,
 #lyrics-toggle-btn[data-tooltip]:hover::after {
-  z-index: 100000;
+  z-index: 100000000;
 }
 #float-nav-trigger[data-tooltip]::before,
 #lyrics-toggle-btn[data-tooltip]::before {
