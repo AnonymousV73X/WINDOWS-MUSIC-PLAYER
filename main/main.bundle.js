@@ -3139,7 +3139,9 @@ var require_ipc = __commonJS({
       }
       tx(library2);
       if (preExistingCovers.size > 0) {
-        const restoreInsert = db.prepare("INSERT OR IGNORE INTO track_covers (trackId, coverArt) VALUES (?, ?)");
+        const restoreInsert = db.prepare(
+          "INSERT OR IGNORE INTO track_covers (trackId, coverArt) VALUES (?, ?)"
+        );
         const restoreTx = db.transaction(() => {
           for (const track of library2) {
             if (!track.coverArt && track._hasCoverArt) {
@@ -3166,7 +3168,9 @@ var require_ipc = __commonJS({
       libraryById = new Map(fullLibrary.map((track) => [track.id, track]));
       const tx = db.transaction((tracksToUpdate, idsToRemove) => {
         const deleteTrack = db.prepare("DELETE FROM tracks WHERE id = ?");
-        const deleteCover = db.prepare("DELETE FROM track_covers WHERE trackId = ?");
+        const deleteCover = db.prepare(
+          "DELETE FROM track_covers WHERE trackId = ?"
+        );
         for (const id of idsToRemove) {
           deleteTrack.run(id);
           deleteCover.run(id);
@@ -3949,7 +3953,9 @@ var require_ipc = __commonJS({
             if (tracks.length <= 50 && removedIds.length <= 50) {
               isPartialUpdate = true;
               partialSaveLibrary(mergedLibrary, tracks, removedIds);
-              console.log(`[library:scan] Used partial DB update (${tracks.length} updated, ${removedIds.length} removed)`);
+              console.log(
+                `[library:scan] Used partial DB update (${tracks.length} updated, ${removedIds.length} removed)`
+              );
             } else {
               saveLibrary(mergedLibrary);
             }
@@ -5025,7 +5031,12 @@ var require_ipc = __commonJS({
         "metadata:write-tags",
         async (event, { trackId, filePath, tags }) => {
           try {
-            console.log("[metadata:write-tags] Request received for trackId:", trackId, "filePath:", filePath);
+            console.log(
+              "[metadata:write-tags] Request received for trackId:",
+              trackId,
+              "filePath:",
+              filePath
+            );
             if (!filePath || !fs.existsSync(filePath)) {
               console.error("[metadata:write-tags] File not found:", filePath);
               return { success: false, error: "File not found" };
@@ -5039,7 +5050,8 @@ var require_ipc = __commonJS({
               if (tags.artist !== void 0) id3Tags.artist = tags.artist || "";
               if (tags.album !== void 0) id3Tags.album = tags.album || "";
               if (tags.genre !== void 0) id3Tags.genre = tags.genre || "";
-              if (tags.year !== void 0) id3Tags.year = tags.year ? String(tags.year) : "";
+              if (tags.year !== void 0)
+                id3Tags.year = tags.year ? String(tags.year) : "";
               if (tags.coverArt) {
                 try {
                   const match = tags.coverArt.match(/^data:([^;]+);base64,(.+)$/);
@@ -5054,12 +5066,18 @@ var require_ipc = __commonJS({
                     };
                   }
                 } catch (coverErr) {
-                  console.warn("[metadata:write-tags] cover art parse failed:", coverErr.message);
+                  console.warn(
+                    "[metadata:write-tags] cover art parse failed:",
+                    coverErr.message
+                  );
                 }
               }
               const written = NodeID3.update(id3Tags, filePath);
               if (written !== true) {
-                console.warn("[metadata:write-tags] node-id3 write returned:", written);
+                console.warn(
+                  "[metadata:write-tags] node-id3 write returned:",
+                  written
+                );
               }
             }
             let updatedTrack = null;
@@ -5093,7 +5111,28 @@ var require_ipc = __commonJS({
                   );
                 }
               } catch (dbErr) {
-                console.error("[metadata:write-tags] DB update failed:", dbErr.message);
+                console.error(
+                  "[metadata:write-tags] DB update failed:",
+                  dbErr.message
+                );
+              }
+              if (ManifestIPC.isFeatureFlagEnabled()) {
+                setImmediate(() => {
+                  try {
+                    const tracksForManifest = typeof module2.exports.getLibraryForManifest === "function" ? module2.exports.getLibraryForManifest() : getLibrary();
+                    ManifestIPC.rebuildManifest(tracksForManifest).catch((err) => {
+                      console.warn(
+                        "[metadata:write-tags] background manifest resync failed:",
+                        err.message
+                      );
+                    });
+                  } catch (syncErr) {
+                    console.warn(
+                      "[metadata:write-tags] background manifest resync failed:",
+                      syncErr.message
+                    );
+                  }
+                });
               }
             }
             return { success: true, updatedTrack };

@@ -33,6 +33,7 @@ const { ensureDirSync } = require("./windowManager");
 // share the app.getPath('userData') resolution timing.
 const ManifestWriter = require("./manifest");
 const ManifestIPC = require("./manifestIPC");
+const TagLib = require("node-taglib-sharp");
 const ManifestReader = require("./manifestReader");
 
 // ─── Supported Audio Formats ────────────────────────────────────────
@@ -3362,11 +3363,49 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             );
           }
         }
-        // For FLAC / M4A / OGG / WAV — these formats need separate libraries
-        // (e.g. flac-metadata, mp4-stream). They are not bundled here yet, so
-        // we fall through to the DB-only path below which at least keeps the
-        // NovaTune library consistent across restarts on the same machine.
-        // TODO: add native tag-write for other formats when needed.
+        // For FLAC / M4A(MP4) / OGG / WAV / APE / WMA — write via
+        // node-taglib-sharp (pure JS, no native build, no ffmpeg required).
+        // This actually persists the tags into the file, same as the mp3
+        // path above, instead of only updating the DB.
+        else {
+          try {
+            const tagFile = TagLib.File.createFromPath(filePath);
+            try {
+              const t = tagFile.tag;
+              if (tags.title !== undefined) t.title = tags.title || "";
+              if (tags.artist !== undefined)
+                t.performers = tags.artist ? [tags.artist] : [];
+              if (tags.album !== undefined) t.album = tags.album || "";
+              if (tags.genre !== undefined)
+                t.genres = tags.genre ? [tags.genre] : [];
+              if (tags.year !== undefined)
+                t.year = tags.year ? parseInt(tags.year, 10) || 0 : 0;
+
+              if (tags.coverArt) {
+                const match = tags.coverArt.match(/^data:([^;]+);base64,(.+)$/);
+                if (match) {
+                  const mime = match[1];
+                  const buf = Buffer.from(match[2], "base64");
+                  const picture = TagLib.Picture.fromData(
+                    TagLib.ByteVector.fromByteArray(buf),
+                  );
+                  picture.mimeType = mime;
+                  picture.type = TagLib.PictureType.FrontCover;
+                  t.pictures = [picture];
+                }
+              }
+
+              tagFile.save();
+            } finally {
+              tagFile.dispose();
+            }
+          } catch (tagLibErr) {
+            console.warn(
+              "[metadata:write-tags] node-taglib-sharp write failed:",
+              tagLibErr.message,
+            );
+          }
+        }
 
         // ── 2. Update in-memory library & SQLite so the UI is instant ─────
         let updatedTrack = null;
