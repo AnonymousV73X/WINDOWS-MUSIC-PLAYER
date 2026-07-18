@@ -2599,7 +2599,9 @@ function _wireSidebar() {
   // Task 7: Active Lyrics ±1s timing adjustment buttons
   const lyricsOffsetDec = $("lyrics-offset-dec");
   if (lyricsOffsetDec) {
-    lyricsOffsetDec.addEventListener("click", () => _applyLyricsOffsetDelta(-1));
+    lyricsOffsetDec.addEventListener("click", () =>
+      _applyLyricsOffsetDelta(-1),
+    );
   }
   const lyricsOffsetInc = $("lyrics-offset-inc");
   if (lyricsOffsetInc) {
