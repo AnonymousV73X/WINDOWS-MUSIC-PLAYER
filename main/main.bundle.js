@@ -37995,6 +37995,18 @@ var require_ipc = __commonJS({
         return false;
       }
     }
+    var _settingsFileQueue = Promise.resolve();
+    function withSettingsFile(mutator) {
+      const run = _settingsFileQueue.then(() => {
+        const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+        const result = mutator(settings);
+        writeJSON(SETTINGS_FILE, settings);
+        return result;
+      });
+      _settingsFileQueue = run.catch(() => {
+      });
+      return run;
+    }
     var AUDIO_EXTENSIONS = /* @__PURE__ */ new Set([
       ".mp3",
       ".flac",
@@ -38634,13 +38646,13 @@ var require_ipc = __commonJS({
             message: "Scanning for audio files..."
           });
           try {
-            const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
-            const scanFolders = Array.isArray(settings.scanFolders) ? settings.scanFolders : [];
-            if (!scanFolders.includes(folderPath)) {
-              scanFolders.push(folderPath);
-              settings.scanFolders = scanFolders;
-              writeJSON(SETTINGS_FILE, settings);
-            }
+            await withSettingsFile((settings) => {
+              const scanFolders = Array.isArray(settings.scanFolders) ? settings.scanFolders : [];
+              if (!scanFolders.includes(folderPath)) {
+                scanFolders.push(folderPath);
+                settings.scanFolders = scanFolders;
+              }
+            });
           } catch (err) {
             console.error("Failed to save scanFolders settings:", err.message);
           }
@@ -38687,47 +38699,44 @@ var require_ipc = __commonJS({
             useWorker = false;
             workerPool = [];
           }
-          const scanSettings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
-          if (!scanSettings._failedFilesResetV110) {
-            scanSettings._failedFiles = {};
-            scanSettings._failedFilesResetV110 = true;
-            writeJSON(SETTINGS_FILE, scanSettings);
-            console.log(
-              "[library:scan] v1.1.0 reset: cleared _failedFiles cache (one-time migration)"
-            );
-          }
-          if (!scanSettings._failedFilesResetV113) {
-            scanSettings._failedFiles = {};
-            scanSettings._failedFilesResetV113 = true;
-            writeJSON(SETTINGS_FILE, scanSettings);
-            console.log(
-              "[library:scan] v1.1.3 reset: cleared _failedFiles cache for underscored-file re-scan"
-            );
-          }
-          if (!scanSettings._failedFilesResetV115) {
-            scanSettings._failedFiles = {};
-            scanSettings._failedFilesResetV115 = true;
-            scanSettings._failedFilesLastRetry = Date.now();
-            writeJSON(SETTINGS_FILE, scanSettings);
-            console.log(
-              "[library:scan] v1.1.5 reset: cleared _failedFiles cache for exhaustive re-scan"
-            );
-          }
-          if (!scanSettings._v116UnderscoreRescan) {
-            scanSettings._v116UnderscoreRescan = true;
-            writeJSON(SETTINGS_FILE, scanSettings);
-            console.log(
-              "[library:scan] v1.1.6: forcing re-scan of underscored files to fix raw-filename titles"
-            );
-          }
-          if (!scanSettings._failedFilesLastRetry || Date.now() - scanSettings._failedFilesLastRetry > 30 * 24 * 60 * 60 * 1e3) {
-            scanSettings._failedFiles = {};
-            scanSettings._failedFilesLastRetry = Date.now();
-            writeJSON(SETTINGS_FILE, scanSettings);
-            console.log(
-              "[library:scan] v1.1.5 periodic re-check: cleared _failedFiles cache (30-day cycle)"
-            );
-          }
+          const scanSettings = await withSettingsFile((scanSettings2) => {
+            if (!scanSettings2._failedFilesResetV110) {
+              scanSettings2._failedFiles = {};
+              scanSettings2._failedFilesResetV110 = true;
+              console.log(
+                "[library:scan] v1.1.0 reset: cleared _failedFiles cache (one-time migration)"
+              );
+            }
+            if (!scanSettings2._failedFilesResetV113) {
+              scanSettings2._failedFiles = {};
+              scanSettings2._failedFilesResetV113 = true;
+              console.log(
+                "[library:scan] v1.1.3 reset: cleared _failedFiles cache for underscored-file re-scan"
+              );
+            }
+            if (!scanSettings2._failedFilesResetV115) {
+              scanSettings2._failedFiles = {};
+              scanSettings2._failedFilesResetV115 = true;
+              scanSettings2._failedFilesLastRetry = Date.now();
+              console.log(
+                "[library:scan] v1.1.5 reset: cleared _failedFiles cache for exhaustive re-scan"
+              );
+            }
+            if (!scanSettings2._v116UnderscoreRescan) {
+              scanSettings2._v116UnderscoreRescan = true;
+              console.log(
+                "[library:scan] v1.1.6: forcing re-scan of underscored files to fix raw-filename titles"
+              );
+            }
+            if (!scanSettings2._failedFilesLastRetry || Date.now() - scanSettings2._failedFilesLastRetry > 30 * 24 * 60 * 60 * 1e3) {
+              scanSettings2._failedFiles = {};
+              scanSettings2._failedFilesLastRetry = Date.now();
+              console.log(
+                "[library:scan] v1.1.5 periodic re-check: cleared _failedFiles cache (30-day cycle)"
+              );
+            }
+            return scanSettings2;
+          });
           const failedFiles = scanSettings._failedFiles && typeof scanSettings._failedFiles === "object" ? scanSettings._failedFiles : {};
           const newlyFailedFiles = {};
           const toScan = [];
@@ -39228,6 +39237,103 @@ var require_ipc = __commonJS({
             stage: "error",
             message: `Scan failed: ${err.message}`
           });
+          return { success: false, error: err.message };
+        }
+      });
+      ipcMain.handle("library:quick-scan", async (event, folderPath) => {
+        const t0 = Date.now();
+        try {
+          const files = await fileScanner.scanDirectory(folderPath);
+          const existingLibrary = getLibrary();
+          const existingPaths = new Set(existingLibrary.map((t) => t.filePath));
+          const newFiles = files.filter((f) => !existingPaths.has(f.filePath));
+          if (newFiles.length === 0) {
+            return {
+              success: true,
+              newTracks: 0,
+              tracks: existingLibrary,
+              elapsedMs: Date.now() - t0
+            };
+          }
+          console.log(
+            `[library:quick-scan] ${newFiles.length} new file(s) in ${folderPath}`
+          );
+          const coverCacheDir = path.join(app.getPath("userData"), "cached_covers");
+          let worker = null;
+          try {
+            worker = new MetadataWorker();
+            worker.setCoverCacheDir(coverCacheDir);
+          } catch (err) {
+            console.warn(
+              "[library:quick-scan] MetadataWorker unavailable, using main thread:",
+              err.message
+            );
+          }
+          const newTracks = [];
+          for (const file of newFiles) {
+            let metadata;
+            try {
+              metadata = worker ? await worker.readMetadata(file.filePath, /* @__PURE__ */ new Map()) : await metadataReader.readMetadata(file.filePath, /* @__PURE__ */ new Map());
+            } catch (err) {
+              console.warn(
+                "[library:quick-scan] metadata read failed for",
+                file.filePath,
+                err.message
+              );
+              continue;
+            }
+            newTracks.push({
+              id: generateTrackId(file.filePath),
+              filePath: file.filePath,
+              fileName: file.fileName,
+              title: metadata.title || path.basename(file.fileName, path.extname(file.fileName)),
+              artist: metadata.artist || "Unknown Artist",
+              album: metadata.album || "Unknown Album",
+              albumArtist: metadata.albumArtist || "",
+              genre: metadata.genre || "",
+              year: metadata.year || 0,
+              trackNumber: metadata.trackNumber || 0,
+              discNumber: metadata.discNumber || 0,
+              duration: metadata.duration || 0,
+              bitrate: metadata.bitrate || 0,
+              sampleRate: metadata.sampleRate || 0,
+              channels: metadata.channels || 2,
+              format: metadata.format || path.extname(file.fileName).replace(".", "").toUpperCase(),
+              fileSize: file.fileSize || metadata.fileSize || 0,
+              coverArt: metadata.coverArt || null,
+              _hasCoverArt: !!metadata.coverArt,
+              dateAdded: file.birthTime || file.modifiedTime || Date.now(),
+              dateModified: file.modifiedTime || Date.now()
+            });
+          }
+          if (worker && typeof worker.terminate === "function") {
+            try {
+              worker.terminate();
+            } catch (_) {
+            }
+          }
+          const mergedLibrary = [...newTracks, ...existingLibrary];
+          saveLibrary(mergedLibrary);
+          setImmediate(() => {
+            ManifestIPC.rebuildManifest(mergedLibrary).catch((err) => {
+              console.warn(
+                "[library:quick-scan] background manifest resync failed:",
+                err.message
+              );
+            });
+          });
+          const elapsedMs = Date.now() - t0;
+          console.log(
+            `[library:quick-scan] Added ${newTracks.length} track(s) in ${elapsedMs}ms`
+          );
+          return {
+            success: true,
+            newTracks: newTracks.length,
+            tracks: mergedLibrary,
+            elapsedMs
+          };
+        } catch (err) {
+          console.error("[library:quick-scan] Error:", err);
           return { success: false, error: err.message };
         }
       });
@@ -40295,6 +40401,16 @@ var require_ipc = __commonJS({
                 );
               }
             }
+            let freshMtime = null;
+            try {
+              const stat = fs.statSync(filePath);
+              freshMtime = stat.mtimeMs;
+            } catch (statErr) {
+              console.warn(
+                "[metadata:write-tags] post-write stat failed:",
+                statErr.message
+              );
+            }
             let updatedTrack = null;
             if (libraryById && libraryById.has(trackId)) {
               const track = libraryById.get(trackId);
@@ -40307,6 +40423,7 @@ var require_ipc = __commonJS({
                 track.coverArt = tags.coverArt;
                 track._hasCoverArt = true;
               }
+              if (freshMtime !== null) track.dateModified = freshMtime;
               updatedTrack = track;
               try {
                 const row = db.prepare("SELECT data FROM tracks WHERE id = ?").get(trackId);
@@ -40318,6 +40435,7 @@ var require_ipc = __commonJS({
                     album: track.album,
                     genre: track.genre,
                     year: track.year,
+                    ...freshMtime !== null ? { dateModified: freshMtime } : {},
                     ...tags.coverArt ? { coverArt: tags.coverArt, _hasCoverArt: true } : {}
                   });
                   db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(
@@ -40381,9 +40499,9 @@ var require_ipc = __commonJS({
       });
       ipcMain.handle("settings:set", async (event, key, value) => {
         try {
-          const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
-          settings[key] = value;
-          writeJSON(SETTINGS_FILE, settings);
+          await withSettingsFile((settings) => {
+            settings[key] = value;
+          });
           return { success: true };
         } catch (err) {
           return { success: false, error: err.message };

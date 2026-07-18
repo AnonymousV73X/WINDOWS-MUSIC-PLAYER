@@ -457,6 +457,28 @@ textarea {
   z-index: 100;
   border: 1px solid #242424;
   position: relative;
+  /* Task 3: Sidebar overflow fix — nav items were spilling outside the
+     sidebar card on smaller windows / with many nav sections instead of
+     scrolling. The sidebar is a fixed-height flex child of the
+     (height:100vh, overflow:hidden) body, so it's safe to let it manage
+     its own vertical scroll region here. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #333 transparent;
+}
+
+.sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .sidebar-search {
@@ -860,6 +882,35 @@ textarea {
   width: 15px;
   height: 15px;
   flex-shrink: 0;
+}
+
+/* Task 4: Lyrics pill click animation — a quick squash/bounce + glowing
+   ring pulse so the toggle feels responsive when tapped. Applied as a
+   one-shot class by toggleLyricsPanel() and removed on animationend. */
+@keyframes lyrics-pill-pop {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--green, #1ed760) 55%, transparent);
+  }
+  35% {
+    transform: scale(0.9);
+  }
+  60% {
+    transform: scale(1.08);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--green, #1ed760) 0%, transparent);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.lyrics-toggle-btn.lyrics-pill-pop {
+  animation: lyrics-pill-pop 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.lyrics-toggle-btn.lyrics-pill-pop svg {
+  animation: lyrics-pill-pop 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .sort-label {
@@ -1739,6 +1790,57 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   color: var(--text-muted);
   border-color: #2a2a2a;
   opacity: 0.9;
+}
+
+/* Task 7: Active Lyrics ±1s timing adjustment controls */
+.lyrics-sync-controls {
+  position: absolute;
+  bottom: 58px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #1f1f1f;
+  border: 1px solid #333;
+  border-radius: 20px;
+  padding: 4px 6px;
+  z-index: 10;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+.lyrics-offset-btn {
+  background: var(--surface-2, #2a2a2a);
+  border: 1px solid #3a3a3a;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: inherit;
+  border-radius: 14px;
+  padding: 4px 10px;
+  cursor: default;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    transform 0.1s;
+}
+
+.lyrics-offset-btn:hover {
+  background: var(--surface-3, #333);
+  border-color: var(--green, #1ed760);
+}
+
+.lyrics-offset-btn:active {
+  transform: scale(0.94);
+}
+
+.lyrics-offset-value {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 34px;
+  text-align: center;
+  letter-spacing: 0.3px;
 }
 
 .np-overlay {
@@ -6142,6 +6244,33 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 .sidebar-refresh-btn.spinning svg {
   animation: spin 1s linear infinite;
   color: var(--green);
+}
+
+/* BUGFIX: these two buttons sit right at the sidebar's right edge, and
+   the default [data-tooltip] rule centers the tooltip on the element
+   (left:50% + translateX(-50%)). That pushes the tooltip text past the
+   sidebar's right boundary, where it now gets clipped by the
+   overflow-x:hidden we added to .sidebar for scrolling. Right-anchor
+   the tooltip to these two buttons instead of centering it, so it
+   grows leftward into the sidebar (where there's room) rather than
+   rightward out of it.  Still a CSS-only tooltip, not the native
+   title-attribute one. */
+.sidebar-refresh-btn[data-tooltip]::before {
+  left: auto;
+  right: 0;
+  transform: translateY(4px);
+  max-width: 200px;
+  white-space: normal;
+  text-align: right;
+}
+.sidebar-refresh-btn[data-tooltip]::after {
+  left: auto;
+  right: 6px;
+  transform: translateY(4px);
+}
+.sidebar-refresh-btn[data-tooltip]:hover::before,
+.sidebar-refresh-btn[data-tooltip]:hover::after {
+  transform: translateY(0);
 }
 
 /* ── Album / Artist card hover play button ─────────────────────── */

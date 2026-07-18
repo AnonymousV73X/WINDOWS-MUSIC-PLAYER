@@ -233,7 +233,14 @@
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
           <span id="sidebar-folder-name" class="sidebar-folder-name">—</span>
-          <button class="sidebar-refresh-btn" id="sidebar-refresh-btn" data-tooltip="Refresh">
+          <button class="sidebar-refresh-btn" id="sidebar-quick-refresh-btn" data-tooltip="Quick refresh (new songs only)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+              stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+          <button class="sidebar-refresh-btn" id="sidebar-refresh-btn" data-tooltip="Full refresh">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
               stroke-linejoin="round">
               <polyline points="23 4 23 10 17 10" />
@@ -415,6 +422,11 @@
       </div>
       <div class="lyrics-body" id="lyrics-body">
         <div class="lyric-line" style="color:var(--text-muted);">No track playing</div>
+      </div>
+      <div class="lyrics-sync-controls" id="lyrics-sync-controls" style="display:none;">
+        <button class="lyrics-offset-btn" id="lyrics-offset-dec" data-tooltip="Lyrics appearing late? Shift earlier">-1s</button>
+        <span class="lyrics-offset-value" id="lyrics-offset-value">0.0s</span>
+        <button class="lyrics-offset-btn" id="lyrics-offset-inc" data-tooltip="Lyrics appearing early? Shift later">+1s</button>
       </div>
       <div class="synced-badge" id="synced-badge" style="display:none;">Synced</div>
     </aside>

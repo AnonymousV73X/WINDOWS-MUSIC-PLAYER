@@ -2595,6 +2595,16 @@ function _wireSidebar() {
     lyricsEdit.addEventListener("click", () => openLyricsEditor());
   }
 
+  // Task 7: Active Lyrics ±1s timing adjustment buttons
+  const lyricsOffsetDec = $("lyrics-offset-dec");
+  if (lyricsOffsetDec) {
+    lyricsOffsetDec.addEventListener("click", () => _applyLyricsOffsetDelta(-1));
+  }
+  const lyricsOffsetInc = $("lyrics-offset-inc");
+  if (lyricsOffsetInc) {
+    lyricsOffsetInc.addEventListener("click", () => _applyLyricsOffsetDelta(1));
+  }
+
   $$(".nav-item[data-section]").forEach((item) => {
     item.addEventListener("click", () => {
       $$(".nav-item").forEach((n) => {
@@ -2624,6 +2634,22 @@ function toggleLyricsPanel() {
   if (!state.currentTrack) return;
   const lyricsPanel = $("lyrics-panel");
   if (!lyricsPanel) return;
+  // Task 4: Cool click animation on the Lyrics pill. Re-triggering a CSS
+  // animation requires forcing a reflow between removing and re-adding
+  // the class (otherwise a rapid second click is a no-op because the
+  // class never actually "changes"). We clean up via animationend so
+  // repeated rapid clicks don't stack listeners or leave a stuck class.
+  const lyricsToggleBtn = $("lyrics-toggle-btn");
+  if (lyricsToggleBtn) {
+    lyricsToggleBtn.classList.remove("lyrics-pill-pop");
+    void lyricsToggleBtn.offsetWidth; // force reflow
+    lyricsToggleBtn.classList.add("lyrics-pill-pop");
+    lyricsToggleBtn.addEventListener(
+      "animationend",
+      () => lyricsToggleBtn.classList.remove("lyrics-pill-pop"),
+      { once: true },
+    );
+  }
   if (lyricsPanel.classList.contains("closed")) {
     openLyricsPanel();
   } else {
@@ -3110,6 +3136,53 @@ function _wireAddFolder() {
       console.log("[Refresh] Library updated (changes detected)");
     } else {
       console.log("[Refresh] No changes — skipped library reload");
+    }
+  });
+
+  // Task 2: Quick refresh — append-only, new songs + cover art only.
+  // Skips mtime-checking every existing file; only reads metadata for
+  // files that aren't in the library yet. Finishes in ~1s for the
+  // common case of zero or a few new songs.
+  $("sidebar-quick-refresh-btn")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const btn = e.currentTarget;
+    const scanFolders = Array.isArray(state.settings.scanFolders)
+      ? state.settings.scanFolders
+      : [];
+    if (scanFolders.length === 0) return;
+
+    btn.classList.add("spinning");
+    btn.dataset.tooltip = "Checking for new songs...";
+
+    let totalNew = 0;
+    try {
+      for (const folderPath of scanFolders) {
+        const result = await window.novaAPI.invoke(
+          "library:quick-scan",
+          folderPath,
+        );
+        if (result && result.success) {
+          totalNew += result.newTracks || 0;
+          console.log(
+            `[QuickRefresh] ${folderPath}: +${result.newTracks} new in ${result.elapsedMs}ms`,
+          );
+        } else {
+          console.warn("[QuickRefresh] Failed for", folderPath, result?.error);
+        }
+      }
+    } catch (err) {
+      console.error("[QuickRefresh] Error:", err);
+    } finally {
+      btn.classList.remove("spinning");
+      btn.dataset.tooltip = "Quick refresh (new songs only)";
+    }
+
+    if (totalNew > 0) {
+      await _partialLibraryUpdate();
+      _updateSidebarFolderInfo();
+      console.log(`[QuickRefresh] Added ${totalNew} new track(s)`);
+    } else {
+      console.log("[QuickRefresh] No new songs found");
     }
   });
 
@@ -5691,7 +5764,31 @@ async function _loadRecentPlayed() {
     ? state.settings.recentlyPlayed
     : [];
   const byId = new Map(state.tracks.map((track) => [track.id, track]));
-  state.recentlyPlayed = ids.map((id) => byId.get(id)).filter(Boolean);
+
+  // BUGFIX (Task 5 — Recently Played not surviving restart for large
+  // libraries): _loadLibrary only hydrates state.tracks with the FIRST
+  // PAGE (500 tracks) at this point in startup; the rest load in the
+  // background. A recently-played track that isn't in that first page
+  // was silently `.filter(Boolean)`-ed out here, so on every restart the
+  // Recently Played list would lose any entry outside the first page —
+  // even though the ids themselves were correctly persisted to
+  // settings.json. Fetch the missing ones individually via the same
+  // library:get-by-id lookup already used to restore the last-played
+  // queue track below, instead of dropping them.
+  const resolved = await Promise.all(
+    ids.map(async (id) => {
+      const cached = byId.get(id);
+      if (cached) return cached;
+      try {
+        const res = await window.novaAPI.invoke("library:get-by-id", id);
+        if (res && res.success && res.track) return res.track;
+      } catch (err) {
+        console.warn("[RecentlyPlayed] Failed to resolve track", id, err);
+      }
+      return null;
+    }),
+  );
+  state.recentlyPlayed = resolved.filter(Boolean);
 
   const saved = state.settings._queue;
   if (saved && saved.id) {
@@ -12844,6 +12941,31 @@ let lyricsData = [];
 let syncedLyrics = null;
 let lastActiveIdx = -1;
 let lyricsTrackId = null;
+// Task 7: Active Lyrics ±1s timing adjustment. Session-scoped (like most
+// desktop players' manual sync nudge) — resets to 0 on every new track
+// since a per-track offset is a property of that specific sync data's
+// quality/version, not something that should silently carry over and
+// mis-sync the next song.
+let lyricsOffsetSec = 0;
+
+function _applyLyricsOffsetDelta(deltaSec) {
+  lyricsOffsetSec = Math.round((lyricsOffsetSec + deltaSec) * 10) / 10;
+  const valueEl = $("lyrics-offset-value");
+  if (valueEl) {
+    const sign = lyricsOffsetSec > 0 ? "+" : "";
+    valueEl.textContent = `${sign}${lyricsOffsetSec.toFixed(1)}s`;
+  }
+  // Force an immediate re-highlight at the new effective time instead of
+  // waiting for the next timeupdate tick, so the nudge feels instant.
+  lastActiveIdx = -2; // sentinel guaranteed to differ from any real index
+  _updateLyricsHighlight(audioEngine.getCurrentTime());
+}
+
+function _resetLyricsOffset() {
+  lyricsOffsetSec = 0;
+  const valueEl = $("lyrics-offset-value");
+  if (valueEl) valueEl.textContent = "0.0s";
+}
 
 // ─── Lyrics Prefetch ──────────────────────────────────────────────
 // When the user clicks a track, we fire the LRCLIB fetch immediately,
@@ -12892,8 +13014,7 @@ async function _fetchLyrics(track) {
   lyricsBody.innerHTML =
     '<div class="lyric-line" style="margin-top:30px;">Loading ...</div>';
   lastActiveIdx = -1; // Reset active lyric index
-
-  // ── 1. In-memory cache (instant — from previous play or manual save) ──
+  _resetLyricsOffset();
   const cachedPlain = track.plainLyrics || "";
   const cachedSynced = track.syncedLyrics || "";
   if (cachedPlain || cachedSynced) {
@@ -13201,6 +13322,10 @@ function _updateSyncedBadge(synced) {
   if (lBody) lBody.classList.toggle("unsynced-scroll", !isSynced);
   const ovScroll = $("ov-lyrics-scroll");
   if (ovScroll) ovScroll.classList.toggle("unsynced-scroll", !isSynced);
+
+  // Task 7: the ±1s nudge only makes sense for time-synced lyrics.
+  const syncControls = $("lyrics-sync-controls");
+  if (syncControls) syncControls.style.display = isSynced ? "flex" : "none";
 }
 
 // ── Manual-scroll detection for lyrics containers ──────────────────
@@ -13387,9 +13512,14 @@ function _updateLyricsHighlight(currentTime) {
     return;
   }
 
+  // Task 7: apply the user's manual ±1s sync nudge. Positive offset means
+  // "lyrics were appearing too early" → treat playback as further along
+  // than it is, so later lines light up sooner relative to the audio.
+  const adjustedTime = currentTime + lyricsOffsetSec;
+
   let activeIdx = -1;
   for (let i = syncedLyrics.length - 1; i >= 0; i--) {
-    if (currentTime >= syncedLyrics[i].time) {
+    if (adjustedTime >= syncedLyrics[i].time) {
       activeIdx = i;
       break;
     }

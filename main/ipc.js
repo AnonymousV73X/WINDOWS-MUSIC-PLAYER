@@ -155,6 +155,37 @@ function writeJSON(filePath, data) {
   }
 }
 
+// ── Task 6: Serialized settings.json read-modify-write queue ──────────
+// BUGFIX (font / other settings reverting after Refresh): many handlers
+// (settings:set, library:scan's scanFolders bookkeeping, the _failedFiles
+// migration writes, etc.) each independently did:
+//   const settings = readJSON(SETTINGS_FILE, ...);
+//   settings.someKey = value;
+//   writeJSON(SETTINGS_FILE, settings);
+// Because library:scan is async and can run for seconds, if the user
+// changed a setting (e.g. picked a font) WHILE a scan's read-modify-write
+// was in flight, the scan's write — built from a settings.json snapshot
+// taken BEFORE the font change — would land last and silently overwrite
+// the font change with the stale value. This is a classic lost-update
+// race, not something you can fix by writing to disk "more carefully" in
+// just one spot — every read-modify-write site needs to be serialized
+// against every other one. withSettingsFile() below chains all mutations
+// onto a single promise queue so each one always reads the settings file
+// AFTER the previous mutation's write has completed, never before it.
+let _settingsFileQueue = Promise.resolve();
+function withSettingsFile(mutator) {
+  const run = _settingsFileQueue.then(() => {
+    const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+    const result = mutator(settings);
+    writeJSON(SETTINGS_FILE, settings);
+    return result;
+  });
+  // Swallow errors in the queue chain itself so one failed mutation
+  // doesn't permanently wedge every future settings write.
+  _settingsFileQueue = run.catch(() => {});
+  return run;
+}
+
 const AUDIO_EXTENSIONS = new Set([
   ".mp3",
   ".flac",
@@ -1093,15 +1124,15 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
 
       // Save folder to settings
       try {
-        const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
-        const scanFolders = Array.isArray(settings.scanFolders)
-          ? settings.scanFolders
-          : [];
-        if (!scanFolders.includes(folderPath)) {
-          scanFolders.push(folderPath);
-          settings.scanFolders = scanFolders;
-          writeJSON(SETTINGS_FILE, settings);
-        }
+        await withSettingsFile((settings) => {
+          const scanFolders = Array.isArray(settings.scanFolders)
+            ? settings.scanFolders
+            : [];
+          if (!scanFolders.includes(folderPath)) {
+            scanFolders.push(folderPath);
+            settings.scanFolders = scanFolders;
+          }
+        });
       } catch (err) {
         console.error("Failed to save scanFolders settings:", err.message);
       }
@@ -1179,82 +1210,53 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       // The failed cache stores { filePath: mtime }. If the file's mtime
       // changes (user replaced the corrupt file with a good one), we
       // re-try it.
-      const scanSettings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
-      // v1.1.0 EXHAUSTIVE SCANNER FIX: One-time reset of the _failedFiles
-      // cache. Files previously rejected as "0:00" (mostly YouTube rips
-      // with corrupt headers like `don_toliver_high_unreleased__yaxBLgIoHuI_140.mp3`)
-      // are now recoverable via the new fallback path in
-      // metadataReader._fallbackMetadata (parses underscore names + estimates
-      // duration from file size). Without this reset, those files would
-      // remain permanently blacklisted.
-      if (!scanSettings._failedFilesResetV110) {
-        scanSettings._failedFiles = {};
-        scanSettings._failedFilesResetV110 = true;
-        writeJSON(SETTINGS_FILE, scanSettings);
-        console.log(
-          "[library:scan] v1.1.0 reset: cleared _failedFiles cache (one-time migration)",
-        );
-      }
-      // v1.1.3 — Force re-scan of underscored files so they pick up the
-      // new artist-splitting parser. We do this by clearing the failedFiles
-      // cache (which may contain underscored files from the v1.1.0 run that
-      // had "Unknown Artist") AND by bumping the _failedFilesResetV113 flag.
-      // This is a ONE-TIME migration — after this scan, the flag prevents
-      // re-running.
-      if (!scanSettings._failedFilesResetV113) {
-        scanSettings._failedFiles = {};
-        scanSettings._failedFilesResetV113 = true;
-        writeJSON(SETTINGS_FILE, scanSettings);
-        console.log(
-          "[library:scan] v1.1.3 reset: cleared _failedFiles cache for underscored-file re-scan",
-        );
-      }
-      // v1.1.5 EXHAUSTIVE SCANNER: Another one-time reset of _failedFiles.
-      // The v1.1.0–v1.1.4 estimators still rejected some YouTube rips
-      // because the worker thread's internal _fallbackMetadata didn't
-      // have knownArtists, and because some files with NO underscores
-      // but corrupt headers were still being blacklisted. v1.1.5 fixes
-      // both issues (Fix B + Fix C below), so we clear _failedFiles one
-      // more time to give every rejected file a fresh chance.
-      if (!scanSettings._failedFilesResetV115) {
-        scanSettings._failedFiles = {};
-        scanSettings._failedFilesResetV115 = true;
-        scanSettings._failedFilesLastRetry = Date.now();
-        writeJSON(SETTINGS_FILE, scanSettings);
-        console.log(
-          "[library:scan] v1.1.5 reset: cleared _failedFiles cache for exhaustive re-scan",
-        );
-      }
-      // v1.1.6 EXHAUSTIVE SCANNER: Force re-scan of underscored files
-      // that were previously added with the RAW FILENAME as the title
-      // (because music-metadata succeeded but returned empty title/artist).
-      // v1.1.6 now runs _fallbackMetadata even when duration > 0, so these
-      // files get proper parsed titles like "High (Unreleased)" instead of
-      // "don_toliver_high_unreleased__yaxBLgIoHuI_140".
-      if (!scanSettings._v116UnderscoreRescan) {
-        scanSettings._v116UnderscoreRescan = true;
-        writeJSON(SETTINGS_FILE, scanSettings);
-        console.log(
-          "[library:scan] v1.1.6: forcing re-scan of underscored files to fix raw-filename titles",
-        );
-      }
-      if (
-        !scanSettings._failedFilesLastRetry ||
-        Date.now() - scanSettings._failedFilesLastRetry >
-          30 * 24 * 60 * 60 * 1000
-      ) {
-        // v1.1.5 PERIODIC RE-CHECK: Clear _failedFiles every 30 days so
-        // files that were previously rejected get another chance. This
-        // makes the scanner truly exhaustive over time — if the estimator
-        // logic improves, or if a file was temporarily corrupt (e.g.
-        // partially downloaded), it gets re-tried.
-        scanSettings._failedFiles = {};
-        scanSettings._failedFilesLastRetry = Date.now();
-        writeJSON(SETTINGS_FILE, scanSettings);
-        console.log(
-          "[library:scan] v1.1.5 periodic re-check: cleared _failedFiles cache (30-day cycle)",
-        );
-      }
+      // BUGFIX (Task 6): this used to be ~5 separate readJSON+writeJSON
+      // round trips, each racing against any other settings write (e.g.
+      // a font change) that could sneak in between them. Collapsed into
+      // a single withSettingsFile() mutation so it's one atomic step in
+      // the serialized settings queue instead of five.
+      const scanSettings = await withSettingsFile((scanSettings) => {
+        if (!scanSettings._failedFilesResetV110) {
+          scanSettings._failedFiles = {};
+          scanSettings._failedFilesResetV110 = true;
+          console.log(
+            "[library:scan] v1.1.0 reset: cleared _failedFiles cache (one-time migration)",
+          );
+        }
+        if (!scanSettings._failedFilesResetV113) {
+          scanSettings._failedFiles = {};
+          scanSettings._failedFilesResetV113 = true;
+          console.log(
+            "[library:scan] v1.1.3 reset: cleared _failedFiles cache for underscored-file re-scan",
+          );
+        }
+        if (!scanSettings._failedFilesResetV115) {
+          scanSettings._failedFiles = {};
+          scanSettings._failedFilesResetV115 = true;
+          scanSettings._failedFilesLastRetry = Date.now();
+          console.log(
+            "[library:scan] v1.1.5 reset: cleared _failedFiles cache for exhaustive re-scan",
+          );
+        }
+        if (!scanSettings._v116UnderscoreRescan) {
+          scanSettings._v116UnderscoreRescan = true;
+          console.log(
+            "[library:scan] v1.1.6: forcing re-scan of underscored files to fix raw-filename titles",
+          );
+        }
+        if (
+          !scanSettings._failedFilesLastRetry ||
+          Date.now() - scanSettings._failedFilesLastRetry >
+            30 * 24 * 60 * 60 * 1000
+        ) {
+          scanSettings._failedFiles = {};
+          scanSettings._failedFilesLastRetry = Date.now();
+          console.log(
+            "[library:scan] v1.1.5 periodic re-check: cleared _failedFiles cache (30-day cycle)",
+          );
+        }
+        return scanSettings;
+      });
       const failedFiles =
         scanSettings._failedFiles &&
         typeof scanSettings._failedFiles === "object"
@@ -1990,6 +1992,135 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         stage: "error",
         message: `Scan failed: ${err.message}`,
       });
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ─── Task 2: FAST append-only refresh ─────────────────────────────
+  // Unlike library:scan, this does NOT stat/mtime-check every existing
+  // file, does NOT run any of the legacy _failedFiles / underscore
+  // re-scan migrations, and does NOT re-read metadata for anything
+  // already in the DB. It only:
+  //   1. Walks the folder for the current file list (fast, same
+  //      directory-mtime short-circuit fileScanner already uses).
+  //   2. Diffs that list against existing filePaths in the DB.
+  //   3. Reads metadata (incl. cover art) ONLY for brand-new files.
+  //   4. Appends them to the library and rebuilds the manifest.
+  // For a folder with no new songs this is a handful of stats and
+  // finishes in well under a second; for N new songs it costs exactly
+  // N metadata reads, not a full-library re-scan.
+  ipcMain.handle("library:quick-scan", async (event, folderPath) => {
+    const t0 = Date.now();
+    try {
+      const files = await fileScanner.scanDirectory(folderPath);
+      const existingLibrary = getLibrary();
+      const existingPaths = new Set(existingLibrary.map((t) => t.filePath));
+
+      const newFiles = files.filter((f) => !existingPaths.has(f.filePath));
+
+      if (newFiles.length === 0) {
+        return {
+          success: true,
+          newTracks: 0,
+          tracks: existingLibrary,
+          elapsedMs: Date.now() - t0,
+        };
+      }
+
+      console.log(
+        `[library:quick-scan] ${newFiles.length} new file(s) in ${folderPath}`,
+      );
+
+      const coverCacheDir = path.join(app.getPath("userData"), "cached_covers");
+      let worker = null;
+      try {
+        worker = new MetadataWorker();
+        worker.setCoverCacheDir(coverCacheDir);
+      } catch (err) {
+        console.warn(
+          "[library:quick-scan] MetadataWorker unavailable, using main thread:",
+          err.message,
+        );
+      }
+
+      const newTracks = [];
+      for (const file of newFiles) {
+        let metadata;
+        try {
+          metadata = worker
+            ? await worker.readMetadata(file.filePath, new Map())
+            : await metadataReader.readMetadata(file.filePath, new Map());
+        } catch (err) {
+          console.warn(
+            "[library:quick-scan] metadata read failed for",
+            file.filePath,
+            err.message,
+          );
+          continue;
+        }
+
+        newTracks.push({
+          id: generateTrackId(file.filePath),
+          filePath: file.filePath,
+          fileName: file.fileName,
+          title:
+            metadata.title ||
+            path.basename(file.fileName, path.extname(file.fileName)),
+          artist: metadata.artist || "Unknown Artist",
+          album: metadata.album || "Unknown Album",
+          albumArtist: metadata.albumArtist || "",
+          genre: metadata.genre || "",
+          year: metadata.year || 0,
+          trackNumber: metadata.trackNumber || 0,
+          discNumber: metadata.discNumber || 0,
+          duration: metadata.duration || 0,
+          bitrate: metadata.bitrate || 0,
+          sampleRate: metadata.sampleRate || 0,
+          channels: metadata.channels || 2,
+          format:
+            metadata.format ||
+            path.extname(file.fileName).replace(".", "").toUpperCase(),
+          fileSize: file.fileSize || metadata.fileSize || 0,
+          coverArt: metadata.coverArt || null,
+          _hasCoverArt: !!metadata.coverArt,
+          dateAdded: file.birthTime || file.modifiedTime || Date.now(),
+          dateModified: file.modifiedTime || Date.now(),
+        });
+      }
+
+      if (worker && typeof worker.terminate === "function") {
+        try {
+          worker.terminate();
+        } catch (_) {}
+      }
+
+      const mergedLibrary = [...newTracks, ...existingLibrary];
+      saveLibrary(mergedLibrary);
+
+      // Rebuild the binary manifest in the background so fast-startup
+      // reads pick up the new tracks without blocking this response.
+      setImmediate(() => {
+        ManifestIPC.rebuildManifest(mergedLibrary).catch((err) => {
+          console.warn(
+            "[library:quick-scan] background manifest resync failed:",
+            err.message,
+          );
+        });
+      });
+
+      const elapsedMs = Date.now() - t0;
+      console.log(
+        `[library:quick-scan] Added ${newTracks.length} track(s) in ${elapsedMs}ms`,
+      );
+
+      return {
+        success: true,
+        newTracks: newTracks.length,
+        tracks: mergedLibrary,
+        elapsedMs,
+      };
+    } catch (err) {
+      console.error("[library:quick-scan] Error:", err);
       return { success: false, error: err.message };
     }
   });
@@ -3407,6 +3538,31 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
           }
         }
 
+        // ── 1b. Re-stat the file and stamp the NEW mtime onto the track ────
+        // BUGFIX (tag-editor edits reverting on Refresh): writing tags with
+        // node-id3 / node-taglib-sharp above rewrites the file's bytes,
+        // which changes its mtime on disk. library:scan's cache check is
+        // `existing.dateModified === file.modifiedTime` — if we don't
+        // update dateModified here, the NEXT refresh sees a mismatch,
+        // concludes the file "changed", and re-parses it from disk,
+        // discarding these in-memory/DB edits in favor of whatever a
+        // fresh read produces (which can differ from the DB copy, e.g.
+        // if a field wasn't fully supported by the tag writer for this
+        // format, or cover art didn't round-trip). Stamping the fresh
+        // mtime here means the next scan treats this track as "unchanged"
+        // and trusts the DB copy (which we just correctly updated),
+        // instead of re-reading and clobbering the edit.
+        let freshMtime = null;
+        try {
+          const stat = fs.statSync(filePath);
+          freshMtime = stat.mtimeMs;
+        } catch (statErr) {
+          console.warn(
+            "[metadata:write-tags] post-write stat failed:",
+            statErr.message,
+          );
+        }
+
         // ── 2. Update in-memory library & SQLite so the UI is instant ─────
         let updatedTrack = null;
         if (libraryById && libraryById.has(trackId)) {
@@ -3420,6 +3576,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             track.coverArt = tags.coverArt;
             track._hasCoverArt = true;
           }
+          if (freshMtime !== null) track.dateModified = freshMtime;
           updatedTrack = track;
 
           // Persist to SQLite
@@ -3435,6 +3592,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                 album: track.album,
                 genre: track.genre,
                 year: track.year,
+                ...(freshMtime !== null ? { dateModified: freshMtime } : {}),
                 ...(tags.coverArt
                   ? { coverArt: tags.coverArt, _hasCoverArt: true }
                   : {}),
@@ -3528,9 +3686,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
 
   ipcMain.handle("settings:set", async (event, key, value) => {
     try {
-      const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
-      settings[key] = value;
-      writeJSON(SETTINGS_FILE, settings);
+      await withSettingsFile((settings) => {
+        settings[key] = value;
+      });
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
