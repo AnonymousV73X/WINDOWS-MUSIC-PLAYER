@@ -4773,7 +4773,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   transform: translateY(-50%);
   background: rgba(18, 18, 18, 1.88);
   backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(12px);
   border: 1.5px solid rgba(96, 96, 96, 0.248);
   color: var(--text-primary);
   font-size: 11px;
