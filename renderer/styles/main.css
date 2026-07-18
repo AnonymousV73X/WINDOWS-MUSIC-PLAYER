@@ -893,7 +893,7 @@ textarea {
     box-shadow: 0 0 0 0 color-mix(in srgb, var(--green, #1ed760) 55%, transparent);
   }
   35% {
-    transform: scale(0.9);
+    transform: scale(0.95);
   }
   60% {
     transform: scale(1.05);
