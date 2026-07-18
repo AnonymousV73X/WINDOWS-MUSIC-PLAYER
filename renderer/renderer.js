@@ -2597,11 +2597,19 @@ function _wireSidebar() {
   }
 
   // Task 7: Active Lyrics ±1s timing adjustment buttons
+  // Task 7: clock icon toggles the ±1s sync controls (no longer always visible)
+  const lyricsSyncToggle = $("lyrics-sync-toggle-btn");
+  if (lyricsSyncToggle) {
+    lyricsSyncToggle.addEventListener("click", () => {
+      if (!_lyricsIsSynced) return; // no synced lyrics — nothing to adjust
+      _lyricsSyncControlsOpen = !_lyricsSyncControlsOpen;
+      _updateLyricsSyncControlsVisibility();
+    });
+  }
+
   const lyricsOffsetDec = $("lyrics-offset-dec");
   if (lyricsOffsetDec) {
-    lyricsOffsetDec.addEventListener("click", () =>
-      _applyLyricsOffsetDelta(-1),
-    );
+    lyricsOffsetDec.addEventListener("click", () => _applyLyricsOffsetDelta(-1));
   }
   const lyricsOffsetInc = $("lyrics-offset-inc");
   if (lyricsOffsetInc) {
@@ -13080,6 +13088,7 @@ async function _fetchLyrics(track) {
     '<div class="lyric-line" style="margin-top:30px;">Loading ...</div>';
   lastActiveIdx = -1; // Reset active lyric index
   _resetLyricsOffset();
+  _lyricsSyncControlsOpen = false;
   const cachedPlain = track.plainLyrics || "";
   const cachedSynced = track.syncedLyrics || "";
   if (cachedPlain || cachedSynced) {
@@ -13388,9 +13397,28 @@ function _updateSyncedBadge(synced) {
   const ovScroll = $("ov-lyrics-scroll");
   if (ovScroll) ovScroll.classList.toggle("unsynced-scroll", !isSynced);
 
-  // Task 7: the ±1s nudge only makes sense for time-synced lyrics.
+  // Task 7 (revised): the ±1s nudge only makes sense for time-synced
+  // lyrics, and should only be VISIBLE when the user opens it via the
+  // clock icon in the header — not shown permanently. _lyricsIsSynced
+  // gates whether the clock button is usable; _updateLyricsSyncControlsVisibility
+  // decides actual visibility (synced AND user has it open).
+  _lyricsIsSynced = isSynced;
+  if (!isSynced) _lyricsSyncControlsOpen = false; // auto-close if track has no sync data
+  _updateLyricsSyncControlsVisibility();
+}
+
+let _lyricsIsSynced = false;
+let _lyricsSyncControlsOpen = false;
+
+function _updateLyricsSyncControlsVisibility() {
   const syncControls = $("lyrics-sync-controls");
-  if (syncControls) syncControls.style.display = isSynced ? "flex" : "none";
+  const toggleBtn = $("lyrics-sync-toggle-btn");
+  const shouldShow = _lyricsIsSynced && _lyricsSyncControlsOpen;
+  if (syncControls) syncControls.style.display = shouldShow ? "flex" : "none";
+  if (toggleBtn) {
+    toggleBtn.classList.toggle("active", shouldShow);
+    toggleBtn.classList.toggle("disabled", !_lyricsIsSynced);
+  }
 }
 
 // ── Manual-scroll detection for lyrics containers ──────────────────
