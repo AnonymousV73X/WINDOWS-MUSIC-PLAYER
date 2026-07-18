@@ -8898,7 +8898,7 @@ function renderHelp() {
                 <li><strong>Playlist Collage Logic:</strong> Playlists under 5 songs no longer cache collages, and existing collages instantly adapt to content changes without startup delays.</li>
                 <li><strong>Proper Lyrics Management:</strong> Added a dedicated <code>lyricz</code> folder for accurate, lightning-fast offline lyric retrieval without cluttering your music folders.</li>
                 <li><strong>Improved Search Sorting:</strong> Added Ascending (A-Z) and Descending (Z-A) sorting options to the search results.</li>
-                <li><strong>External Music Play:</strong> Added Ascending (A-Z) and Descending (Z-A) sorting options to the search results.</li>
+                <li><strong>External Music Play:</strong> When you click open with... NovaTune will </li>
               </ul>
             </div>
           </div>
