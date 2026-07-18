@@ -4772,7 +4772,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   top: 50%;
   transform: translateY(-50%);
   background: rgba(34, 34, 34, 0.826);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(12px);
   border: 1.5px solid rgba(96, 96, 96, 0.248);
   color: var(--text-primary);
