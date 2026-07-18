@@ -2430,9 +2430,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   flex: 1;
   min-width: 0;
   height: 20px;
-  /* BUGFIX: was `cursor: default` — made the bar feel non-interactive
-     and users reported "seek isn't working" partly because there was
-     no visual affordance hinting they could click it. */
+ 
   cursor: default;
   display: block;
   touch-action: none;
