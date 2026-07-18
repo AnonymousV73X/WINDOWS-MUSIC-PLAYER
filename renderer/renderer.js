@@ -5317,38 +5317,14 @@ function _updateQueueHeaderTitle() {
   }
 }
 
-// Only persist a small window of tracks around the current one instead of
-// the entire queue. Keeps the saved-queue payload tiny (max ~30 ids) so
-// disk writes stay cheap and RAM use doesn't grow with huge queues, while
-// still letting the user resume seamlessly from right where they left off.
-const QUEUE_PERSIST_WINDOW = 30;
-const QUEUE_PERSIST_BEHIND = 10; // tracks kept before the current one
-
+// Persist just the current track's id — a few bytes, instant to write,
+// and doesn't grow with queue size. On relaunch the queue is rebuilt fresh
+// from the library's current sort order (see _restoreFullQueue), so next/
+// prev naturally walk the library exactly as it's sorted right now.
 function _persistQueue() {
   try {
-    const total = state.queue.length;
-    let ids, index;
-    if (total <= QUEUE_PERSIST_WINDOW) {
-      ids = state.queue.map((t) => t.id);
-      index = state.queueIndex;
-    } else {
-      let start = state.queueIndex - QUEUE_PERSIST_BEHIND;
-      let end = start + QUEUE_PERSIST_WINDOW;
-      if (start < 0) {
-        end -= start;
-        start = 0;
-      }
-      if (end > total) {
-        start -= end - total;
-        end = total;
-      }
-      start = Math.max(0, start);
-      ids = state.queue.slice(start, end).map((t) => t.id);
-      index = state.queueIndex - start;
-    }
     window.novaAPI.invoke("settings:set", "_queue", {
-      ids,
-      index,
+      id: state.currentTrack ? state.currentTrack.id : null,
       source: state.queueSource,
     });
   } catch (_) {}
@@ -5718,13 +5694,9 @@ async function _loadRecentPlayed() {
   state.recentlyPlayed = ids.map((id) => byId.get(id)).filter(Boolean);
 
   const saved = state.settings._queue;
-  if (saved && Array.isArray(saved.ids) && saved.ids.length > 0) {
+  if (saved && saved.id) {
     state.queueSource = saved.source || null;
-    state.queueIndex = Math.max(
-      0,
-      Math.min(saved.index || 0, saved.ids.length - 1),
-    );
-    const trackIdToPlay = saved.ids[state.queueIndex];
+    const trackIdToPlay = saved.id;
     let trackToPlay = byId.get(trackIdToPlay);
 
     if (!trackToPlay) {
@@ -5896,9 +5868,7 @@ async function _loadRecentPlayed() {
           _setControlsVisible(true);
         });
     }
-    console.log(
-      `[queue] Restored track ID ${saved.ids[saved.index || 0]} for preload.`,
-    );
+    console.log(`[queue] Restored track ID ${saved.id} for preload.`);
   }
   return Promise.resolve();
 }
@@ -5908,20 +5878,25 @@ async function _loadRecentPlayed() {
  */
 function _restoreFullQueue() {
   const saved = state.settings._queue;
-  if (saved && Array.isArray(saved.ids) && saved.ids.length > 0) {
-    const byId = new Map(state.tracks.map((track) => [track.id, track]));
-    const restored = saved.ids.map((id) => byId.get(id)).filter(Boolean);
-    if (restored.length > 0) {
-      state.queue = restored;
-      state.queueIndex = Math.max(
-        0,
-        Math.min(saved.index || 0, restored.length - 1),
-      );
-      console.log(
-        `[queue] Fully restored ${restored.length} queue tracks, index ${state.queueIndex}.`,
-      );
-    }
+  if (!saved || !saved.id) return;
+  // Build the queue fresh from the library in its current sort order —
+  // next/prev then walk the library exactly as it's sorted right now,
+  // rather than replaying a stale snapshot from last session.
+  const source =
+    state.filteredTracks && state.filteredTracks.length
+      ? state.filteredTracks
+      : state.tracks;
+  const idx = source.findIndex((t) => t.id === saved.id);
+  if (idx === -1) return;
+  state.queue = source.slice();
+  state.queueIndex = idx;
+  // Keep currentTrack pointing at the same object instance now in the queue.
+  if (state.currentTrack && state.currentTrack.id === saved.id) {
+    state.currentTrack = state.queue[idx];
   }
+  console.log(
+    `[queue] Restored queue from library sort (${state.queue.length} tracks), index ${idx}.`,
+  );
 }
 
 function renderSettings() {
