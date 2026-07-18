@@ -1470,6 +1470,16 @@ textarea {
   height: 14px;
 }
 
+#lyrics-sync-toggle-btn.active {
+  color: var(--green);
+  background: var(--surface-hover);
+}
+
+#lyrics-sync-toggle-btn.disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
 .lyrics-body {
   flex: 1;
   overflow-y: auto;
