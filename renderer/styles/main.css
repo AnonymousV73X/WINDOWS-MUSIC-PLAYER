@@ -1470,6 +1470,11 @@ textarea {
   height: 14px;
 }
 
+#lyrics-sync-toggle-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
 #lyrics-sync-toggle-btn.active {
   color: var(--green);
   background: var(--surface-hover);
