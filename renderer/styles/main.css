@@ -401,7 +401,7 @@ textarea {
 .mini-track-list,
 .mini-track-list * {
   font: inherit;
-  font-weight: 00;
+  font-weight: 600;
 }
 
 .titlebar-name {
