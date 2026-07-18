@@ -8882,7 +8882,7 @@ function renderHelp() {
             <div class="help-item-title">UI & Navigation Refinements</div>
             <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
-                <li><strong>Added Tooltip:</strong> Helpful tooltips for the floating nav</li>
+                <li><strong>Added Tooltip:</strong> Helpful tooltips for the floating navigation</li>
                 <li><strong>Active Indicator:</strong> A sleek new visual indicator highlights your active menu item in the sidebar.</li>
                 <li><strong>Menu/X Icon Sync:</strong> The hamburger menu perfectly transitions to a close (X) icon when the sidebar is toggled.</li>
                 <li><strong>Playlist Add Interactions:</strong> The playlist "Add" button now smoothly morphs into an X to cancel out of the creation menu.</li>
