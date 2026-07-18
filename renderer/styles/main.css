@@ -896,7 +896,7 @@ textarea {
     transform: scale(0.9);
   }
   60% {
-    transform: scale(1.08);
+    transform: scale(1.05);
     box-shadow: 0 0 0 6px color-mix(in srgb, var(--green, #1ed760) 0%, transparent);
   }
   100% {
