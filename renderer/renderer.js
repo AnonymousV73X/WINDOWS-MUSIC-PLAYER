@@ -848,16 +848,18 @@ async function _preloadPlaylistCovers() {
   try {
     const playlists = state.playlists || [];
     if (playlists.length === 0) return;
-    
+
     const libById = new Map(state.tracks.map((t) => [t.id, t]));
     for (const playlist of playlists) {
       const tracks = (playlist.tracks || [])
         .map((id) => libById.get(id))
         .filter(Boolean);
-        
+
       if (tracks.length >= 5) {
         // Warm the in-memory hash cache for this session
-        const currentHash = _computePlaylistContentHash(tracks.map((t) => t.id));
+        const currentHash = _computePlaylistContentHash(
+          tracks.map((t) => t.id),
+        );
         _playlistHashCache.set(playlist.id, currentHash);
 
         // AVOID DB/FILE OPS DURING STARTUP:
@@ -5315,11 +5317,38 @@ function _updateQueueHeaderTitle() {
   }
 }
 
+// Only persist a small window of tracks around the current one instead of
+// the entire queue. Keeps the saved-queue payload tiny (max ~30 ids) so
+// disk writes stay cheap and RAM use doesn't grow with huge queues, while
+// still letting the user resume seamlessly from right where they left off.
+const QUEUE_PERSIST_WINDOW = 30;
+const QUEUE_PERSIST_BEHIND = 10; // tracks kept before the current one
+
 function _persistQueue() {
   try {
+    const total = state.queue.length;
+    let ids, index;
+    if (total <= QUEUE_PERSIST_WINDOW) {
+      ids = state.queue.map((t) => t.id);
+      index = state.queueIndex;
+    } else {
+      let start = state.queueIndex - QUEUE_PERSIST_BEHIND;
+      let end = start + QUEUE_PERSIST_WINDOW;
+      if (start < 0) {
+        end -= start;
+        start = 0;
+      }
+      if (end > total) {
+        start -= end - total;
+        end = total;
+      }
+      start = Math.max(0, start);
+      ids = state.queue.slice(start, end).map((t) => t.id);
+      index = state.queueIndex - start;
+    }
     window.novaAPI.invoke("settings:set", "_queue", {
-      ids: state.queue.map((t) => t.id),
-      index: state.queueIndex,
+      ids,
+      index,
       source: state.queueSource,
     });
   } catch (_) {}
@@ -7297,7 +7326,6 @@ function openActionsMenu(anchor, track) {
 
       document.body.appendChild(sub);
 
-      
       // Position sub-menu to the right of the actions menu
       const menuRect = menu.getBoundingClientRect();
       sub.style.visibility = "hidden";
@@ -7877,7 +7905,8 @@ function extractArtistsFromTrack(track) {
 
   // 3. Track title — only extract featured artists in parentheses/brackets
   if (track.title) {
-    const titleFeatRegex = /[\(\[](?:feat\.?|ft\.?|with|featuring)\s+([^\]\)]+)[\)\]]/gi;
+    const titleFeatRegex =
+      /[\(\[](?:feat\.?|ft\.?|with|featuring)\s+([^\]\)]+)[\)\]]/gi;
     let match;
     while ((match = titleFeatRegex.exec(track.title)) !== null) {
       splitAndAdd(match[1]);
@@ -7891,7 +7920,8 @@ function extractArtistsFromTrack(track) {
 
   // 4. Album name — only extract featured artists in parentheses/brackets
   if (track.album) {
-    const albumFeatRegex = /[\(\[](?:feat\.?|ft\.?|with|featuring)\s+([^\]\)]+)[\)\]]/gi;
+    const albumFeatRegex =
+      /[\(\[](?:feat\.?|ft\.?|with|featuring)\s+([^\]\)]+)[\)\]]/gi;
     let match;
     while ((match = albumFeatRegex.exec(track.album)) !== null) {
       splitAndAdd(match[1]);
@@ -9212,13 +9242,17 @@ function renderAlbumDetail(albumKey) {
   surface
     .querySelector(".playlist-back-btn")
     .addEventListener("click", () => _reRenderPanel("albums", renderAlbums));
-  const albumSource = { type: 'album', name: album.album };
+  const albumSource = { type: "album", name: album.album };
   surface
     .querySelector('[data-action="sequential"]')
-    .addEventListener("click", () => playPlaylistTracks(album.tracks, false, albumSource));
+    .addEventListener("click", () =>
+      playPlaylistTracks(album.tracks, false, albumSource),
+    );
   surface
     .querySelector('[data-action="shuffle"]')
-    .addEventListener("click", () => playPlaylistTracks(album.tracks, true, albumSource));
+    .addEventListener("click", () =>
+      playPlaylistTracks(album.tracks, true, albumSource),
+    );
   const list = surface.querySelector(".playlist-detail-list");
   $("content-subtitle").textContent =
     `${album.tracks.length} song${album.tracks.length === 1 ? "" : "s"}`;
@@ -9226,7 +9260,9 @@ function renderAlbumDetail(albumKey) {
   const frag = document.createDocumentFragment();
   album.tracks
     .slice(0, CHUNK)
-    .forEach((track) => frag.appendChild(_createTrackRow(track, album.tracks, albumSource)));
+    .forEach((track) =>
+      frag.appendChild(_createTrackRow(track, album.tracks, albumSource)),
+    );
   list.appendChild(frag);
   if (album.tracks.length > CHUNK) {
     let idx = CHUNK;
@@ -9239,7 +9275,9 @@ function renderAlbumDetail(albumKey) {
       ) {
         const end = Math.min(idx + CHUNK, album.tracks.length);
         for (; idx < end; idx++)
-          cf.appendChild(_createTrackRow(album.tracks[idx], album.tracks, albumSource));
+          cf.appendChild(
+            _createTrackRow(album.tracks[idx], album.tracks, albumSource),
+          );
       }
       list.appendChild(cf);
       if (idx < album.tracks.length)
@@ -9907,13 +9945,17 @@ function renderArtistDetail(artistKey) {
   surface
     .querySelector(".playlist-back-btn")
     .addEventListener("click", () => _reRenderPanel("artists", renderArtists));
-  const artistSource = { type: 'artist', name: artist.artist };
+  const artistSource = { type: "artist", name: artist.artist };
   surface
     .querySelector('[data-action="sequential"]')
-    .addEventListener("click", () => playPlaylistTracks(artist.tracks, false, artistSource));
+    .addEventListener("click", () =>
+      playPlaylistTracks(artist.tracks, false, artistSource),
+    );
   surface
     .querySelector('[data-action="shuffle"]')
-    .addEventListener("click", () => playPlaylistTracks(artist.tracks, true, artistSource));
+    .addEventListener("click", () =>
+      playPlaylistTracks(artist.tracks, true, artistSource),
+    );
   const list = surface.querySelector(".playlist-detail-list");
   $("content-subtitle").textContent =
     `${artist.tracks.length} song${artist.tracks.length === 1 ? "" : "s"}`;
@@ -9936,7 +9978,9 @@ function renderArtistDetail(artistKey) {
       ) {
         const end = Math.min(idx + CHUNK, artist.tracks.length);
         for (; idx < end; idx++)
-          cf.appendChild(_createTrackRow(artist.tracks[idx], artist.tracks, artistSource));
+          cf.appendChild(
+            _createTrackRow(artist.tracks[idx], artist.tracks, artistSource),
+          );
       }
       list.appendChild(cf);
       if (idx < artist.tracks.length)
@@ -10469,10 +10513,20 @@ function renderPlaylistDetail(playlistId) {
     );
   container
     .querySelector('[data-action="sequential"]')
-    .addEventListener("click", () => playPlaylistTracks(tracks, false, { type: 'playlist', name: playlist.name }));
+    .addEventListener("click", () =>
+      playPlaylistTracks(tracks, false, {
+        type: "playlist",
+        name: playlist.name,
+      }),
+    );
   container
     .querySelector('[data-action="shuffle"]')
-    .addEventListener("click", () => playPlaylistTracks(tracks, true, { type: 'playlist', name: playlist.name }));
+    .addEventListener("click", () =>
+      playPlaylistTracks(tracks, true, {
+        type: "playlist",
+        name: playlist.name,
+      }),
+    );
   container
     .querySelector('[data-action="export"]')
     ?.addEventListener("click", () => exportPlaylistById(playlistId));
@@ -10546,7 +10600,7 @@ function renderPlaylistDetail(playlistId) {
     row.addEventListener("click", () => {
       prefetchLyrics(track); // start lyrics race before audio init
       state.shuffleEnabled = false;
-      state.queueSource = { type: 'playlist', name: playlist.name };
+      state.queueSource = { type: "playlist", name: playlist.name };
       // BUGFIX: Previously the queue was built as `[track, ...remaining]`
       // where `remaining = tracks.filter(t => t.id !== track.id)`. This put
       // the clicked song first but then resumed from song #1 of the
@@ -14073,7 +14127,6 @@ function _openTagEditor(track) {
   });
 }
 
-
 // ─── Task 10: Menu Icon Morph ────────────────────────────
 // Smooth CSS morph: playlist icon → X via .menu-open class toggle.
 // The .morph-wrap child holds the SVG + ::before/::after X bars.
@@ -14134,5 +14187,3 @@ closePlaylistMenus = function () {
     ovAddBtn.dataset.tooltip = "Playlist";
   }
 };
-
-
