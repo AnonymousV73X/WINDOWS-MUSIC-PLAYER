@@ -6246,30 +6246,41 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   color: var(--green);
 }
 
-/* BUGFIX: these two buttons sit right at the sidebar's right edge, and
-   the default [data-tooltip] rule centers the tooltip on the element
-   (left:50% + translateX(-50%)). That pushes the tooltip text past the
-   sidebar's right boundary, where it now gets clipped by the
-   overflow-x:hidden we added to .sidebar for scrolling. Right-anchor
-   the tooltip to these two buttons instead of centering it, so it
-   grows leftward into the sidebar (where there's room) rather than
-   rightward out of it.  Still a CSS-only tooltip, not the native
-   title-attribute one. */
-.sidebar-refresh-btn[data-tooltip]::before {
-  left: auto;
-  right: 0;
-  transform: translateY(4px);
-  max-width: 200px;
-  white-space: normal;
-  text-align: right;
+/* Tooltips for elements inside the (scrollable, overflow-clipped) sidebar
+   can't use the normal [data-tooltip]::before/::after pseudo-elements —
+   any ancestor with overflow:auto/hidden clips ALL descendants, including
+   position:absolute/fixed ones, so a centered tooltip on an edge button
+   just gets cut off. We suppress the pseudo-element tooltip inside the
+   sidebar and render those tooltips as real DOM nodes appended to
+   <body> instead (see initSidebarTooltipPortal in renderer.js), which
+   are free to overflow the sidebar's bounds. */
+.sidebar [data-tooltip]::before,
+.sidebar [data-tooltip]::after {
+  display: none;
 }
-.sidebar-refresh-btn[data-tooltip]::after {
-  left: auto;
-  right: 6px;
+
+.sidebar-tooltip-portal {
+  position: fixed;
+  z-index: 20000;
+  background: #282828;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 5px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  border: 1px solid #3a3a3a;
+  pointer-events: none;
+  opacity: 0;
   transform: translateY(4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
-.sidebar-refresh-btn[data-tooltip]:hover::before,
-.sidebar-refresh-btn[data-tooltip]:hover::after {
+
+.sidebar-tooltip-portal.visible {
+  opacity: 1;
   transform: translateY(0);
 }
 
