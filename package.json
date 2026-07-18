@@ -25,6 +25,7 @@
     "electron-updater": "^6.8.9",
     "music-metadata": "^11.13.0",
     "node-id3": "^0.2.9",
+    "node-taglib-sharp": "^6.0.3",
     "node-vibrant": "^4.0.4",
     "sharp": "^0.34.5",
     "v8-compile-cache": "^2.4.0"
