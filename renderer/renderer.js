@@ -2609,7 +2609,9 @@ function _wireSidebar() {
 
   const lyricsOffsetDec = $("lyrics-offset-dec");
   if (lyricsOffsetDec) {
-    lyricsOffsetDec.addEventListener("click", () => _applyLyricsOffsetDelta(-1));
+    lyricsOffsetDec.addEventListener("click", () =>
+      _applyLyricsOffsetDelta(-1),
+    );
   }
   const lyricsOffsetInc = $("lyrics-offset-inc");
   if (lyricsOffsetInc) {
