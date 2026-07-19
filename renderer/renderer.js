@@ -620,7 +620,9 @@ class SquigglyProgress {
   }
 
   _drawThumb(ctx, x, cy, r) {
-    const w = this.thumbWidth, h = this.thumbHeight, rad = this.thumbRadius;
+    const w = this.thumbWidth,
+      h = this.thumbHeight,
+      rad = this.thumbRadius;
     ctx.beginPath();
     ctx.roundRect(x - w / 2, cy - h / 2, w, h, rad);
     ctx.fillStyle = this.overlay ? "#fff" : this.waveColor;
@@ -8077,7 +8079,12 @@ function extractArtistsFromTrack(track) {
     if (!text || text === "Unknown Artist") return;
     const parts = text
       .split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*|featuring\s*|&\s*|\band\b/i)
-      .map((a) => a.trim().replace(/^[()[\]{}.,;:"\-_]+|[()[\]{}.,;:"\-_]+$/g, '').trim())
+      .map((a) =>
+        a
+          .trim()
+          .replace(/^[()[\]{}.,;:"\-_]+|[()[\]{}.,;:"\-_]+$/g, "")
+          .trim(),
+      )
       .filter(Boolean);
     for (const p of parts) {
       if (p.toLowerCase() !== "unknown artist" && _looksLikeArtist(p)) {
