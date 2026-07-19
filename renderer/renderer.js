@@ -206,7 +206,7 @@ const _squigglyWorkerCode = `
   let waveColor = "#1ed760", overlay = false;
   let waveLength = 48, lineAmplitude = 3.5, phaseSpeed = 3.5;
   let strokeWidth = 2;
-  let thumbWidth = 10.6, thumbHeight = 5.6, thumbRadius = ;
+  let thumbWidth = 10.6, thumbHeight = 5.6, thumbRadius = 4;
   const transitionPeriods = 1.5, minWaveEndpoint = 0.2, matchedWaveEndpoint = 0.6, edgeTaperPx = 12;
 
   function _lerp(a, b, t) { return a + (b - a) * t; }
