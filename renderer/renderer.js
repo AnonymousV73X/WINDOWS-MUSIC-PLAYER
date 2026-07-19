@@ -350,7 +350,7 @@ class SquigglyProgress {
     this.strokeWidth = opts.strokeWidth ?? 2;
     this.thumbWidth = opts.thumbWidth ?? 10.6;
     this.thumbHeight = opts.thumbHeight ?? 5.6;
-    this.thumbRadius = opts.thumbRadius ?? 2;
+    this.thumbRadius = opts.thumbRadius ?? ;
 
     // Resolve wave color eagerly so we can pass it to the Worker
     this.waveColor =
