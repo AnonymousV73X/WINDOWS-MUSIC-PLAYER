@@ -213,8 +213,9 @@ const _squigglyWorkerCode = `
   function _lerpInvSat(a, b, v) { return Math.max(0, Math.min(1, _lerpInv(a, b, v))); }
 
   function _drawThumb(x, cy, r) {
+    const w = r * 1.6, h = r * 1.6, rad = 2;
     ctx.beginPath();
-    ctx.arc(x, cy, r, 0, Math.PI * 2);
+    ctx.roundRect(x - w / 2, cy - h / 2, w, h, rad);
     ctx.fillStyle = overlay ? "#fff" : waveColor;
     ctx.fill();
   }
@@ -610,8 +611,9 @@ class SquigglyProgress {
   }
 
   _drawThumb(ctx, x, cy, r) {
+    const w = r * 1.6, h = r * 1.6, rad = 2;
     ctx.beginPath();
-    ctx.arc(x, cy, r, 0, Math.PI * 2);
+    ctx.roundRect(x - w / 2, cy - h / 2, w, h, rad);
     ctx.fillStyle = this.overlay ? "#fff" : this.waveColor;
     ctx.fill();
   }
@@ -3230,6 +3232,7 @@ function _wireAddFolder() {
     btn.dataset.tooltip = "Checking for new songs...";
 
     let totalNew = 0;
+    const allNewTracks = [];
     try {
       for (const folderPath of scanFolders) {
         const result = await window.novaAPI.invoke(
@@ -3238,6 +3241,9 @@ function _wireAddFolder() {
         );
         if (result && result.success) {
           totalNew += result.newTracks || 0;
+          if (Array.isArray(result.addedTracks)) {
+            allNewTracks.push(...result.addedTracks);
+          }
           console.log(
             `[QuickRefresh] ${folderPath}: +${result.newTracks} new in ${result.elapsedMs}ms`,
           );
@@ -3252,10 +3258,33 @@ function _wireAddFolder() {
       btn.dataset.tooltip = "Quick refresh (new songs only)";
     }
 
-    if (totalNew > 0) {
+    if (totalNew > 0 && allNewTracks.length > 0) {
+      // Directly inject the new tracks into the live library — no secondary
+      // round-trip needed since quick-scan already returned the track objects.
+      await _applyIDBThumbs(allNewTracks);
+      state.tracks.push(...allNewTracks);
+      state.filteredTracks = [...state.tracks];
+      if (state.sortKey) _sortTracks(state.sortKey, state.sortAsc);
+      invalidateSectionCache();
+      buildSearchIndex();
+      // Re-render whichever section is currently visible
+      if (state.activeNavSection === "albums") {
+        _reRenderPanel("albums", renderAlbums);
+      } else if (state.activeNavSection === "artists") {
+        _reRenderPanel("artists", renderArtists);
+      } else if (state.activeNavSection === "playlists") {
+        _reRenderPanel("playlists", renderPlaylists);
+      } else {
+        renderTracks(state.filteredTracks, "library");
+      }
+      for (const track of allNewTracks) _scheduleThumbnailAtlasBuild(track);
+      _updateSidebarFolderInfo();
+      console.log(`[QuickRefresh] Added ${totalNew} new track(s) directly`);
+    } else if (totalNew > 0) {
+      // Fallback: new tracks count was returned but no objects — do full reload
       await _partialLibraryUpdate();
       _updateSidebarFolderInfo();
-      console.log(`[QuickRefresh] Added ${totalNew} new track(s)`);
+      console.log(`[QuickRefresh] Added ${totalNew} new track(s) via fallback`);
     } else {
       console.log("[QuickRefresh] No new songs found");
     }
@@ -5121,6 +5150,12 @@ async function _partialLibraryUpdate() {
     invalidateSectionCache();
     if (virtualList.mode === "library" || virtualList.mode === "home") {
       renderTracks(state.filteredTracks, "library");
+    } else if (state.activeNavSection === "albums") {
+      _reRenderPanel("albums", renderAlbums);
+    } else if (state.activeNavSection === "artists") {
+      _reRenderPanel("artists", renderArtists);
+    } else if (state.activeNavSection === "playlists") {
+      _reRenderPanel("playlists", renderPlaylists);
     }
 
     // Rebuild search index
@@ -8032,8 +8067,8 @@ function extractArtistsFromTrack(track) {
   const splitAndAdd = (text) => {
     if (!text || text === "Unknown Artist") return;
     const parts = text
-      .split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*|&\s*|\band\b/i)
-      .map((a) => a.trim())
+      .split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*|featuring\s*|&\s*|\band\b/i)
+      .map((a) => a.trim().replace(/^[()[\]{}.,;:"\-_]+|[()[\]{}.,;:"\-_]+$/g, '').trim())
       .filter(Boolean);
     for (const p of parts) {
       if (p.toLowerCase() !== "unknown artist" && _looksLikeArtist(p)) {
@@ -9202,7 +9237,7 @@ function renderHelp() {
             <div class="help-item-body" style="padding-top:6px!important;">
             Click the button below to download HQ Music from Spotify, Apple Music, Deezer, YT Music etc.</div>
 
-            <a href="https://t.me/MusicsHunter" target="_blank" class="help-contact-btn" style="text-decoration:none; color:black; margin-top:10px!important;">
+            <a href="https://t.me/MusicsHuntersbot" target="_blank" class="help-contact-btn" style="text-decoration:none; color:black; margin-top:10px!important;">
               
               Download HQ Music
             </a>

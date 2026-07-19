@@ -1331,6 +1331,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         const needsV117Rescan =
           hasUnderscores &&
           existing &&
+          !existing._userEdited &&
           existing.dateModified === file.modifiedTime;
 
         if (needsV113Rescan || needsV116Rescan || needsV117Rescan) {
@@ -1543,7 +1544,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
               const hasYtSuffix = /__(?:[A-Za-z0-9_-]{8,})_\d{2,4}$/.test(
                 file.fileName || "",
               );
-              if (hasUnderscores || hasYtSuffix) {
+              const existingTrack = existingMap.get(file.filePath);
+              const isUserEdited = existingTrack && existingTrack._userEdited;
+              if ((hasUnderscores || hasYtSuffix) && !isUserEdited) {
                 try {
                   const fallback = await metadataReader._fallbackMetadata(
                     file.filePath,
@@ -1591,6 +1594,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                 _hasCoverArt: !!metadata.coverArt,
                 dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                 dateModified: file.modifiedTime || Date.now(),
+                ...(existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}),
               });
             }
           } else {
@@ -1638,6 +1642,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   _hasCoverArt: false,
                   dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                   dateModified: file.modifiedTime || Date.now(),
+                  ...(existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}),
                 });
               } else {
                 // v1.1.0 EXHAUSTIVE SCANNER FIX: Even when quickInfo also
@@ -1729,6 +1734,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   _hasCoverArt: !!fallback.coverArt,
                   dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                   dateModified: file.modifiedTime || Date.now(),
+                  ...(existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}),
                 });
               } else {
                 failedCount++;
@@ -2116,6 +2122,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       return {
         success: true,
         newTracks: newTracks.length,
+        addedTracks: newTracks,
         tracks: mergedLibrary,
         elapsedMs,
       };
@@ -3577,6 +3584,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             track._hasCoverArt = true;
           }
           if (freshMtime !== null) track.dateModified = freshMtime;
+          track._userEdited = true;
           updatedTrack = track;
 
           // Persist to SQLite
@@ -3592,6 +3600,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                 album: track.album,
                 genre: track.genre,
                 year: track.year,
+                _userEdited: true,
                 ...(freshMtime !== null ? { dateModified: freshMtime } : {}),
                 ...(tags.coverArt
                   ? { coverArt: tags.coverArt, _hasCoverArt: true }

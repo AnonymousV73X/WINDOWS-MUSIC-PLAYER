@@ -464,21 +464,12 @@ textarea {
      its own vertical scroll region here. */
   overflow-y: auto;
   overflow-x: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: #333 transparent;
+  scrollbar-width: none;
 }
 
 .sidebar::-webkit-scrollbar {
-  width: 6px;
-}
-
-.sidebar::-webkit-scrollbar-thumb {
-  background: #333;
-  border-radius: 3px;
-}
-
-.sidebar::-webkit-scrollbar-track {
-  background: transparent;
+  display: none;
+  width: 0px;
 }
 
 .sidebar-search {
@@ -5413,8 +5404,6 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  scrollbar-width: thin;
-  scrollbar-color: #333 transparent;
 }
 
 /* Lyrics editor — dark-themed scrollbars */
@@ -5571,8 +5560,6 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   resize: none;
   outline: none;
   min-height: 200px;
-  scrollbar-width: thin;
-  scrollbar-color: #333 transparent;
 }
 
 .le-file-drop {

@@ -38761,7 +38761,7 @@ var require_ipc = __commonJS({
             );
             const needsV113Rescan = hasUnderscores && existing && existing.dateModified === file.modifiedTime && (!existing.artist || existing.artist === "Unknown Artist");
             const needsV116Rescan = hasUnderscores && existing && existing.dateModified === file.modifiedTime && (!existing.title || existing.title === file.fileName || existing.title === nameNoExt);
-            const needsV117Rescan = hasUnderscores && existing && existing.dateModified === file.modifiedTime;
+            const needsV117Rescan = hasUnderscores && existing && !existing._userEdited && existing.dateModified === file.modifiedTime;
             if (needsV113Rescan || needsV116Rescan || needsV117Rescan) {
               toScan.push({ file, globalIdx: i });
             } else if (existing && existing.dateModified === file.modifiedTime) {
@@ -38909,7 +38909,9 @@ var require_ipc = __commonJS({
                   const hasYtSuffix = /__(?:[A-Za-z0-9_-]{8,})_\d{2,4}$/.test(
                     file.fileName || ""
                   );
-                  if (hasUnderscores || hasYtSuffix) {
+                  const existingTrack = existingMap.get(file.filePath);
+                  const isUserEdited = existingTrack && existingTrack._userEdited;
+                  if ((hasUnderscores || hasYtSuffix) && !isUserEdited) {
                     try {
                       const fallback = await metadataReader._fallbackMetadata(
                         file.filePath,
@@ -38950,7 +38952,8 @@ var require_ipc = __commonJS({
                     coverArt: metadata.coverArt || null,
                     _hasCoverArt: !!metadata.coverArt,
                     dateAdded: file.birthTime || file.modifiedTime || Date.now(),
-                    dateModified: file.modifiedTime || Date.now()
+                    dateModified: file.modifiedTime || Date.now(),
+                    ...existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}
                   });
                 }
               } else {
@@ -38993,7 +38996,8 @@ var require_ipc = __commonJS({
                       coverArt: null,
                       _hasCoverArt: false,
                       dateAdded: file.birthTime || file.modifiedTime || Date.now(),
-                      dateModified: file.modifiedTime || Date.now()
+                      dateModified: file.modifiedTime || Date.now(),
+                      ...existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}
                     });
                   } else {
                     const estimatedDuration = _estimateDurationFromFileSize(
@@ -39070,7 +39074,8 @@ var require_ipc = __commonJS({
                       coverArt: fallback.coverArt || null,
                       _hasCoverArt: !!fallback.coverArt,
                       dateAdded: file.birthTime || file.modifiedTime || Date.now(),
-                      dateModified: file.modifiedTime || Date.now()
+                      dateModified: file.modifiedTime || Date.now(),
+                      ...existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}
                     });
                   } else {
                     failedCount++;
@@ -39329,6 +39334,7 @@ var require_ipc = __commonJS({
           return {
             success: true,
             newTracks: newTracks.length,
+            addedTracks: newTracks,
             tracks: mergedLibrary,
             elapsedMs
           };
@@ -40424,6 +40430,7 @@ var require_ipc = __commonJS({
                 track._hasCoverArt = true;
               }
               if (freshMtime !== null) track.dateModified = freshMtime;
+              track._userEdited = true;
               updatedTrack = track;
               try {
                 const row = db.prepare("SELECT data FROM tracks WHERE id = ?").get(trackId);
@@ -40435,6 +40442,7 @@ var require_ipc = __commonJS({
                     album: track.album,
                     genre: track.genre,
                     year: track.year,
+                    _userEdited: true,
                     ...freshMtime !== null ? { dateModified: freshMtime } : {},
                     ...tags.coverArt ? { coverArt: tags.coverArt, _hasCoverArt: true } : {}
                   });
