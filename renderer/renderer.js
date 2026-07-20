@@ -9153,6 +9153,7 @@ function renderHelp() {
           </div>
         </div>
 
+        
         <div class="section-panel">
           <div class="section-panel-title">Playback Controls</div>
           <div class="help-item">
