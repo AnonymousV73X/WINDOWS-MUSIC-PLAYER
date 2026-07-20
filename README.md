@@ -8,7 +8,7 @@
 
 *Built for music lovers who were abandoned by every player Microsoft shipped.*
 
-[![Version](https://img.shields.io/badge/version-1.1.1-1ed760?style=flat-square)](./package.json)
+[![Version](https://img.shields.io/badge/version-1.1.2-1ed760?style=flat-square)](./package.json)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?style=flat-square)]()
 [![Electron](https://img.shields.io/badge/Electron-28-47848F?style=flat-square)]()
 [![Made with love](https://img.shields.io/badge/made%20with-%E2%99%A5-ff4d6d?style=flat-square)]()
@@ -19,15 +19,15 @@
 
 [![Download the latest release](https://img.shields.io/badge/⬇%20Download-NovaTune%20Setup%20v1.1.2-1ed760?style=for-the-badge&logo=github&logoColor=white)](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases/latest)
 
-> **Prefer a portable build?** Grab `NovaTune-Setup-1.1.1.exe` from the [Releases page](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases) — no installer, just double-click and play. Ensure You download the latest version it has some critical fixez ... oh b the way this will ook nice with a 14 incher and above i dont know how its gonna look like in smaller screens (i mean in the full screen aspect).
+> **Prefer a portable build?** Grab `NovaTune-Setup-1.1.2.exe` from the [Releases page](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases) — no installer, just double-click and play. Ensure You download the latest version it has some critical fixez ... oh b the way this will ook nice with a 14 incher and above i dont know how its gonna look like in smaller screens (i mean in the full screen aspect).
 
 </div>
 
 ---
 
-## Why I Built NovaTune — An Honest Story
+## Why I Built NovaTune
 
-I never set out to write a music player. I just wanted to listen to music on my laptop the way I do on my phone.
+I never really set out to code up a music player. I just wanted to listen to music on my laptop the way I do on my phone.
 
 On Android, an app called **[Oto Music](https://play.google.com/store/apps/details?id=com.piyush.music)** quietly became the gold standard. Built largely by **one person** — Piyush Mamidwar — it crossed **2 million downloads** and held a steady **4.6-star rating** for years. It was *Material You to the core*: accent colors that flowed from your wallpaper, a beautiful full-screen lyrics view, gapless playback, a built-in tag editor, a folder blacklist so your ringtones never polluted your library, and synced lyrics pulled from **four different sources**. It was free. It was ad-free. It was feature-complete. It proved that a local music player could be beautiful and powerful at the same time. ([Android Police called it "the only one I kept."](https://www.androidpolice.com/i-tested-dozens-of-music-players-and-this-is-the-only-one-i-kept))
 
@@ -56,7 +56,7 @@ It is **not** a streaming client. It is **not** a cloud anything. Point it at a 
 |                     |                                                     |
 | ------------------- | --------------------------------------------------- |
 | **App ID**          | `com.novatune.player`                               |
-| **Version**         | 1.1.1                                               |
+| **Version**         | 1.1.2                                               |
 | **License**         | MIT                                                 |
 | **Platform**        | Windows x64 (NSIS installer + portable build)       |
 | **Aesthetic**       | Spotify-dark, Material-You-aware accent system      |
@@ -288,7 +288,7 @@ This deserves its own section because it's the soul of NovaTune's UI.
 
 The squiggly progress bar is a direct port of the AOSP (Android Open Source Project) `SquigglyProgress` animation. The wave:
 
-- **Animates only while playing** — it freezes when paused, like a held breath.
+- **Animates only while playing** — it freezes when paused, like a held breath haha...
 - **Runs on an `OffscreenCanvas` driven by a dedicated Web Worker** (created from a Blob URL) so animation never blocks the main thread.
 - **Falls back gracefully** — if `OffscreenCanvas` is unavailable or CSP blocks the Worker, it drops to a main-thread `requestAnimationFrame` loop.
 - **Has an SVG sine-wave overlay** as a secondary implementation inside the bottom now-playing bar (`PlayerControls._injectWaveSvg`), with cosine/sine path tiles.
@@ -946,7 +946,7 @@ MIT License — see [LICENSE](./LICENSE) for the full text.
 
 <div align="center">
 
-**NovaTune v1.1.1 • Made with love for music lovers**
+**NovaTune v1.1.2 • Made with love for music lovers**
 
 *If NovaTune brings you joy, star the repo and tell a friend.*
 
