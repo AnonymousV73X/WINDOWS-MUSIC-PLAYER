@@ -1,7 +1,6 @@
 <!-- markdownlint-disable MD033 MD041 -->
 
 <div align="center">
-
 # NovaTune
 
 ### A premium Windows music player with Spotify-dark aesthetics.
