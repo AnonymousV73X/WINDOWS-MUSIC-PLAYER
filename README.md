@@ -21,6 +21,7 @@
 > **Prefer a portable build?** Grab `NovaTune-Setup-1.1.2.exe` from the [Releases page](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases) — no installer, just double-click and play. Ensure You download the latest version it has some critical fixez ... oh b the way this will ook nice with a 14 incher and above i dont know how its gonna look like in smaller screens (i mean in the full screen aspect).
 
 </div>
+
 ---
 
 ## Why I Built NovaTune
