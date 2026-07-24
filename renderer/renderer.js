@@ -7811,9 +7811,17 @@ function _wirePlaylistMenu() {
     e.stopPropagation();
     openPlaylistMenu(e.currentTarget, state.currentTrack);
   });
+  $("np-tag-btn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (state.currentTrack) _openTagEditor(state.currentTrack);
+  });
   $("ov-add-btn")?.addEventListener("click", (e) => {
     e.stopPropagation();
     openPlaylistMenu(e.currentTarget, state.currentTrack);
+  });
+  $("ov-tag-btn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (state.currentTrack) _openTagEditor(state.currentTrack);
   });
   // Overlay "More options" 3-dot button
   $("ov-more-btn")?.addEventListener("click", (e) => {
@@ -9212,10 +9220,12 @@ function renderHelp() {
             <div class="help-item-title">Accent Color and Themes</div>
             <div class="help-item-body">Personalize NovaTune with preset accent colors or choose any custom color. Enable <strong>Dynamic Accent</strong> to have the accent color automatically change based on the album art of the currently playing track. The entire UI adapts instantly, including the squiggly progress bar, buttons, and highlights.</div>
           </div>
+
           <div class="help-item">
             <div class="help-item-title">Side Menu Mode</div>
             <div class="help-item-body">On compact screens, choose between <strong>"On Hover"</strong> (swipe from the left edge to reveal the navigation) or <strong>"Always Visible"</strong> (the icon strip stays on screen at all times). This setting only affects the view when the full sidebar is hidden due to screen width.</div>
           </div>
+
           <div class="help-item">
             <div class="help-item-title">Volume Bar Mode</div>
             <div class="help-item-body">Choose whether the volume slider appears only when you hover over the volume icon, or stays always visible for quick adjustments.</div>
@@ -9417,6 +9427,7 @@ function renderAlbums() {
   }
   requestIdleCallback(renderChunk, { timeout: 500 });
 }
+
 
 function renderAlbumDetail(albumKey) {
   const album = getAlbumGroups().find((item) => item.key === albumKey);

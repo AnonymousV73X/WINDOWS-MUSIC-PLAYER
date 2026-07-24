@@ -4956,6 +4956,10 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
     display: none;
   }
 
+  #ov-tag-btn {
+    display: none;
+  }
+
   #ov-vol-btn {
     display: none;
   }
@@ -5735,6 +5739,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   #ov-shuffle-btn,
   #ov-repeat-btn,
   #ov-add-btn,
+  #ov-tag-btn,
   .ov-heart-placeholder {
     display: none !important;
   }
