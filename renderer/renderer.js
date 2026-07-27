@@ -1199,6 +1199,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     // Re-apply nav mode so floating card shows/hides correctly on resize
     _applyNavMode(state.settings.navMode || "hover");
+
+    // If the panel was previously dragged, it carries inline left/top px
+    // values that don't track the viewport — reclamp so it can't end up
+    // partially or fully off-screen after a resize.
+    if (lyricsPanel.style.left || lyricsPanel.style.top) {
+      const pw = lyricsPanel.offsetWidth,
+        ph = lyricsPanel.offsetHeight;
+      const curLeft = parseFloat(lyricsPanel.style.left) || 0;
+      const curTop = parseFloat(lyricsPanel.style.top) || 0;
+      const maxLeft = Math.max(0, window.innerWidth - pw);
+      const maxTop = Math.max(0, window.innerHeight - ph);
+      lyricsPanel.style.left = Math.min(Math.max(0, curLeft), maxLeft) + "px";
+      lyricsPanel.style.top = Math.min(Math.max(0, curTop), maxTop) + "px";
+    }
   });
 
   // Draggable floating lyrics panel
