@@ -2738,6 +2738,48 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
     }
   });
 
+  // ─── Library: batch update tracks (e.g. background unknown artist resolution) ──
+  ipcMain.handle("library:update-tracks", async (event, updates) => {
+    try {
+      if (!Array.isArray(updates) || updates.length === 0) return { success: true, count: 0 };
+      const db = getDb();
+      if (db) {
+        const updateStmt = db.prepare("UPDATE tracks SET data = ? WHERE id = ?");
+        const tx = db.transaction(() => {
+          for (const u of updates) {
+            if (!u.id) continue;
+            const row = db.prepare("SELECT data FROM tracks WHERE id = ?").get(u.id);
+            if (row) {
+              try {
+                const track = JSON.parse(row.data);
+                if (u.artist !== undefined) track.artist = u.artist;
+                if (u.title !== undefined) track.title = u.title;
+                updateStmt.run(JSON.stringify(track), u.id);
+              } catch (_) {}
+            }
+          }
+        });
+        tx();
+      }
+      const library = getLibrary();
+      if (Array.isArray(library)) {
+        const map = new Map(updates.map(u => [u.id, u]));
+        for (const t of library) {
+          const u = map.get(t.id);
+          if (u) {
+            if (u.artist !== undefined) t.artist = u.artist;
+            if (u.title !== undefined) t.title = u.title;
+          }
+        }
+        saveLibrary(library);
+      }
+      return { success: true, count: updates.length };
+    } catch (err) {
+      console.warn("[library:update-tracks] Failed:", err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
   // ─── Cover Art: find sidecar cover art in the audio file's directory ──
   // Revolutionary: This handler was MISSING — the renderer called it via
   // window.novaAPI.invoke("coverart:find-sidecar") but it was never registered,

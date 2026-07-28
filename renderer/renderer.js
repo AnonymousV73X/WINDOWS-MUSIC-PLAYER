@@ -208,6 +208,7 @@ const _squigglyWorkerCode = `
   let strokeWidth = 2;
   let thumbWidth = 5.6, thumbHeight = 5.6, thumbRadius = 2;
   const transitionPeriods = 1.5, minWaveEndpoint = 0.2, matchedWaveEndpoint = 0.6, edgeTaperPx = 12;
+  
 
   function _lerp(a, b, t) { return a + (b - a) * t; }
   function _lerpInv(a, b, v) { return b === a ? 0 : (v - a) / (b - a); }
@@ -1825,11 +1826,185 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
-function getArtistText(track) {
-  return Array.isArray(track?.artist)
-    ? track.artist.join(", ")
-    : track?.artist || "Unknown Artist";
+/**
+ * Advanced parser that extracts artist and cleaned title from a track title
+ * when the stored metadata artist is "Unknown Artist".
+ *
+ * Handles:
+ *  1. Repeated artist block (e.g. "Joé DwèT Filé & Burna Boy Joé DwèT Filé & Burna Boy 4 Kampe II (Official)")
+ *  2. Dash separator ("Artist - Song Title")
+ *  3. Feature syntax ("Artist ft. Artist2 Song")
+ *  4. Ampersand / Cross syntax ("Artist & Artist2 Song")
+ */
+function _parseUnknownArtistTitle(title) {
+  if (!title || typeof title !== "string") return null;
+  const raw = title.trim();
+  if (!raw || raw.toLowerCase() === "unknown") return null;
+
+  // Clean trailing noise like (Official Video), (Lyrics), [HD], etc.
+  const cleanNoise = (s) =>
+    s
+      .replace(/\s*[\(\[\{]\s*(official|audio|video|lyrics|hd|4k|remaster|remix|mv|visualizer|clip|music video|full song|unreleased)[^\)\]\}]*[\)\]\}]/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const working = cleanNoise(raw);
+
+  // ── Case A: Repeated Prefix Detection ─────────────────────────────────
+  // YouTube rips often repeat the artist block twice: "A & B A & B Song Title"
+  const words = working.split(/\s+/);
+  if (words.length >= 4) {
+    const maxLen = Math.floor(words.length / 2);
+    for (let len = 2; len <= maxLen; len++) {
+      const group1 = words.slice(0, len).join(" ");
+      const group2 = words.slice(len, len * 2).join(" ");
+      if (group1.toLowerCase() === group2.toLowerCase() && group1.length >= 3) {
+        const remaining = words.slice(len * 2).join(" ").trim();
+        return {
+          artist: group1,
+          title: remaining || working,
+        };
+      }
+    }
+  }
+
+  // ── Case B: "Artist - Title" (space-dash-space) ────────────────────────
+  const dashMatch = working.match(/^(.+?)\s+[-–—]\s+(.+)$/);
+  if (dashMatch) {
+    const candidateArtist = cleanNoise(dashMatch[1]).trim();
+    const candidateTitle = cleanNoise(dashMatch[2]).trim();
+    if (candidateArtist && candidateTitle && candidateArtist.length <= 60) {
+      return {
+        artist: candidateArtist,
+        title: candidateTitle,
+      };
+    }
+  }
+
+  // ── Case C: "Artist ft./feat. Artist2 Song" ───────────────────────────
+  const ftMatch = working.match(/^(.+?)\s+(?:ft\.?|feat\.?|featuring)\s+(.+?)(?:\s+[-–—]|\s+|$)/i);
+  if (ftMatch) {
+    const a1 = cleanNoise(ftMatch[1]);
+    const a2 = cleanNoise(ftMatch[2]);
+    if (a1 && a2 && a1.length <= 50 && a2.length <= 50) {
+      const remaining = working.slice(ftMatch[0].length).trim();
+      return {
+        artist: `${a1}, ${a2}`,
+        title: remaining || working,
+      };
+    }
+  }
+
+  // ── Case D: Ampersand in prefix ("Artist1 & Artist2 Song Title") ──────
+  if (working.includes("&") || working.includes("×")) {
+    const ampMatch = working.match(/^((?:[A-ZÀ-ÖØ-öø-ÿ\u00C0-\u024F][^\s]*(?:\s+[A-ZÀ-ÖØ-öø-ÿ\u00C0-\u024F][^\s]*)*)(?:\s*[&×]\s*(?:[A-ZÀ-ÖØ-öø-ÿ\u00C0-\u024F][^\s]*(?:\s+[A-ZÀ-ÖØ-öø-ÿ\u00C0-\u024F][^\s]*)*))+)\s/);
+    if (ampMatch && ampMatch[1]) {
+      const candidateArtist = cleanNoise(ampMatch[1]);
+      const remainingTitle = working.slice(ampMatch[0].length).trim();
+      if (candidateArtist && remainingTitle && candidateArtist.length <= 60) {
+        return {
+          artist: candidateArtist,
+          title: remainingTitle,
+        };
+      }
+    }
+  }
+
+  return null;
 }
+
+function getArtistText(track) {
+  const rawArtist = Array.isArray(track?.artist)
+    ? track.artist.join(", ")
+    : track?.artist || "";
+
+  const isUnknown =
+    !rawArtist ||
+    rawArtist.trim().toLowerCase() === "unknown artist" ||
+    rawArtist.trim() === "";
+
+  if (!isUnknown) return rawArtist;
+
+  const parsed = _parseUnknownArtistTitle(track?.title);
+  return parsed?.artist || "Unknown Artist";
+}
+
+let _isResolvingUnknownArtists = false;
+
+/**
+ * Ultra-efficient, non-blocking background task that scans the library for
+ * tracks with "Unknown Artist", resolves real artist & title via parser,
+ * updates memory state and persists updates to SQLite / JSON manifest in small idle batches.
+ */
+async function _bgResolveUnknownArtists() {
+  if (_isResolvingUnknownArtists) return;
+  if (!state.tracks || state.tracks.length === 0) return;
+  _isResolvingUnknownArtists = true;
+
+  const unknownTracks = state.tracks.filter((t) => {
+    const a = Array.isArray(t.artist) ? t.artist.join(", ") : t.artist || "";
+    return !a || a.trim().toLowerCase() === "unknown artist";
+  });
+
+  if (unknownTracks.length === 0) {
+    _isResolvingUnknownArtists = false;
+    return;
+  }
+
+  console.log(`[UnknownArtistWorker] Scanning ${unknownTracks.length} tracks with Unknown Artist...`);
+
+  const updatesToPersist = [];
+  let updatedCount = 0;
+  let batchIndex = 0;
+
+  function processBatch() {
+    const batchSize = 15;
+    const end = Math.min(batchIndex + batchSize, unknownTracks.length);
+
+    for (let i = batchIndex; i < end; i++) {
+      const track = unknownTracks[i];
+      const parsed = _parseUnknownArtistTitle(track.title);
+      if (parsed && parsed.artist) {
+        track.artist = parsed.artist;
+        if (parsed.title && parsed.title !== track.title) {
+          track.title = parsed.title;
+        }
+        updatesToPersist.push({
+          id: track.id,
+          artist: track.artist,
+          title: track.title,
+        });
+        updatedCount++;
+      }
+    }
+
+    batchIndex = end;
+
+    if (batchIndex < unknownTracks.length) {
+      if ("requestIdleCallback" in window) {
+        requestIdleCallback(() => processBatch());
+      } else {
+        setTimeout(processBatch, 40);
+      }
+    } else {
+      _isResolvingUnknownArtists = false;
+      if (updatedCount > 0) {
+        console.log(`[UnknownArtistWorker] Resolved artist info for ${updatedCount} tracks! Persisting...`);
+        window.novaAPI.invoke("library:update-tracks", updatesToPersist).catch(() => {});
+        invalidateSectionCache();
+        buildSearchIndex();
+        if (state.activeNavSection === "home") {
+          renderHome();
+        } else if (state.activeNavSection === "library" || virtualList.mode === "library") {
+          renderTracks(state.filteredTracks, "library");
+        }
+      }
+    }
+  }
+
+  setTimeout(processBatch, 200);
+}
+
 
 function normalizeSearchText(value) {
   return String(value || "")
@@ -3030,6 +3205,16 @@ function _wireSort() {
   });
 
   const items = menu.querySelectorAll(".dropdown-item");
+  // Sync UI dropdown label with restored state.sortKey
+  if (state.sortKey) {
+    const activeItem = Array.from(items).find((i) => i.dataset.value === state.sortKey);
+    if (activeItem) {
+      items.forEach((i) => i.classList.remove("active"));
+      activeItem.classList.add("active");
+      if (currentText) currentText.textContent = activeItem.textContent;
+    }
+  }
+
   items.forEach((item) => {
     item.addEventListener("click", () => {
       const val = item.dataset.value;
@@ -3040,7 +3225,7 @@ function _wireSort() {
         // Different item — set new sort key with default direction
         items.forEach((i) => i.classList.remove("active"));
         item.classList.add("active");
-        currentText.textContent = item.textContent;
+        if (currentText) currentText.textContent = item.textContent;
         state.sortKey = val;
         if (val === "dateAdded") {
           state.sortAsc = false; // Newest first
@@ -3049,6 +3234,8 @@ function _wireSort() {
         }
       }
 
+      saveSetting("sortKey", state.sortKey);
+      saveSetting("sortAsc", state.sortAsc);
       _sortTracks();
       renderTracks(state.filteredTracks, "library");
     });
@@ -4507,6 +4694,9 @@ function _scheduleBackgroundWork() {
   if (_bgQueueRunning) return;
   _bgQueueRunning = true;
 
+  // Non-blocking background worker to resolve tracks with Unknown Artist
+  _bgResolveUnknownArtists();
+
   setTimeout(() => {
     _runBackgroundQueue().catch((err) => {
       console.warn("[bg-queue] Queue failed:", err.message);
@@ -5501,6 +5691,9 @@ async function _loadSettings() {
     state.dynamicAccentColor = !!state.settings.dynamicAccentColor;
     if (!state.dynamicAccentColor && state.settings.accentColor)
       _applyAccentColor(state.settings.accentColor);
+    if (state.settings.sortKey) state.sortKey = state.settings.sortKey;
+    if (typeof state.settings.sortAsc === "boolean") state.sortAsc = state.settings.sortAsc;
+    state.customQueues = Array.isArray(state.settings.customQueues) ? state.settings.customQueues : [];
     _applyVolumeBarMode(state.settings.volumeBarMode || "hover");
     _applyNavMode(state.settings.navMode || "hover");
     _applyFont(state.settings.font || "outfit");
@@ -5572,6 +5765,252 @@ function getSectionSurface() {
   return _activePanelTarget || $("track-list");
 }
 
+// ─── Custom Queue Builder ─────────────────────────────────────────────
+const NATO_NAMES = [
+  "ALPHA", "BRAVO", "CHARLIE", "DELTA", "ECHO", "FOXTROT", "GOLF", "HOTEL",
+  "INDIA", "JULIET", "KILO", "LIMA", "MIKE", "NOVEMBER", "OSCAR", "PAPA",
+  "QUEBEC", "ROMEO", "SIERRA", "TANGO", "UNIFORM", "VICTOR", "WHISKEY", "X-RAY",
+  "YANKEE", "ZULU"
+];
+
+function _getNextNatoName() {
+  const existingNames = new Set((state.customQueues || []).map((q) => (q.name || "").toUpperCase().trim()));
+  for (const name of NATO_NAMES) {
+    if (!existingNames.has(name)) return name;
+  }
+  let count = 2;
+  while (true) {
+    for (const name of NATO_NAMES) {
+      const candidate = `${name} ${count}`;
+      if (!existingNames.has(candidate)) return candidate;
+    }
+    count++;
+  }
+}
+
+function _playCustomQueue(queueObj) {
+  if (!queueObj || !Array.isArray(queueObj.trackIds) || queueObj.trackIds.length === 0) return;
+  const trackMap = new Map(state.tracks.map((t) => [t.id, t]));
+  const queueTracks = queueObj.trackIds.map((id) => trackMap.get(id)).filter(Boolean);
+  if (queueTracks.length === 0) return;
+
+  state.queue = queueTracks;
+  state.queueIndex = 0;
+  state.queueSource = { type: "custom_queue", name: queueObj.name };
+  playTrack(state.queue[0]);
+}
+
+function _deleteCustomQueue(queueId) {
+  if (!queueId) return;
+  state.customQueues = (state.customQueues || []).filter((q) => q.id !== queueId);
+  saveSetting("customQueues", state.customQueues);
+  if (state.activeNavSection === "home") renderHome();
+}
+
+function _openCustomQueueModal(queueToEdit = null) {
+  const existingOverlay = document.querySelector(".cqb-modal-overlay");
+  if (existingOverlay) existingOverlay.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "cqb-modal-overlay";
+
+  const initialName = queueToEdit ? queueToEdit.name : _getNextNatoName();
+  const selectedTrackIds = new Set(queueToEdit ? queueToEdit.trackIds : []);
+
+  overlay.innerHTML = `
+    <div class="cqb-modal-card">
+      <div class="cqb-header">
+        <div class="cqb-title-wrap">
+          <div class="cqb-badge">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="4" x2="21" y2="4"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="15" x2="21" y2="15"/><line x1="14" y1="20" x2="18" y2="20"/></svg>
+            NATO CALLSIGN
+          </div>
+          <input type="text" id="cqb-name-input" class="cqb-name-input" value="${escapeHtml(initialName)}" placeholder="Queue Name (e.g. ALPHA)">
+        </div>
+        <button class="cqb-close-btn" id="cqb-close-btn" aria-label="Close">&times;</button>
+      </div>
+
+      <div class="cqb-subbar">
+        <div class="cqb-search-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="cqb-search-input" class="cqb-search-input" placeholder="Search tracks to select...">
+        </div>
+        <div class="cqb-quick-actions">
+          <button class="cqb-chip-btn" id="cqb-select-all">Select All</button>
+          <button class="cqb-chip-btn" id="cqb-deselect-all">Clear Selection</button>
+          <span class="cqb-counter" id="cqb-counter">0 selected</span>
+        </div>
+      </div>
+
+      <div class="cqb-track-container" id="cqb-track-container"></div>
+
+      <div class="cqb-footer">
+        <div class="cqb-footer-info" id="cqb-footer-info">0 tracks selected</div>
+        <div class="cqb-footer-btn-group">
+          <button class="cqb-btn cqb-btn-secondary" id="cqb-btn-play-now">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l12 8-12 8V4z"/></svg>
+            Play Now
+          </button>
+          <button class="cqb-btn cqb-btn-primary" id="cqb-btn-save">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Save Queue
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const container = overlay.querySelector("#cqb-track-container");
+  const counterEl = overlay.querySelector("#cqb-counter");
+  const footerInfoEl = overlay.querySelector("#cqb-footer-info");
+  const searchInput = overlay.querySelector("#cqb-search-input");
+  const nameInput = overlay.querySelector("#cqb-name-input");
+
+  let filterQuery = "";
+
+  function updateCounter() {
+    const count = selectedTrackIds.size;
+    counterEl.textContent = `${count} selected`;
+    footerInfoEl.textContent = `${count} ${count === 1 ? "track" : "tracks"} selected`;
+  }
+
+  function renderTrackRows() {
+    if (!container) return;
+    container.innerHTML = "";
+
+    const filtered = state.tracks.filter((t) => {
+      if (!filterQuery) return true;
+      const q = filterQuery.toLowerCase();
+      const title = (t.title || "").toLowerCase();
+      const artist = (getArtistText(t) || "").toLowerCase();
+      const album = (t.album || "").toLowerCase();
+      return title.includes(q) || artist.includes(q) || album.includes(q);
+    });
+
+    if (filtered.length === 0) {
+      container.innerHTML = `<div class="cqb-empty">No matching songs found in library.</div>`;
+      return;
+    }
+
+    filtered.forEach((track) => {
+      const isSelected = selectedTrackIds.has(track.id);
+      const row = document.createElement("div");
+      row.className = "cqb-track-row" + (isSelected ? " selected" : "");
+      row.dataset.trackId = track.id;
+
+      const artSrc = track.coverArt
+        ? _getCoverArtDisplayUrl(track.coverArt)
+        : track._hasCoverArt
+          ? `nova-media://art/${encodeURIComponent(track.id)}`
+          : null;
+
+      const thumbHtml = artSrc
+        ? `<img src="${artSrc}" alt="" class="cqb-thumb-img">`
+        : `<div class="art-placeholder art-${getArtIndex(track)}" style="width:36px;height:36px;font-size:12px;display:flex;align-items:center;justify-content:center;border-radius:4px;">🎵</div>`;
+
+      row.innerHTML = `
+        <div class="cqb-checkbox ${isSelected ? "checked" : ""}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        ${thumbHtml}
+        <div class="cqb-track-meta">
+          <div class="cqb-track-title">${escapeHtml(track.title || "Unknown Title")}</div>
+          <div class="cqb-track-artist">${escapeHtml(getArtistText(track))}</div>
+        </div>
+        <div class="cqb-track-duration">${formatTime(track.duration || 0)}</div>
+      `;
+
+      row.addEventListener("click", () => {
+        if (selectedTrackIds.has(track.id)) {
+          selectedTrackIds.delete(track.id);
+          row.classList.remove("selected");
+          row.querySelector(".cqb-checkbox").classList.remove("checked");
+        } else {
+          selectedTrackIds.add(track.id);
+          row.classList.add("selected");
+          row.querySelector(".cqb-checkbox").classList.add("checked");
+        }
+        updateCounter();
+      });
+
+      container.appendChild(row);
+    });
+  }
+
+  renderTrackRows();
+  updateCounter();
+
+  searchInput?.addEventListener("input", (e) => {
+    filterQuery = e.target.value.trim();
+    renderTrackRows();
+  });
+
+  overlay.querySelector("#cqb-select-all")?.addEventListener("click", () => {
+    const visibleTracks = state.tracks.filter((t) => {
+      if (!filterQuery) return true;
+      const q = filterQuery.toLowerCase();
+      return (t.title || "").toLowerCase().includes(q) || (getArtistText(t) || "").toLowerCase().includes(q);
+    });
+    visibleTracks.forEach((t) => selectedTrackIds.add(t.id));
+    renderTrackRows();
+    updateCounter();
+  });
+
+  overlay.querySelector("#cqb-deselect-all")?.addEventListener("click", () => {
+    selectedTrackIds.clear();
+    renderTrackRows();
+    updateCounter();
+  });
+
+  function closeSelf() {
+    overlay.classList.add("closing");
+    setTimeout(() => overlay.remove(), 200);
+  }
+
+  overlay.querySelector("#cqb-close-btn")?.addEventListener("click", closeSelf);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) closeSelf();
+  });
+
+  function saveCurrentQueue() {
+    const name = nameInput.value.trim() || initialName;
+    const queueObj = {
+      id: queueToEdit ? queueToEdit.id : "cq-" + Date.now(),
+      name: name,
+      trackIds: Array.from(selectedTrackIds),
+      updatedAt: Date.now()
+    };
+
+    if (queueToEdit) {
+      const idx = (state.customQueues || []).findIndex((q) => q.id === queueToEdit.id);
+      if (idx >= 0) state.customQueues[idx] = queueObj;
+      else state.customQueues.push(queueObj);
+    } else {
+      state.customQueues = state.customQueues || [];
+      state.customQueues.push(queueObj);
+    }
+
+    saveSetting("customQueues", state.customQueues);
+    if (state.activeNavSection === "home") renderHome();
+    return queueObj;
+  }
+
+  overlay.querySelector("#cqb-btn-play-now")?.addEventListener("click", () => {
+    if (selectedTrackIds.size === 0) return;
+    const queueObj = saveCurrentQueue();
+    _playCustomQueue(queueObj);
+    closeSelf();
+  });
+
+  overlay.querySelector("#cqb-btn-save")?.addEventListener("click", () => {
+    if (selectedTrackIds.size === 0) return;
+    saveCurrentQueue();
+    closeSelf();
+  });
+}
+
 function renderHome() {
   // Recently Added: sort by dateAdded descending (most recent first)
   // Filter out tracks with missing title/artist to avoid "Unknown Song Unknown Artist"
@@ -5596,13 +6035,23 @@ function renderHome() {
       <div class="home-hero-content">
         <div class="section-kicker">NovaTune</div>
         <h2>Your music, ready fast.</h2>
-        <p>${_getTotalTrackCount()} songs in library • ${state.playlists.length} ${state.playlists.length === 1 ? "playlist" : "playlists"} • ${totalDuration}</p>
+        <p class="home-hero-stats"><span>${_getTotalTrackCount()} songs in library</span> &bull; <span>${state.playlists.length} ${state.playlists.length === 1 ? "playlist" : "playlists"}</span> &bull; <span style="white-space:nowrap;">${totalDuration}</span></p>
       </div>
-      <button style=" font-family: inherit;
-  font-weight: 600!important;
-  " class="section-primary-btn" id="home-shuffle-btn"><svg style="margin-bottom: -2px!important;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8" /><line x1="4" y1="20" x2="21" y2="3" /><polyline points="21 16 21 21 16 21" /><line x1="4" y1="4" x2="21" y2="21" /></svg> Shuffle<span class="home-shuffle-wide"> Library</span></button>
+      <button class="section-primary-btn cqb-home-btn" id="home-custom-queue-btn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="4" x2="21" y2="4"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="15" x2="21" y2="15"/><line x1="14" y1="20" x2="18" y2="20"/></svg>
+        Custom Queue
+      </button>
     </div>
-    <div class="section-grid" >
+
+    <div class="section-panel" style="margin-bottom: 16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div class="section-panel-title" style="margin-bottom:0;">Saved Custom Queues</div>
+        <button class="cqb-chip-btn" id="home-create-queue-btn">+ New Custom Queue</button>
+      </div>
+      <div class="home-cq-grid" id="home-custom-queues-list"></div>
+    </div>
+
+    <div class="section-grid">
       <div class="section-panel home-played-panel" style="margin-bottom: 50px!important;">
         <div class="section-panel-title">Recently Added</div>
         <div class="mini-track-list" id="home-recent-list"></div>
@@ -5612,7 +6061,6 @@ function renderHome() {
         <div class="mini-track-list" id="home-played-list"></div>
       </div>
     </div>
-    
   `);
 
   const recentList = $("home-recent-list");
@@ -5647,9 +6095,49 @@ function renderHome() {
     }
   }
 
-  $("home-shuffle-btn")?.addEventListener("click", () =>
-    $("shuffle-play-btn").click(),
-  );
+  const customQueuesList = $("home-custom-queues-list");
+  if (customQueuesList) {
+    if (!state.customQueues || state.customQueues.length === 0) {
+      customQueuesList.innerHTML = `<div class="section-muted" style="padding:10px 0;">No custom queues saved yet. Click "Custom Queue" to create your first NATO queue!</div>`;
+    } else {
+      customQueuesList.innerHTML = "";
+      state.customQueues.forEach((cq) => {
+        const card = document.createElement("div");
+        card.className = "home-cq-card";
+        const trackCount = (cq.trackIds || []).length;
+        card.innerHTML = `
+          <div class="home-cq-badge">${escapeHtml(cq.name || "QUEUE")}</div>
+          <div class="home-cq-meta">
+            <div class="home-cq-name">${escapeHtml(cq.name || "Custom Queue")}</div>
+            <div class="home-cq-sub">${trackCount} ${trackCount === 1 ? "song" : "songs"}</div>
+          </div>
+          <div class="home-cq-actions">
+            <button class="home-cq-action-btn home-cq-play-btn" title="Play Queue"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l12 8-12 8V4z"/></svg></button>
+            <button class="home-cq-action-btn home-cq-edit-btn" title="Edit Queue"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
+            <button class="home-cq-action-btn home-cq-delete-btn" title="Delete Queue"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          </div>
+        `;
+
+        card.querySelector(".home-cq-play-btn")?.addEventListener("click", (e) => {
+          e.stopPropagation();
+          _playCustomQueue(cq);
+        });
+        card.querySelector(".home-cq-edit-btn")?.addEventListener("click", (e) => {
+          e.stopPropagation();
+          _openCustomQueueModal(cq);
+        });
+        card.querySelector(".home-cq-delete-btn")?.addEventListener("click", (e) => {
+          e.stopPropagation();
+          _deleteCustomQueue(cq.id);
+        });
+
+        customQueuesList.appendChild(card);
+      });
+    }
+  }
+
+  $("home-custom-queue-btn")?.addEventListener("click", () => _openCustomQueueModal());
+  $("home-create-queue-btn")?.addEventListener("click", () => _openCustomQueueModal());
   $("home-library-btn")?.addEventListener("click", () =>
     navigateFromSurface("library"),
   );
@@ -12345,8 +12833,59 @@ function closeOverlay() {
 // and shows non-intrusive toast notifications or dialogs.
 let _updateDownloaded = false;
 
+// ── Silent background update check ────────────────────────────────
+// Runs once, 45 seconds after startup. Non-intrusive: only shows a
+// toast if a newer version exists AND either this version was never
+// shown before OR it's been more than 24 h since the last check.
+// The user is never nagged about a version they've already seen today.
+async function _silentUpdateCheck() {
+  if (!window.novaAPI) return;
+  try {
+    const IDB_KEY_LAST_CHECKED  = "update::last-checked";
+    const IDB_KEY_LAST_NOTIFIED = "update::last-notified-version";
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+    // Don't re-check within the same 24-hour window
+    const lastChecked = await _idbGet(IDB_KEY_LAST_CHECKED);
+    if (lastChecked && (Date.now() - lastChecked) < ONE_DAY_MS) return;
+
+    const result = await window.novaAPI.invoke("app:check-update");
+    _idbSet(IDB_KEY_LAST_CHECKED, Date.now());
+
+    if (!result || !result.success || !result.hasUpdate) return;
+
+    // Don't re-show a toast for a version the user already saw
+    const lastNotified = await _idbGet(IDB_KEY_LAST_NOTIFIED);
+    if (lastNotified === result.latestVersion) return;
+
+    // Save that we've notified about this version
+    _idbSet(IDB_KEY_LAST_NOTIFIED, result.latestVersion);
+
+    _showUpdateToast(
+      `NovaTune ${result.latestVersion} is available`,
+      `You're on ${result.currentVersion} — click to update`,
+      () => {
+        const navItems = document.querySelectorAll(".nav-item");
+        if (navItems) navItems.forEach((n) => n.classList.remove("active"));
+        state.activeNavSection = "help";
+        if (typeof _navigateTo === "function") _navigateTo("help");
+        setTimeout(() => {
+          const area = document.getElementById("track-area");
+          if (area) area.scrollTop = area.scrollHeight;
+        }, 150);
+      },
+    );
+  } catch (_) {
+    // Fail silently — background check should never surface errors
+  }
+}
+
 function _wireAutoUpdater() {
   if (!window.novaAPI) return;
+
+  // Fire the silent check 45 s after startup — late enough that the app
+  // is fully loaded and the user has settled in, early enough to be useful.
+  setTimeout(_silentUpdateCheck, 45_000);
 
   // When autoUpdater finds an update on launch, downloading starts automatically
   window.novaAPI.on("update:available", async (info) => {
