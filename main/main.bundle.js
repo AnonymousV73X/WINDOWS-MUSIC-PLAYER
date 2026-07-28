@@ -37810,7 +37810,7 @@ var require_package = __commonJS({
   "package.json"(exports2, module2) {
     module2.exports = {
       name: "novatune",
-      version: "1.1.2",
+      version: "1.1.3",
       description: "NovaTune \u2014 A premium Windows music player with Spotify-dark aesthetics",
       main: "main/main.bundle.js",
       scripts: {
