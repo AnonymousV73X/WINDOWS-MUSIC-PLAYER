@@ -2369,6 +2369,18 @@ document.addEventListener("keydown", (e) => {
   }
 
   // ─── 3. Ctrl+F / Cmd+F / "/" focus search ─────────────────────
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+    e.preventDefault();
+    if (state.overlayOpen) closeOverlay();
+    if (window.innerWidth <= 640 && !state.sidebarOpen) toggleSidebar(true);
+    const searchInput = $("search-input");
+    if (searchInput) {
+      searchInput.focus();
+      searchInput.select();
+    }
+    return;
+  }
+
   // Skipped while typing in any editable field — "/" in particular would
   // otherwise hijack quick-search inputs and the lyrics editor.
   const tag = e.target.tagName;
@@ -2379,15 +2391,6 @@ document.addEventListener("keydown", (e) => {
     e.target.isContentEditable;
 
   if (!isEditable) {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
-      e.preventDefault();
-      const searchInput = $("search-input");
-      if (searchInput) {
-        searchInput.focus();
-        searchInput.select();
-      }
-      return;
-    }
     // "/" focuses search (Google / YouTube / Gmail convention).
     // Shift+"/" produces "?" — let that fall through so it doesn't steal
     // the keystroke from any future help-overlay shortcut.
@@ -11328,6 +11331,7 @@ function _populateSlot(row, track, idx) {
     }
   } else {
     artHtml = `<div class="art-placeholder art-${artIdx}">${isActive ? "" : "🎵"}</div>`;
+    _ensureThumbInAtlas(track);
   }
 
   const eqHtml = isActive
