@@ -6147,7 +6147,6 @@ function renderHome() {
           </div>
         `;
 
-        
         card.querySelector(".home-cq-play-btn")?.addEventListener("click", (e) => {
           e.stopPropagation();
           _playCustomQueue(cq);
@@ -9709,8 +9708,45 @@ function renderHelp() {
       <div class="help-sections">
         <div class="section-panel" id="help-updates-section">
           <div class="section-panel-title">What's New in v1.1.3</div>
+
           <div class="help-item">
-            <div class="help-item-title">UI & Navigation Refinements</div>
+            <div class="help-item-title">🎵 Smart Artist Detection (Background Worker)</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>Auto-Resolves Unknown Artists:</strong> A lightweight background worker now scans your library on startup for tracks tagged "Unknown Artist" and intelligently extracts real artist names directly from the song title — with zero impact on playback or UI performance.</li>
+                <li><strong>High-Confidence Patterns Only:</strong> Artist extraction uses only proven, high-accuracy patterns — <code>Artist - Title</code>, <code>Artist &amp; Artist2 Title</code>, <code>Artist ft. Artist2 Title</code>, and repeated artist block deduplication (common in YouTube rips like <em>"Joé DwèT Filé &amp; Burna Boy Joé DwèT Filé &amp; Burna Boy 4 Kampe II"</em>). It never guesses on plain song titles.</li>
+                <li><strong>Cleans Up Song Titles Too:</strong> When the title contains a repeated artist prefix, the title is cleaned and stored without the duplicate noise.</li>
+                <li><strong>Persisted Permanently:</strong> Once resolved, the corrected artist and title are saved back to the database — so you never lose the fix between restarts.</li>
+                <li><strong>Idle Batching:</strong> Processed in batches of 15 tracks per idle frame using <code>requestIdleCallback</code> — the app never hangs or skips a beat.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="help-item">
+            <div class="help-item-title">🎛️ Scrubber Head Style</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>Two Thumb Styles:</strong> Choose your progress bar scrubber head style in <strong>Settings → Scrubber Head</strong>.</li>
+                <li><strong>Circle</strong> (default): A clean, minimal perfect circle.</li>
+                <li><strong>Amoeba</strong>: A rounded rectangle / pill shape for a bolder look.</li>
+                <li>Style applies instantly to both the now-playing bar and the full-screen overlay. Saved and restored on every launch.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="help-item">
+            <div class="help-item-title">🗂️ Custom Queue Opt-Out</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>Prefer Shuffle &amp; Play?</strong> Head to <strong>Settings → Playback</strong> and enable <em>"Use Shuffle &amp; Play"</em> to swap the home screen hero button back to the classic Shuffle &amp; Play action.</li>
+                <li>When enabled, the Saved Custom Queues dashboard is also hidden from the home screen.</li>
+                <li>Switching is instant — the home screen updates live without a restart.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="help-item">
+            <div class="help-item-title">UI &amp; Navigation Refinements</div>
             <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
                 <li><strong>Added Tooltip:</strong> Helpful tooltip for the floating navigation.</li>
@@ -9721,11 +9757,13 @@ function renderHelp() {
               </ul>
             </div>
           </div>
+
           <div class="help-item">
-            <div class="help-item-title">Performance & Library</div>
+            <div class="help-item-title">Performance &amp; Library</div>
             <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
                 <li><strong>Blazing Fast Refreshes:</strong> Partial library updates completely eliminate the long waits when adding a handful of songs or updating cover art.</li>
+                <li><strong>Library Sort Persistence:</strong> Your chosen sort order (by title, date, artist, etc.) is now saved and restored automatically on every launch.</li>
                 <li><strong>Playlist Collage Logic:</strong> Playlists under 5 songs no longer cache collages, and existing collages instantly adapt to content changes without startup delays.</li>
                 <li><strong>Proper Lyrics Management:</strong> Added a dedicated <code>lyricz</code> folder for accurate, lightning-fast offline lyric retrieval without cluttering your music folders.</li>
                 <li><strong>Improved Search Sorting:</strong> Added Ascending (A-Z) and Descending (Z-A) sorting options to the search results.</li>
@@ -9733,6 +9771,7 @@ function renderHelp() {
               </ul>
             </div>
           </div>
+
           <div class="help-item">
             <div class="help-item-title">Customization</div>
             <div class="help-item-body" style="padding-left: 15px;">
@@ -9744,6 +9783,7 @@ function renderHelp() {
             </div>
           </div>
         </div>
+
 
         <div class="section-panel">
           <div class="section-panel-title">Getting Started</div>
