@@ -6152,7 +6152,7 @@ function renderHome() {
         ? `
     <div class="section-panel" style="margin-bottom: 16px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <div class="section-panel-title" style="margin-bottom:0; margin-left:5px;">Saved Custom Queues</div>
+        <div class="section-panel-title" style="margin-bottom:2px; margin-left:5px;">Saved Custom Queues</div>
         <button class="cqb-chip-btn" id="home-create-queue-btn">+ New Custom Queue</button>
       </div>
       <div class="home-cq-grid" id="home-custom-queues-list"></div>
