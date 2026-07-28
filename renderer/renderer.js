@@ -6207,7 +6207,7 @@ function renderHome() {
   const customQueuesList = $("home-custom-queues-list");
   if (customQueuesList) {
     if (!state.customQueues || state.customQueues.length === 0) {
-      customQueuesList.innerHTML = `<div class="section-muted" style="padding:10px 10px;">No custom queues saved yet. Click "Custom Queue" to create your first custom queue!</div>`;
+      customQueuesList.innerHTML = `<div class="section-muted" style="padding:4px 10px;">No custom queues saved yet. Click "Custom Queue" to create your first custom queue!</div>`;
     } else {
       customQueuesList.innerHTML = "";
       state.customQueues.forEach((cq) => {
