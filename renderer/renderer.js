@@ -206,9 +206,9 @@ const _squigglyWorkerCode = `
   let waveColor = "#1ed760", overlay = false;
   let waveLength = 48, lineAmplitude = 3.5, phaseSpeed = 3.5;
   let strokeWidth = 2;
-  let thumbWidth = 5.6, thumbHeight = 5.6, thumbRadius = 2;
+  let thumbWidth = 10.6, thumbHeight = 6, thumbRadius = 4;
+  let thumbStyle = "circle";
   const transitionPeriods = 1.5, minWaveEndpoint = 0.2, matchedWaveEndpoint = 0.6, edgeTaperPx = 12;
-  
 
   function _lerp(a, b, t) { return a + (b - a) * t; }
   function _lerpInv(a, b, v) { return b === a ? 0 : (v - a) / (b - a); }
@@ -216,7 +216,12 @@ const _squigglyWorkerCode = `
 
   function _drawThumb(x, cy, r) {
     ctx.beginPath();
-    ctx.roundRect(x - thumbWidth / 2, cy - thumbHeight / 2, thumbWidth, thumbHeight, thumbRadius);
+    if (thumbStyle === "amoeba") {
+      ctx.roundRect(x - thumbWidth / 2, cy - thumbHeight / 2, thumbWidth, thumbHeight, thumbRadius);
+    } else {
+      const cr = overlay ? 3.5 : 4.5;
+      ctx.arc(x, cy, cr, 0, Math.PI * 2);
+    }
     ctx.fillStyle = overlay ? "#fff" : waveColor;
     ctx.fill();
   }
@@ -306,6 +311,7 @@ const _squigglyWorkerCode = `
         thumbWidth = msg.thumbWidth ?? thumbWidth;
         thumbHeight = msg.thumbHeight ?? thumbHeight;
         thumbRadius = msg.thumbRadius ?? thumbRadius;
+        thumbStyle = msg.thumbStyle || "circle";
         waveColor = msg.waveColor;
         lastFrameTime = performance.now();
         rafId = requestAnimationFrame(_raf);
@@ -324,6 +330,10 @@ const _squigglyWorkerCode = `
         break;
       case "setWaveColor":
         waveColor = msg.waveColor;
+        break;
+      case "setThumbStyle":
+        thumbStyle = msg.thumbStyle || "circle";
+        _draw();
         break;
       case "destroy":
         if (rafId) cancelAnimationFrame(rafId);
@@ -352,6 +362,7 @@ class SquigglyProgress {
     this.thumbWidth = opts.thumbWidth ?? 10.6;
     this.thumbHeight = opts.thumbHeight ?? 6;
     this.thumbRadius = opts.thumbRadius ?? 4;
+    this.thumbStyle = opts.thumbStyle || (typeof state !== "undefined" && state.settings && state.settings.squigglyThumbStyle) || "circle";
 
     // Resolve wave color eagerly so we can pass it to the Worker
     this.waveColor =
@@ -360,25 +371,19 @@ class SquigglyProgress {
         .trim() || "#1ed760";
 
     // ── Try OffscreenCanvas + Worker path ──
-    // IMPORTANT: Create the Worker FIRST, then transfer the canvas.
-    // If the Worker constructor throws (e.g. CSP blocks blob: URLs),
-    // the canvas must remain untouched so the main-thread fallback works.
     if (
       typeof HTMLCanvasElement !== "undefined" &&
       typeof HTMLCanvasElement.prototype.transferControlToOffscreen ===
         "function"
     ) {
       try {
-        // Step 1: Create Worker from blob — this can throw due to CSP
         const blob = new Blob([_squigglyWorkerCode], {
           type: "application/javascript",
         });
         const blobUrl = URL.createObjectURL(blob);
         this.worker = new Worker(blobUrl);
-        URL.revokeObjectURL(blobUrl); // clean up — Worker already loaded
+        URL.revokeObjectURL(blobUrl);
 
-        // Step 2: Only NOW transfer the canvas to OffscreenCanvas.
-        // This is irreversible, so we only do it after the Worker is confirmed.
         const offscreen = canvas.transferControlToOffscreen();
         this.worker.postMessage(
           {
@@ -392,6 +397,7 @@ class SquigglyProgress {
             thumbWidth: this.thumbWidth,
             thumbHeight: this.thumbHeight,
             thumbRadius: this.thumbRadius,
+            thumbStyle: this.thumbStyle,
             waveColor: this.waveColor,
           },
           [offscreen],
@@ -620,12 +626,26 @@ class SquigglyProgress {
     ctx.restore();
   }
 
+  setThumbStyle(style) {
+    this.thumbStyle = style || "circle";
+    if (this._useWorker && this.worker) {
+      this.worker.postMessage({ type: "setThumbStyle", thumbStyle: this.thumbStyle });
+      return;
+    }
+    this._draw();
+  }
+
   _drawThumb(ctx, x, cy, r) {
-    const w = this.thumbWidth,
-      h = this.thumbHeight,
-      rad = this.thumbRadius;
     ctx.beginPath();
-    ctx.roundRect(x - w / 2, cy - h / 2, w, h, rad);
+    if (this.thumbStyle === "amoeba") {
+      const w = this.thumbWidth,
+        h = this.thumbHeight,
+        rad = this.thumbRadius;
+      ctx.roundRect(x - w / 2, cy - h / 2, w, h, rad);
+    } else {
+      const cr = this.overlay ? 3.5 : 4.5;
+      ctx.arc(x, cy, cr, 0, Math.PI * 2);
+    }
     ctx.fillStyle = this.overlay ? "#fff" : this.waveColor;
     ctx.fill();
   }
@@ -5697,6 +5717,8 @@ async function _loadSettings() {
     _applyVolumeBarMode(state.settings.volumeBarMode || "hover");
     _applyNavMode(state.settings.navMode || "hover");
     _applyFont(state.settings.font || "outfit");
+    // Apply squiggly thumb style (circle = default, amoeba = rounded rect)
+    _applySquigglyThumbStyle(state.settings.squigglyThumbStyle || "circle");
   } catch (err) {
     console.warn("Settings load failed:", err);
   }
@@ -6098,7 +6120,7 @@ function renderHome() {
   const customQueuesList = $("home-custom-queues-list");
   if (customQueuesList) {
     if (!state.customQueues || state.customQueues.length === 0) {
-      customQueuesList.innerHTML = `<div class="section-muted" style="padding:10px 0;">No custom queues saved yet. Click "Custom Queue" to create your first NATO queue!</div>`;
+      customQueuesList.innerHTML = `<div class="section-muted" style="padding:10px 0;">No custom queues saved yet. Click "Custom Queue" to create your first c queue!</div>`;
     } else {
       customQueuesList.innerHTML = "";
       state.customQueues.forEach((cq) => {
@@ -6348,6 +6370,17 @@ function _applyFont(font) {
     `"${f}", sans-serif`,
   );
   document.body.style.fontFamily = `var(--app-font)`;
+}
+
+/**
+ * Apply the scrubber thumb style to both squiggly progress instances.
+ * "circle"  = perfect filled circle (default)
+ * "amoeba"  = rounded rectangle (pill-like)
+ */
+function _applySquigglyThumbStyle(style) {
+  const s = style === "amoeba" ? "amoeba" : "circle";
+  if (squigglyNP) squigglyNP.setThumbStyle(s);
+  if (squigglyOV) squigglyOV.setThumbStyle(s);
 }
 
 function _setControlsVisible(visible) {
@@ -6762,7 +6795,24 @@ function renderSettings() {
         </div>
       </div>
 
+      <!-- Row 3b: Scrubber Head -->
+      <div class="section-panel">
+        <div class="section-panel-title">Scrubber Head</div>
+        <div class="settings-row settings-row--wrap">
+          <span>Progress bar thumb style</span>
+          <div class="settings-btn-group">
+            <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "circle" ? " active" : ""}" data-style="circle">
+              ● Circle
+            </button>
+            <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "amoeba" ? " active" : ""}" data-style="amoeba">
+              ▬ Amoeba
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- v1.1.7 — Row 4: Card Sorting -->
+
       <div class="section-panel">
         <div class="section-panel-title">Card Sorting</div>
         <div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;">Sort albums, artists, and playlist cards by:</div>
@@ -6907,6 +6957,19 @@ function renderSettings() {
       });
       _applyFont(font);
       saveSetting("font", font);
+    });
+  });
+
+  // Scrubber head thumb style buttons
+  document.querySelectorAll(".thumbstyle-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const style = btn.dataset.style;
+      document.querySelectorAll(".thumbstyle-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.style === style);
+      });
+      state.settings.squigglyThumbStyle = style;
+      _applySquigglyThumbStyle(style);
+      saveSetting("squigglyThumbStyle", style);
     });
   });
 
