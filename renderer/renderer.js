@@ -6059,19 +6059,26 @@ function renderHome() {
         <h2>Your music, ready fast.</h2>
         <p class="home-hero-stats"><span>${_getTotalTrackCount()} songs in library</span> &bull; <span>${state.playlists.length} ${state.playlists.length === 1 ? "playlist" : "playlists"}</span> &bull; <span style="white-space:nowrap;">${totalDuration}</span></p>
       </div>
-      <button class="section-primary-btn cqb-home-btn" id="home-custom-queue-btn">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="4" x2="21" y2="4"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="15" x2="21" y2="15"/><line x1="14" y1="20" x2="18" y2="20"/></svg>
-        Custom Queue
-      </button>
+      ${state.settings.disableCustomQueue
+        ? `<button class="section-primary-btn" id="home-shuffle-btn" style="gap:8px;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
+            Shuffle &amp; Play
+          </button>`
+        : `<button class="section-primary-btn cqb-home-btn" id="home-custom-queue-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="4" x2="21" y2="4"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="15" x2="21" y2="15"/><line x1="14" y1="20" x2="18" y2="20"/></svg>
+            Custom Queue
+          </button>`
+      }
     </div>
 
+    ${!state.settings.disableCustomQueue ? `
     <div class="section-panel" style="margin-bottom: 16px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
         <div class="section-panel-title" style="margin-bottom:0;">Saved Custom Queues</div>
         <button class="cqb-chip-btn" id="home-create-queue-btn">+ New Custom Queue</button>
       </div>
       <div class="home-cq-grid" id="home-custom-queues-list"></div>
-    </div>
+    </div>` : ""}
 
     <div class="section-grid">
       <div class="section-panel home-played-panel" style="margin-bottom: 50px!important;">
@@ -6140,6 +6147,7 @@ function renderHome() {
           </div>
         `;
 
+        
         card.querySelector(".home-cq-play-btn")?.addEventListener("click", (e) => {
           e.stopPropagation();
           _playCustomQueue(cq);
@@ -6160,6 +6168,15 @@ function renderHome() {
 
   $("home-custom-queue-btn")?.addEventListener("click", () => _openCustomQueueModal());
   $("home-create-queue-btn")?.addEventListener("click", () => _openCustomQueueModal());
+  // Fallback: Shuffle & Play shown when user opts out of Custom Queue in Settings
+  $("home-shuffle-btn")?.addEventListener("click", () => {
+    if (!state.tracks || state.tracks.length === 0) return;
+    const shuffled = [...state.tracks].sort(() => Math.random() - 0.5);
+    state.queue = shuffled;
+    state.queueIndex = 0;
+    state.shuffleEnabled = true;
+    playTrack(shuffled[0]);
+  });
   $("home-library-btn")?.addEventListener("click", () =>
     navigateFromSurface("library"),
   );
@@ -6717,6 +6734,10 @@ function renderSettings() {
           <span>Expanded sidebar <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(Experimental — show full sidebar on smaller screens)</span></span>
           <input type="checkbox" id="setting-expanded-sidebar">
         </label>
+        <label class="settings-row settings-row--divider">
+          <span>Use Shuffle &amp; Play <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(Replaces Custom Queue on the home screen)</span></span>
+          <input type="checkbox" id="setting-disable-custom-queue">
+        </label>
         <div class="settings-row settings-row--wrap">
           <span>Volume bar</span>
           <div class="settings-btn-group">
@@ -6847,12 +6868,15 @@ function renderSettings() {
   const lyrics = $("setting-lyrics");
   const hardware = $("setting-hardware");
   const expandedSidebar = $("setting-expanded-sidebar");
+  const disableCustomQueue = $("setting-disable-custom-queue");
   if (shuffle) shuffle.checked = !!state.shuffleEnabled;
   if (lyrics) lyrics.checked = !!state.settings.showLyrics;
   if (hardware)
     hardware.checked = state.settings.hardwareAcceleration !== false;
   if (expandedSidebar)
     expandedSidebar.checked = !!state.settings.expandedSidebar;
+  if (disableCustomQueue)
+    disableCustomQueue.checked = !!state.settings.disableCustomQueue;
 
   shuffle?.addEventListener("change", async (e) => {
     state.shuffleEnabled = e.target.checked;
@@ -6876,6 +6900,14 @@ function renderSettings() {
       document.body.classList.remove("expanded-sidebar");
     }
   });
+  // Custom Queue opt-out: swap home hero button between CQ and Shuffle & Play
+  disableCustomQueue?.addEventListener("change", async (e) => {
+    state.settings.disableCustomQueue = e.target.checked;
+    await saveSetting("disableCustomQueue", e.target.checked);
+    // Re-render home if currently visible so the button swaps immediately
+    if (state.activeNavSection === "home") renderHome();
+  });
+
 
   document.querySelectorAll(".vol-mode-btn").forEach((btn) => {
     btn.addEventListener("click", () => {

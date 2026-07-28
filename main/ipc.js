@@ -2742,18 +2742,20 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   ipcMain.handle("library:update-tracks", async (event, updates) => {
     try {
       if (!Array.isArray(updates) || updates.length === 0) return { success: true, count: 0 };
-      const db = getDb();
+      // db is the module-level SQLite handle (let db = null; at top of file)
       if (db) {
+        // Prepare a single SELECT inside the transaction to avoid repeated prepares
+        const selectStmt = db.prepare("SELECT data FROM tracks WHERE id = ?");
         const updateStmt = db.prepare("UPDATE tracks SET data = ? WHERE id = ?");
         const tx = db.transaction(() => {
           for (const u of updates) {
             if (!u.id) continue;
-            const row = db.prepare("SELECT data FROM tracks WHERE id = ?").get(u.id);
+            const row = selectStmt.get(u.id);
             if (row) {
               try {
                 const track = JSON.parse(row.data);
                 if (u.artist !== undefined) track.artist = u.artist;
-                if (u.title !== undefined) track.title = u.title;
+                if (u.title  !== undefined) track.title  = u.title;
                 updateStmt.run(JSON.stringify(track), u.id);
               } catch (_) {}
             }
@@ -2761,17 +2763,18 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         });
         tx();
       }
-      const library = getLibrary();
+      // Also patch the JSON manifest cache if it's loaded
+      const library = getLibrary ? getLibrary() : null;
       if (Array.isArray(library)) {
         const map = new Map(updates.map(u => [u.id, u]));
         for (const t of library) {
           const u = map.get(t.id);
           if (u) {
             if (u.artist !== undefined) t.artist = u.artist;
-            if (u.title !== undefined) t.title = u.title;
+            if (u.title  !== undefined) t.title  = u.title;
           }
         }
-        saveLibrary(library);
+        if (saveLibrary) saveLibrary(library);
       }
       return { success: true, count: updates.length };
     } catch (err) {

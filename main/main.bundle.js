@@ -39774,13 +39774,13 @@ var require_ipc = __commonJS({
       ipcMain.handle("library:update-tracks", async (event, updates) => {
         try {
           if (!Array.isArray(updates) || updates.length === 0) return { success: true, count: 0 };
-          const db2 = getDb();
-          if (db2) {
-            const updateStmt = db2.prepare("UPDATE tracks SET data = ? WHERE id = ?");
-            const tx = db2.transaction(() => {
+          if (db) {
+            const selectStmt = db.prepare("SELECT data FROM tracks WHERE id = ?");
+            const updateStmt = db.prepare("UPDATE tracks SET data = ? WHERE id = ?");
+            const tx = db.transaction(() => {
               for (const u of updates) {
                 if (!u.id) continue;
-                const row = db2.prepare("SELECT data FROM tracks WHERE id = ?").get(u.id);
+                const row = selectStmt.get(u.id);
                 if (row) {
                   try {
                     const track = JSON.parse(row.data);
@@ -39794,7 +39794,7 @@ var require_ipc = __commonJS({
             });
             tx();
           }
-          const library2 = getLibrary();
+          const library2 = getLibrary ? getLibrary() : null;
           if (Array.isArray(library2)) {
             const map = new Map(updates.map((u) => [u.id, u]));
             for (const t of library2) {
@@ -39804,7 +39804,7 @@ var require_ipc = __commonJS({
                 if (u.title !== void 0) t.title = u.title;
               }
             }
-            saveLibrary(library2);
+            if (saveLibrary) saveLibrary(library2);
           }
           return { success: true, count: updates.length };
         } catch (err) {
