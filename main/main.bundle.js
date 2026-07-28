@@ -39776,7 +39776,7 @@ var require_ipc = __commonJS({
           if (!Array.isArray(updates) || updates.length === 0) return { success: true, count: 0 };
           if (db) {
             const selectStmt = db.prepare("SELECT data FROM tracks WHERE id = ?");
-            const updateStmt = db.prepare("UPDATE tracks SET data = ? WHERE id = ?");
+            const updateStmt = db.prepare("UPDATE tracks SET title = ?, artist = ?, data = ? WHERE id = ?");
             const tx = db.transaction(() => {
               for (const u of updates) {
                 if (!u.id) continue;
@@ -39786,7 +39786,8 @@ var require_ipc = __commonJS({
                     const track = JSON.parse(row.data);
                     if (u.artist !== void 0) track.artist = u.artist;
                     if (u.title !== void 0) track.title = u.title;
-                    updateStmt.run(JSON.stringify(track), u.id);
+                    const artistStr = Array.isArray(track.artist) ? track.artist.join(", ") : track.artist || "";
+                    updateStmt.run(track.title || "", artistStr, JSON.stringify(track), u.id);
                   } catch (_) {
                   }
                 }
@@ -39805,6 +39806,26 @@ var require_ipc = __commonJS({
               }
             }
             if (saveLibrary) saveLibrary(library2);
+          }
+          if (ManifestIPC.isFeatureFlagEnabled()) {
+            setImmediate(() => {
+              try {
+                const tracksForManifest = typeof module2.exports.getLibraryForManifest === "function" ? module2.exports.getLibraryForManifest() : getLibrary ? getLibrary() : null;
+                if (tracksForManifest) {
+                  ManifestIPC.rebuildManifest(tracksForManifest).catch((err) => {
+                    console.warn(
+                      "[manifest] background manifest resync failed:",
+                      err.message
+                    );
+                  });
+                }
+              } catch (syncErr) {
+                console.warn(
+                  "[manifest] background manifest resync failed:",
+                  syncErr.message
+                );
+              }
+            });
           }
           return { success: true, count: updates.length };
         } catch (err) {

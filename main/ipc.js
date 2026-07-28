@@ -2744,9 +2744,8 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       if (!Array.isArray(updates) || updates.length === 0) return { success: true, count: 0 };
       // db is the module-level SQLite handle (let db = null; at top of file)
       if (db) {
-        // Prepare a single SELECT inside the transaction to avoid repeated prepares
         const selectStmt = db.prepare("SELECT data FROM tracks WHERE id = ?");
-        const updateStmt = db.prepare("UPDATE tracks SET data = ? WHERE id = ?");
+        const updateStmt = db.prepare("UPDATE tracks SET title = ?, artist = ?, data = ? WHERE id = ?");
         const tx = db.transaction(() => {
           for (const u of updates) {
             if (!u.id) continue;
@@ -2756,7 +2755,8 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                 const track = JSON.parse(row.data);
                 if (u.artist !== undefined) track.artist = u.artist;
                 if (u.title  !== undefined) track.title  = u.title;
-                updateStmt.run(JSON.stringify(track), u.id);
+                const artistStr = Array.isArray(track.artist) ? track.artist.join(", ") : (track.artist || "");
+                updateStmt.run(track.title || "", artistStr, JSON.stringify(track), u.id);
               } catch (_) {}
             }
           }
@@ -2776,12 +2776,39 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         }
         if (saveLibrary) saveLibrary(library);
       }
+
+      // Rebuild binary manifest.bin so next launch loads updated artist/title metadata
+      if (ManifestIPC.isFeatureFlagEnabled()) {
+        setImmediate(() => {
+          try {
+            const tracksForManifest =
+              typeof module.exports.getLibraryForManifest === "function"
+                ? module.exports.getLibraryForManifest()
+                : (getLibrary ? getLibrary() : null);
+            if (tracksForManifest) {
+              ManifestIPC.rebuildManifest(tracksForManifest).catch((err) => {
+                console.warn(
+                  "[manifest] background manifest resync failed:",
+                  err.message,
+                );
+              });
+            }
+          } catch (syncErr) {
+            console.warn(
+              "[manifest] background manifest resync failed:",
+              syncErr.message,
+            );
+          }
+        });
+      }
+
       return { success: true, count: updates.length };
     } catch (err) {
       console.warn("[library:update-tracks] Failed:", err.message);
       return { success: false, error: err.message };
     }
   });
+
 
   // ─── Cover Art: find sidecar cover art in the audio file's directory ──
   // Revolutionary: This handler was MISSING — the renderer called it via

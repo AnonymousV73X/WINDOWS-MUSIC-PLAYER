@@ -5719,6 +5719,9 @@ async function _loadSettings() {
     _applyFont(state.settings.font || "outfit");
     // Apply squiggly thumb style (circle = default, amoeba = rounded rect)
     _applySquigglyThumbStyle(state.settings.squigglyThumbStyle || "circle");
+    if (state.settings.disableCustomQueue && (state.activeNavSection === "home" || !state.activeNavSection)) {
+      renderHome();
+    }
   } catch (err) {
     console.warn("Settings load failed:", err);
   }
@@ -6060,9 +6063,9 @@ function renderHome() {
         <p class="home-hero-stats"><span>${_getTotalTrackCount()} songs in library</span> &bull; <span>${state.playlists.length} ${state.playlists.length === 1 ? "playlist" : "playlists"}</span> &bull; <span style="white-space:nowrap;">${totalDuration}</span></p>
       </div>
       ${state.settings.disableCustomQueue
-        ? `<button class="section-primary-btn" id="home-shuffle-btn" style="gap:8px;">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
-            Shuffle &amp; Play
+        ? `<button class="section-primary-btn" id="home-shuffle-btn" style="gap:8px;opacity:1;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3H21V8"/><path d="M4 20L21 3"/><path d="M21 16V21H16"/><path d="M15 15L21 21"/><path d="M4 4L9 9"/></svg>
+            Shuffle Library
           </button>`
         : `<button class="section-primary-btn cqb-home-btn" id="home-custom-queue-btn">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="4" x2="21" y2="4"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="15" x2="21" y2="15"/><line x1="14" y1="20" x2="18" y2="20"/></svg>
@@ -6146,6 +6149,7 @@ function renderHome() {
             <button class="home-cq-action-btn home-cq-delete-btn" title="Delete Queue"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
           </div>
         `;
+        
 
         card.querySelector(".home-cq-play-btn")?.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -6734,7 +6738,7 @@ function renderSettings() {
           <input type="checkbox" id="setting-expanded-sidebar">
         </label>
         <label class="settings-row settings-row--divider">
-          <span>Use Shuffle &amp; Play <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(Replaces Custom Queue on the home screen)</span></span>
+          <span>Disable Custom Queue (NATO) <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(Replaces Custom Queue button &amp; section on Home with Shuffle &amp; Play)</span></span>
           <input type="checkbox" id="setting-disable-custom-queue">
         </label>
         <div class="settings-row settings-row--wrap">
@@ -6899,12 +6903,13 @@ function renderSettings() {
       document.body.classList.remove("expanded-sidebar");
     }
   });
-  // Custom Queue opt-out: swap home hero button between CQ and Shuffle & Play
+  // Custom Queue opt-out: swap home hero button between CQ and Shuffle Library
   disableCustomQueue?.addEventListener("change", async (e) => {
     state.settings.disableCustomQueue = e.target.checked;
     await saveSetting("disableCustomQueue", e.target.checked);
-    // Re-render home if currently visible so the button swaps immediately
-    if (state.activeNavSection === "home") renderHome();
+    // Always refresh Home so the button swaps immediately on next visit,
+    // and if the user navigates back Home right now it reflects the change.
+    renderHome();
   });
 
 

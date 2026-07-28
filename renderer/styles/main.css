@@ -5766,41 +5766,45 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 
 /* ── Now-playing bar responsive declutter ── */
 
-/* ≤820px: keep buttons visible now that bar is centered and spacious */
+/* ≤820px: tighten transport gap; volume is hidden at this point too */
 @media (max-width: 820px) {
+  .vol-group,
+  #vol-bar,
+  #vol-btn {
+    display: none !important;
+  }
+
+  /* Override the 10% right padding that was reserving space for the vol control */
+  .now-playing {
+    padding-right: 16px !important;
+  }
+
   .np-transport {
     gap: 12px;
   }
 
   .np-right {
-    min-width: 420px;
+    /* Don't force a min-width — let it compress naturally */
+    min-width: 0;
+    padding-right: 0;
   }
 }
 
-/* ≤660px: hide volume bar, keep volume icon */
+/* ≤660px: tighten transport gap further */
 @media (max-width: 660px) {
-  #vol-bar {
-    display: none !important;
-  }
-
   .np-transport {
-    gap: 10px;
+    gap: 8px;
   }
 
   .np-right {
-    min-width: 180px;
+    gap: 4px;
   }
 }
 
-/* ≤460px: hide vol-btn too */
+/* ≤460px: small screen layout */
 @media (max-width: 460px) {
-  #vol-btn {
-    display: none !important;
-  }
-
-  .np-right {
-    min-width: 140px;
-    padding: 0 8px;
+  .now-playing {
+    padding-right: 8px !important;
   }
 }
 
@@ -7049,7 +7053,8 @@ body.expanded-sidebar .sidebar-search {
 }
 
 /* ─── Custom Queue Builder Styles ────────────────────────────────────── */
-.cqb-home-btn {
+.cqb-home-btn,
+#home-shuffle-btn {
   white-space: nowrap;
   flex-shrink: 0;
   position: relative;
