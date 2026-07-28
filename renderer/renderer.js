@@ -362,7 +362,12 @@ class SquigglyProgress {
     this.thumbWidth = opts.thumbWidth ?? 10.6;
     this.thumbHeight = opts.thumbHeight ?? 6;
     this.thumbRadius = opts.thumbRadius ?? 4;
-    this.thumbStyle = opts.thumbStyle || (typeof state !== "undefined" && state.settings && state.settings.squigglyThumbStyle) || "circle";
+    this.thumbStyle =
+      opts.thumbStyle ||
+      (typeof state !== "undefined" &&
+        state.settings &&
+        state.settings.squigglyThumbStyle) ||
+      "circle";
 
     // Resolve wave color eagerly so we can pass it to the Worker
     this.waveColor =
@@ -629,7 +634,10 @@ class SquigglyProgress {
   setThumbStyle(style) {
     this.thumbStyle = style || "circle";
     if (this._useWorker && this.worker) {
-      this.worker.postMessage({ type: "setThumbStyle", thumbStyle: this.thumbStyle });
+      this.worker.postMessage({
+        type: "setThumbStyle",
+        thumbStyle: this.thumbStyle,
+      });
       return;
     }
     this._draw();
@@ -1864,7 +1872,10 @@ function _parseUnknownArtistTitle(title) {
   // Clean trailing noise like (Official Video), (Lyrics), [HD], etc.
   const cleanNoise = (s) =>
     s
-      .replace(/\s*[\(\[\{]\s*(official|audio|video|lyrics|hd|4k|remaster|remix|mv|visualizer|clip|music video|full song|unreleased)[^\)\]\}]*[\)\]\}]/gi, "")
+      .replace(
+        /\s*[\(\[\{]\s*(official|audio|video|lyrics|hd|4k|remaster|remix|mv|visualizer|clip|music video|full song|unreleased)[^\)\]\}]*[\)\]\}]/gi,
+        "",
+      )
       .replace(/\s+/g, " ")
       .trim();
 
@@ -1879,7 +1890,10 @@ function _parseUnknownArtistTitle(title) {
       const group1 = words.slice(0, len).join(" ");
       const group2 = words.slice(len, len * 2).join(" ");
       if (group1.toLowerCase() === group2.toLowerCase() && group1.length >= 3) {
-        const remaining = words.slice(len * 2).join(" ").trim();
+        const remaining = words
+          .slice(len * 2)
+          .join(" ")
+          .trim();
         return {
           artist: group1,
           title: remaining || working,
@@ -1902,7 +1916,9 @@ function _parseUnknownArtistTitle(title) {
   }
 
   // ── Case C: "Artist ft./feat. Artist2 Song" ───────────────────────────
-  const ftMatch = working.match(/^(.+?)\s+(?:ft\.?|feat\.?|featuring)\s+(.+?)(?:\s+[-–—]|\s+|$)/i);
+  const ftMatch = working.match(
+    /^(.+?)\s+(?:ft\.?|feat\.?|featuring)\s+(.+?)(?:\s+[-–—]|\s+|$)/i,
+  );
   if (ftMatch) {
     const a1 = cleanNoise(ftMatch[1]);
     const a2 = cleanNoise(ftMatch[2]);
@@ -1917,7 +1933,9 @@ function _parseUnknownArtistTitle(title) {
 
   // ── Case D: Ampersand in prefix ("Artist1 & Artist2 Song Title") ──────
   if (working.includes("&") || working.includes("×")) {
-    const ampMatch = working.match(/^((?:[A-ZÀ-ÖØ-öø-ÿ\u00C0-\u024F][^\s]*(?:\s+[A-ZÀ-ÖØ-öø-ÿ\u00C0-\u024F][^\s]*)*)(?:\s*[&×]\s*(?:[A-ZÀ-ÖØ-öø-ÿ\u00C0-\u024F][^\s]*(?:\s+[A-ZÀ-ÖØ-öø-ÿ\u00C0-\u024F][^\s]*)*))+)\s/);
+    const ampMatch = working.match(
+      /^((?:[A-ZÀ-ÖØ-öø-ÿ\u00C0-\u024F][^\s]*(?:\s+[A-ZÀ-ÖØ-öø-ÿ\u00C0-\u024F][^\s]*)*)(?:\s*[&×]\s*(?:[A-ZÀ-ÖØ-öø-ÿ\u00C0-\u024F][^\s]*(?:\s+[A-ZÀ-ÖØ-öø-ÿ\u00C0-\u024F][^\s]*)*))+)\s/,
+    );
     if (ampMatch && ampMatch[1]) {
       const candidateArtist = cleanNoise(ampMatch[1]);
       const remainingTitle = working.slice(ampMatch[0].length).trim();
@@ -1971,7 +1989,9 @@ async function _bgResolveUnknownArtists() {
     return;
   }
 
-  console.log(`[UnknownArtistWorker] Scanning ${unknownTracks.length} tracks with Unknown Artist...`);
+  console.log(
+    `[UnknownArtistWorker] Scanning ${unknownTracks.length} tracks with Unknown Artist...`,
+  );
 
   const updatesToPersist = [];
   let updatedCount = 0;
@@ -2009,13 +2029,20 @@ async function _bgResolveUnknownArtists() {
     } else {
       _isResolvingUnknownArtists = false;
       if (updatedCount > 0) {
-        console.log(`[UnknownArtistWorker] Resolved artist info for ${updatedCount} tracks! Persisting...`);
-        window.novaAPI.invoke("library:update-tracks", updatesToPersist).catch(() => {});
+        console.log(
+          `[UnknownArtistWorker] Resolved artist info for ${updatedCount} tracks! Persisting...`,
+        );
+        window.novaAPI
+          .invoke("library:update-tracks", updatesToPersist)
+          .catch(() => {});
         invalidateSectionCache();
         buildSearchIndex();
         if (state.activeNavSection === "home") {
           renderHome();
-        } else if (state.activeNavSection === "library" || virtualList.mode === "library") {
+        } else if (
+          state.activeNavSection === "library" ||
+          virtualList.mode === "library"
+        ) {
           renderTracks(state.filteredTracks, "library");
         }
       }
@@ -2024,7 +2051,6 @@ async function _bgResolveUnknownArtists() {
 
   setTimeout(processBatch, 200);
 }
-
 
 function normalizeSearchText(value) {
   return String(value || "")
@@ -3227,7 +3253,9 @@ function _wireSort() {
   const items = menu.querySelectorAll(".dropdown-item");
   // Sync UI dropdown label with restored state.sortKey
   if (state.sortKey) {
-    const activeItem = Array.from(items).find((i) => i.dataset.value === state.sortKey);
+    const activeItem = Array.from(items).find(
+      (i) => i.dataset.value === state.sortKey,
+    );
     if (activeItem) {
       items.forEach((i) => i.classList.remove("active"));
       activeItem.classList.add("active");
@@ -5712,14 +5740,20 @@ async function _loadSettings() {
     if (!state.dynamicAccentColor && state.settings.accentColor)
       _applyAccentColor(state.settings.accentColor);
     if (state.settings.sortKey) state.sortKey = state.settings.sortKey;
-    if (typeof state.settings.sortAsc === "boolean") state.sortAsc = state.settings.sortAsc;
-    state.customQueues = Array.isArray(state.settings.customQueues) ? state.settings.customQueues : [];
+    if (typeof state.settings.sortAsc === "boolean")
+      state.sortAsc = state.settings.sortAsc;
+    state.customQueues = Array.isArray(state.settings.customQueues)
+      ? state.settings.customQueues
+      : [];
     _applyVolumeBarMode(state.settings.volumeBarMode || "hover");
     _applyNavMode(state.settings.navMode || "hover");
     _applyFont(state.settings.font || "outfit");
     // Apply squiggly thumb style (circle = default, amoeba = rounded rect)
     _applySquigglyThumbStyle(state.settings.squigglyThumbStyle || "circle");
-    if (state.settings.disableCustomQueue && (state.activeNavSection === "home" || !state.activeNavSection)) {
+    if (
+      state.settings.disableCustomQueue &&
+      (state.activeNavSection === "home" || !state.activeNavSection)
+    ) {
       renderHome();
     }
   } catch (err) {
@@ -5792,14 +5826,38 @@ function getSectionSurface() {
 
 // ─── Custom Queue Builder ─────────────────────────────────────────────
 const NATO_NAMES = [
-  "ALPHA", "BRAVO", "CHARLIE", "DELTA", "ECHO", "FOXTROT", "GOLF", "HOTEL",
-  "INDIA", "JULIET", "KILO", "LIMA", "MIKE", "NOVEMBER", "OSCAR", "PAPA",
-  "QUEBEC", "ROMEO", "SIERRA", "TANGO", "UNIFORM", "VICTOR", "WHISKEY", "X-RAY",
-  "YANKEE", "ZULU"
+  "ALPHA",
+  "BRAVO",
+  "CHARLIE",
+  "DELTA",
+  "ECHO",
+  "FOXTROT",
+  "GOLF",
+  "HOTEL",
+  "INDIA",
+  "JULIET",
+  "KILO",
+  "LIMA",
+  "MIKE",
+  "NOVEMBER",
+  "OSCAR",
+  "PAPA",
+  "QUEBEC",
+  "ROMEO",
+  "SIERRA",
+  "TANGO",
+  "UNIFORM",
+  "VICTOR",
+  "WHISKEY",
+  "X-RAY",
+  "YANKEE",
+  "ZULU",
 ];
 
 function _getNextNatoName() {
-  const existingNames = new Set((state.customQueues || []).map((q) => (q.name || "").toUpperCase().trim()));
+  const existingNames = new Set(
+    (state.customQueues || []).map((q) => (q.name || "").toUpperCase().trim()),
+  );
   for (const name of NATO_NAMES) {
     if (!existingNames.has(name)) return name;
   }
@@ -5814,9 +5872,16 @@ function _getNextNatoName() {
 }
 
 function _playCustomQueue(queueObj) {
-  if (!queueObj || !Array.isArray(queueObj.trackIds) || queueObj.trackIds.length === 0) return;
+  if (
+    !queueObj ||
+    !Array.isArray(queueObj.trackIds) ||
+    queueObj.trackIds.length === 0
+  )
+    return;
   const trackMap = new Map(state.tracks.map((t) => [t.id, t]));
-  const queueTracks = queueObj.trackIds.map((id) => trackMap.get(id)).filter(Boolean);
+  const queueTracks = queueObj.trackIds
+    .map((id) => trackMap.get(id))
+    .filter(Boolean);
   if (queueTracks.length === 0) return;
 
   state.queue = queueTracks;
@@ -5827,7 +5892,9 @@ function _playCustomQueue(queueObj) {
 
 function _deleteCustomQueue(queueId) {
   if (!queueId) return;
-  state.customQueues = (state.customQueues || []).filter((q) => q.id !== queueId);
+  state.customQueues = (state.customQueues || []).filter(
+    (q) => q.id !== queueId,
+  );
   saveSetting("customQueues", state.customQueues);
   if (state.activeNavSection === "home") renderHome();
 }
@@ -5976,7 +6043,10 @@ function _openCustomQueueModal(queueToEdit = null) {
     const visibleTracks = state.tracks.filter((t) => {
       if (!filterQuery) return true;
       const q = filterQuery.toLowerCase();
-      return (t.title || "").toLowerCase().includes(q) || (getArtistText(t) || "").toLowerCase().includes(q);
+      return (
+        (t.title || "").toLowerCase().includes(q) ||
+        (getArtistText(t) || "").toLowerCase().includes(q)
+      );
     });
     visibleTracks.forEach((t) => selectedTrackIds.add(t.id));
     renderTrackRows();
@@ -6005,11 +6075,13 @@ function _openCustomQueueModal(queueToEdit = null) {
       id: queueToEdit ? queueToEdit.id : "cq-" + Date.now(),
       name: name,
       trackIds: Array.from(selectedTrackIds),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
     };
 
     if (queueToEdit) {
-      const idx = (state.customQueues || []).findIndex((q) => q.id === queueToEdit.id);
+      const idx = (state.customQueues || []).findIndex(
+        (q) => q.id === queueToEdit.id,
+      );
       if (idx >= 0) state.customQueues[idx] = queueObj;
       else state.customQueues.push(queueObj);
     } else {
@@ -6062,26 +6134,31 @@ function renderHome() {
         <h2>Your music, ready fast.</h2>
         <p class="home-hero-stats"><span>${_getTotalTrackCount()} songs in library</span> &bull; <span>${state.playlists.length} ${state.playlists.length === 1 ? "playlist" : "playlists"}</span> &bull; <span style="white-space:nowrap;">${totalDuration}</span></p>
       </div>
-      ${state.settings.disableCustomQueue
-        ? `<button class="section-primary-btn" id="home-shuffle-btn" style="gap:8px;opacity:1;">
+      ${
+        state.settings.disableCustomQueue
+          ? `<button class="section-primary-btn" id="home-shuffle-btn" style="gap:8px;opacity:1;">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3H21V8"/><path d="M4 20L21 3"/><path d="M21 16V21H16"/><path d="M15 15L21 21"/><path d="M4 4L9 9"/></svg>
             Shuffle Library
           </button>`
-        : `<button class="section-primary-btn cqb-home-btn" id="home-custom-queue-btn">
+          : `<button class="section-primary-btn cqb-home-btn" id="home-custom-queue-btn">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="4" x2="21" y2="4"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="15" x2="21" y2="15"/><line x1="14" y1="20" x2="18" y2="20"/></svg>
             Custom Queue
           </button>`
       }
     </div>
 
-    ${!state.settings.disableCustomQueue ? `
+    ${
+      !state.settings.disableCustomQueue
+        ? `
     <div class="section-panel" style="margin-bottom: 16px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
         <div class="section-panel-title" style="margin-bottom:0;">Saved Custom Queues</div>
         <button class="cqb-chip-btn" id="home-create-queue-btn">+ New Custom Queue</button>
       </div>
       <div class="home-cq-grid" id="home-custom-queues-list"></div>
-    </div>` : ""}
+    </div>`
+        : ""
+    }
 
     <div class="section-grid">
       <div class="section-panel home-played-panel" style="margin-bottom: 50px!important;">
@@ -6150,26 +6227,36 @@ function renderHome() {
           </div>
         `;
 
-        card.querySelector(".home-cq-play-btn")?.addEventListener("click", (e) => {
-          e.stopPropagation();
-          _playCustomQueue(cq);
-        });
-        card.querySelector(".home-cq-edit-btn")?.addEventListener("click", (e) => {
-          e.stopPropagation();
-          _openCustomQueueModal(cq);
-        });
-        card.querySelector(".home-cq-delete-btn")?.addEventListener("click", (e) => {
-          e.stopPropagation();
-          _deleteCustomQueue(cq.id);
-        });
+        card
+          .querySelector(".home-cq-play-btn")
+          ?.addEventListener("click", (e) => {
+            e.stopPropagation();
+            _playCustomQueue(cq);
+          });
+        card
+          .querySelector(".home-cq-edit-btn")
+          ?.addEventListener("click", (e) => {
+            e.stopPropagation();
+            _openCustomQueueModal(cq);
+          });
+        card
+          .querySelector(".home-cq-delete-btn")
+          ?.addEventListener("click", (e) => {
+            e.stopPropagation();
+            _deleteCustomQueue(cq.id);
+          });
 
         customQueuesList.appendChild(card);
       });
     }
   }
 
-  $("home-custom-queue-btn")?.addEventListener("click", () => _openCustomQueueModal());
-  $("home-create-queue-btn")?.addEventListener("click", () => _openCustomQueueModal());
+  $("home-custom-queue-btn")?.addEventListener("click", () =>
+    _openCustomQueueModal(),
+  );
+  $("home-create-queue-btn")?.addEventListener("click", () =>
+    _openCustomQueueModal(),
+  );
   // Fallback: Shuffle & Play shown when user opts out of Custom Queue in Settings
   $("home-shuffle-btn")?.addEventListener("click", () => {
     if (!state.tracks || state.tracks.length === 0) return;
@@ -6918,7 +7005,6 @@ function renderSettings() {
       _reRenderPanel("home", renderHome);
     }
   });
-
 
   document.querySelectorAll(".vol-mode-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -10080,7 +10166,6 @@ function renderAlbums() {
   requestIdleCallback(renderChunk, { timeout: 500 });
 }
 
-
 function renderAlbumDetail(albumKey) {
   const album = getAlbumGroups().find((item) => item.key === albumKey);
   if (!album) return;
@@ -12988,13 +13073,13 @@ let _updateDownloaded = false;
 async function _silentUpdateCheck() {
   if (!window.novaAPI) return;
   try {
-    const IDB_KEY_LAST_CHECKED  = "update::last-checked";
+    const IDB_KEY_LAST_CHECKED = "update::last-checked";
     const IDB_KEY_LAST_NOTIFIED = "update::last-notified-version";
     const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
     // Don't re-check within the same 24-hour window
     const lastChecked = await _idbGet(IDB_KEY_LAST_CHECKED);
-    if (lastChecked && (Date.now() - lastChecked) < ONE_DAY_MS) return;
+    if (lastChecked && Date.now() - lastChecked < ONE_DAY_MS) return;
 
     const result = await window.novaAPI.invoke("app:check-update");
     _idbSet(IDB_KEY_LAST_CHECKED, Date.now());
