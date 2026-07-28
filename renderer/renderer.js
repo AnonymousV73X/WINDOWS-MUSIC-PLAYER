@@ -6208,6 +6208,7 @@ function renderHome() {
   if (customQueuesList) {
     if (!state.customQueues || state.customQueues.length === 0) {
       customQueuesList.innerHTML = `<div class="section-muted" style="padding:4px 10px;">No custom queues saved yet. Click "Custom Queue" to create your first custom queue!</div>`;
+      
     } else {
       customQueuesList.innerHTML = "";
       state.customQueues.forEach((cq) => {
