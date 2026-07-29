@@ -15504,7 +15504,7 @@ const _origClosePlaylistMenus = closePlaylistMenus;
 closePlaylistMenus = function () {
   _origClosePlaylistMenus();
   const npMenuBtn = $("np-menu-btn");
-  const ovAddBtn = $("ov-add-btn");
+  const ovAddBtn = $("ov-add-btn");f
   if (npMenuBtn) {
     npMenuBtn.classList.remove("menu-open");
     npMenuBtn.dataset.tooltip = "Playlist";
