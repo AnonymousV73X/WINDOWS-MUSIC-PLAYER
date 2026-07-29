@@ -7158,7 +7158,15 @@ function renderSettings() {
         <div class="settings-row settings-row--wrap">
           <span>Progress bar thumb style</span>
           <div class="settings-btn-group">
-            c
+            <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "circle" ? " active" : ""}" data-style="circle">
+              ● Circle
+            </button>
+            <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "amoeba" ? " active" : ""}" data-style="amoeba">
+              ▬ Amoeba
+            </button>
+            <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "snake" ? " active" : ""}" data-style="snake">
+              🐍 Snake
+            </button>
             <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "pacman" ? " active" : ""}" data-style="pacman">
               ᗧ Pac-Man
             </button>
