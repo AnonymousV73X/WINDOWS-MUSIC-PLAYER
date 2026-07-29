@@ -7162,7 +7162,7 @@ function renderSettings() {
               ● Circle
             </button>
             <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "amoeba" ? " active" : ""}" data-style="amoeba">
-              ▬ Amoeba
+              🦠 Amoeba
             </button>
             <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "snake" ? " active" : ""}" data-style="snake">
               🐍 Snake
