@@ -226,15 +226,14 @@ const _squigglyWorkerCode = `
     ctx.fill();
   }
 
-  function _drawSegmentTrail(startX, endX, cy, segH) {
-    const h = segH || 6;
-    const segLen = 7, gap = 1.4, half = h / 2;
+  function _drawSegmentTrail(startX, endX, cy) {
+    const segLen = 7, gap = 1.4;
     let i = 0;
     for (let x = startX; x < endX; x += segLen) {
       const w = Math.min(segLen - gap, endX - x);
       if (w <= 0) break;
       ctx.beginPath();
-      ctx.roundRect(x, cy - half, w, h, Math.min(half, 3));
+      ctx.roundRect(x, cy - 3, w, 6, 2);
       ctx.fillStyle = overlay ? "#fff" : waveColor;
       ctx.globalAlpha = i % 2 === 0 ? 1 : (overlay ? 0.55 : 0.6);
       ctx.fill();
@@ -251,8 +250,8 @@ const _squigglyWorkerCode = `
     const totalProgressPx = Math.max(leftInset, Math.min(W - rightInset, W * progress));
 
     if (style === "pacman") {
-      const pmBodyEnd = totalProgressPx - 0.5;
-      if (pmBodyEnd > leftInset) _drawSegmentTrail(leftInset, pmBodyEnd, cy, headR * 1.6);
+      const pmBodyEnd = totalProgressPx - headR * 0.6;
+      if (pmBodyEnd > leftInset) _drawSegmentTrail(leftInset, pmBodyEnd, cy);
       const dotSpacing = 9, dotR = overlay ? 1.6 : 1.4;
       const dotColor = overlay ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.35)";
       const n = Math.floor(trackW / dotSpacing);
@@ -748,19 +747,17 @@ class SquigglyProgress {
     this._draw();
   }
 
-  _drawSegmentTrail(ctx, startX, endX, cy, segH) {
+  _drawSegmentTrail(ctx, startX, endX, cy) {
     const overlay = this.overlay,
       waveColor = this.waveColor;
-    const h = segH || 6;
     const segLen = 7,
-      gap = 1.4,
-      half = h / 2;
+      gap = 1.4;
     let i = 0;
     for (let x = startX; x < endX; x += segLen) {
       const w = Math.min(segLen - gap, endX - x);
       if (w <= 0) break;
       ctx.beginPath();
-      ctx.roundRect(x, cy - half, w, h, Math.min(half, 3));
+      ctx.roundRect(x, cy - 3, w, 6, 2);
       ctx.fillStyle = overlay ? "#fff" : waveColor;
       ctx.globalAlpha = i % 2 === 0 ? 1 : overlay ? 0.55 : 0.6;
       ctx.fill();
@@ -788,9 +785,9 @@ class SquigglyProgress {
     );
 
     if (style === "pacman") {
-      const pmBodyEnd = totalProgressPx - 0.5;
+      const pmBodyEnd = totalProgressPx - headR * 0.6;
       if (pmBodyEnd > leftInset)
-        this._drawSegmentTrail(ctx, leftInset, pmBodyEnd, cy, headR * 1.6);
+        this._drawSegmentTrail(ctx, leftInset, pmBodyEnd, cy);
       const dotSpacing = 9,
         dotR = overlay ? 1.6 : 1.4;
       const dotColor = overlay
