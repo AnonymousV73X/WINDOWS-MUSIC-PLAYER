@@ -749,9 +749,12 @@ class SquigglyProgress {
   }
 
   _drawSegmentTrail(ctx, startX, endX, cy, segH) {
-    const overlay = this.overlay, waveColor = this.waveColor;
+    const overlay = this.overlay,
+      waveColor = this.waveColor;
     const h = segH || 6;
-    const segLen = 7, gap = 1.4, half = h / 2;
+    const segLen = 7,
+      gap = 1.4,
+      half = h / 2;
     let i = 0;
     for (let x = startX; x < endX; x += segLen) {
       const w = Math.min(segLen - gap, endX - x);
@@ -759,7 +762,7 @@ class SquigglyProgress {
       ctx.beginPath();
       ctx.roundRect(x, cy - half, w, h, Math.min(half, 3));
       ctx.fillStyle = overlay ? "#fff" : waveColor;
-      ctx.globalAlpha = i % 2 === 0 ? 1 : (overlay ? 0.55 : 0.6);
+      ctx.globalAlpha = i % 2 === 0 ? 1 : overlay ? 0.55 : 0.6;
       ctx.fill();
       ctx.globalAlpha = 1;
       i++;
@@ -767,32 +770,47 @@ class SquigglyProgress {
   }
 
   _drawGameProgress(ctx, style) {
-    const W = this.cssWidth, cy = this.cssHeight / 2;
-    const overlay = this.overlay, progress = this.progress, phaseOffset = this.phaseOffset, playing = this.playing;
-    const strokeWidth = this.strokeWidth, waveColor = this.waveColor;
-    const leftInset = this.strokeWidth + 4, rightInset = this.strokeWidth + 4;
+    const W = this.cssWidth,
+      cy = this.cssHeight / 2;
+    const overlay = this.overlay,
+      progress = this.progress,
+      phaseOffset = this.phaseOffset,
+      playing = this.playing;
+    const strokeWidth = this.strokeWidth,
+      waveColor = this.waveColor;
+    const leftInset = this.strokeWidth + 4,
+      rightInset = this.strokeWidth + 4;
     const trackW = Math.max(0, W - leftInset - rightInset);
     const headR = overlay ? 5 : 5.5;
-    const totalProgressPx = Math.max(leftInset, Math.min(W - rightInset, W * progress));
+    const totalProgressPx = Math.max(
+      leftInset,
+      Math.min(W - rightInset, W * progress),
+    );
 
     if (style === "pacman") {
       const pmBodyEnd = totalProgressPx - 0.5;
-      if (pmBodyEnd > leftInset) this._drawSegmentTrail(ctx, leftInset, pmBodyEnd, cy, headR * 1.6);
-      const dotSpacing = 9, dotR = overlay ? 1.6 : 1.4;
-      const dotColor = overlay ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.35)";
+      if (pmBodyEnd > leftInset)
+        this._drawSegmentTrail(ctx, leftInset, pmBodyEnd, cy, headR * 1.6);
+      const dotSpacing = 9,
+        dotR = overlay ? 1.6 : 1.4;
+      const dotColor = overlay
+        ? "rgba(255,255,255,0.5)"
+        : "rgba(255,255,255,0.35)";
       const n = Math.floor(trackW / dotSpacing);
       for (let i = 0; i <= n; i++) {
         const dx = leftInset + i * dotSpacing;
         if (dx < totalProgressPx + headR + 2) continue;
         const isLast = i === n;
-        const r = isLast ? dotR * 2.2 * (0.85 + 0.15 * Math.sin(phaseOffset * 2)) : dotR;
+        const r = isLast
+          ? dotR * 2.2 * (0.85 + 0.15 * Math.sin(phaseOffset * 2))
+          : dotR;
         ctx.beginPath();
         ctx.arc(dx, cy, r, 0, Math.PI * 2);
         ctx.fillStyle = isLast ? (overlay ? "#fff" : waveColor) : dotColor;
         ctx.fill();
       }
       const mouthMax = 0.78;
-      const mouthT = playing ? (Math.sin(phaseOffset * 6) * 0.5 + 0.5) : 0.35;
+      const mouthT = playing ? Math.sin(phaseOffset * 6) * 0.5 + 0.5 : 0.35;
       const mouth = 0.12 + mouthMax * mouthT;
       ctx.beginPath();
       ctx.moveTo(totalProgressPx, cy);
@@ -801,7 +819,13 @@ class SquigglyProgress {
       ctx.fillStyle = overlay ? "#fff" : waveColor;
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(totalProgressPx - headR * 0.15, cy - headR * 0.55, headR * 0.13, 0, Math.PI * 2);
+      ctx.arc(
+        totalProgressPx - headR * 0.15,
+        cy - headR * 0.55,
+        headR * 0.13,
+        0,
+        Math.PI * 2,
+      );
       ctx.fillStyle = overlay ? "#333" : "#0a2e14";
       ctx.fill();
       return;
@@ -810,7 +834,8 @@ class SquigglyProgress {
     if (style === "snake") {
       const bodyEnd = totalProgressPx - headR * 0.7;
       this._drawSegmentTrail(ctx, leftInset, bodyEnd, cy);
-      const dotSpacing = 11, dotR = 1.3;
+      const dotSpacing = 11,
+        dotR = 1.3;
       const n = Math.floor((W - rightInset - totalProgressPx) / dotSpacing);
       for (let j = 1; j <= n; j++) {
         const dx = totalProgressPx + headR + j * dotSpacing;
@@ -818,16 +843,38 @@ class SquigglyProgress {
         const isLast = dx + dotSpacing > W - rightInset;
         ctx.beginPath();
         ctx.arc(dx, cy, isLast ? dotR * 2 : dotR, 0, Math.PI * 2);
-        ctx.fillStyle = isLast ? "#ff4d4d" : (overlay ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.35)");
+        ctx.fillStyle = isLast
+          ? "#ff4d4d"
+          : overlay
+            ? "rgba(255,255,255,0.4)"
+            : "rgba(255,255,255,0.35)";
         ctx.fill();
       }
       ctx.beginPath();
-      ctx.roundRect(totalProgressPx - headR, cy - headR * 0.85, headR * 1.9, headR * 1.7, headR * 0.6);
+      ctx.roundRect(
+        totalProgressPx - headR,
+        cy - headR * 0.85,
+        headR * 1.9,
+        headR * 1.7,
+        headR * 0.6,
+      );
       ctx.fillStyle = overlay ? "#fff" : waveColor;
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(totalProgressPx + headR * 0.5, cy - headR * 0.35, headR * 0.16, 0, Math.PI * 2);
-      ctx.arc(totalProgressPx + headR * 0.5, cy + headR * 0.15, headR * 0.16, 0, Math.PI * 2);
+      ctx.arc(
+        totalProgressPx + headR * 0.5,
+        cy - headR * 0.35,
+        headR * 0.16,
+        0,
+        Math.PI * 2,
+      );
+      ctx.arc(
+        totalProgressPx + headR * 0.5,
+        cy + headR * 0.15,
+        headR * 0.16,
+        0,
+        Math.PI * 2,
+      );
       ctx.fillStyle = overlay ? "#222" : "#0a2e14";
       ctx.fill();
       if (playing && Math.sin(phaseOffset * 5) > 0.6) {
@@ -6409,7 +6456,6 @@ function renderHome() {
   if (customQueuesList) {
     if (!state.customQueues || state.customQueues.length === 0) {
       customQueuesList.innerHTML = `<div class="section-muted" style="padding:4px 10px;">No custom queues saved yet. Click "Custom Queue" to create your first custom queue!</div>`;
-      
     } else {
       customQueuesList.innerHTML = "";
       state.customQueues.forEach((cq) => {
