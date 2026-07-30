@@ -10288,7 +10288,7 @@ function renderHelp() {
       </div>
 
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
-        NovaTune v1.1.3 &bull; Made by SIR ALEX for music lovers
+        NovaTune v1.1.4 &bull; Made by SIR ALEX for music lovers
       </div>
     </div>
   `);
