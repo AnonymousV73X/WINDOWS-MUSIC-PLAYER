@@ -3754,6 +3754,8 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  row-gap: 8px;
   gap: 10px;
   min-height: 42px;
 }
@@ -3768,8 +3770,19 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 
 .settings-btn-group {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
   flex-shrink: 0;
+}
+
+/* Scrubber Head has 7 style buttons — give it its own line so it always
+   has room to wrap onto multiple rows instead of fighting the label. */
+.settings-btn-group--full {
+  flex-basis: 100%;
+  width: 0;
+  min-width: fit-content;
+  justify-content: flex-start;
 }
 
 /* Responsive: collapse to single column below 700px */
@@ -3793,7 +3806,8 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   }
 
   .settings-row--wrap {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
+    row-gap: 6px;
     min-height: 40px;
   }
 
