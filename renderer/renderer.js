@@ -362,48 +362,84 @@ const _squigglyWorkerCode = `
     }
 
     if (style === "ant") {
-      const bodyEnd = totalProgressPx - headR * 0.6;
-      const segSpacing = 6, segR = 2.2;
-      let si = 0;
-      for (let x = bodyEnd; x > leftInset; x -= segSpacing) {
+      const bodyColor = overlay ? "#fff" : waveColor;
+      const legColor = overlay ? "rgba(255,255,255,0.85)" : _shade(waveColor, 0.55);
+      const eyeColor = overlay ? "#333" : _shade(waveColor, 0.25);
+      const headCX = totalProgressPx, headCY = cy;
+      const hR = headR * 0.55;
+      const thoraxR = headR * 0.5;
+      const thoraxX = headCX - headR * 1.15;
+      const gasterRX = headR * 0.95, gasterRY = headR * 0.62;
+      const gasterX = headCX - headR * 2.55;
+
+      const trailEnd = gasterX - gasterRX * 0.7;
+      if (trailEnd > leftInset) _drawSegmentTrail(leftInset, trailEnd, cy);
+
+      ctx.beginPath();
+      ctx.ellipse(gasterX, cy, gasterRX, gasterRY, 0, 0, Math.PI * 2);
+      ctx.fillStyle = bodyColor;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(gasterX + gasterRX * 0.6, cy);
+      ctx.lineTo(thoraxX - thoraxR * 0.8, cy);
+      ctx.strokeStyle = bodyColor;
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+
+      const legLen = headR * 1.05;
+      const legBaseX = [thoraxX + thoraxR * 0.5, thoraxX - thoraxR * 0.1, thoraxX - thoraxR * 0.8];
+      const legBaseAngle = [0.55, 0.05, -0.55];
+      const legGait = [1, -1, 1];
+      const swing = playing ? Math.sin(phaseOffset * 6) : 0;
+      for (let li = 0; li < 3; li++) {
+        const hipX = legBaseX[li], hipY = cy + thoraxR * 0.35;
+        const angle = legBaseAngle[li] + legGait[li] * 0.4 * swing;
+        const kneeX = hipX + Math.sin(angle) * legLen * 0.55;
+        const kneeY = hipY + Math.cos(angle) * legLen * 0.55;
+        const footAngle = angle * 0.5;
+        const footX = kneeX + Math.sin(footAngle) * legLen * 0.5;
+        const footY = kneeY + Math.cos(footAngle) * legLen * 0.5;
         ctx.beginPath();
-        ctx.arc(x, cy, segR, 0, Math.PI * 2);
-        ctx.fillStyle = overlay ? "#fff" : waveColor;
-        ctx.globalAlpha = si % 2 === 0 ? 1 : 0.6;
-        ctx.fill();
-        ctx.beginPath();
-        ctx.moveTo(x, cy - segR);
-        ctx.lineTo(x - 2, cy - segR - 3);
-        ctx.moveTo(x, cy + segR);
-        ctx.lineTo(x - 2, cy + segR + 3);
-        ctx.strokeStyle = overlay ? "rgba(255,255,255,0.6)" : _shade(waveColor, 0.6);
-        ctx.lineWidth = 0.8;
+        ctx.moveTo(hipX, hipY);
+        ctx.lineTo(kneeX, kneeY);
+        ctx.lineTo(footX, footY);
+        ctx.strokeStyle = legColor;
+        ctx.lineWidth = 0.9;
+        ctx.lineCap = "round";
         ctx.stroke();
-        ctx.globalAlpha = 1;
-        si++;
       }
+
+      ctx.beginPath();
+      ctx.arc(thoraxX, cy, thoraxR, 0, Math.PI * 2);
+      ctx.fillStyle = bodyColor;
+      ctx.fill();
+
       const crumbX = W - rightInset - 3;
-      if (crumbX > totalProgressPx + headR) {
+      if (crumbX > headCX + hR * 1.5) {
         ctx.beginPath();
         ctx.roundRect(crumbX - 2.5, cy - 2.5, 5, 5, 1);
         ctx.fillStyle = overlay ? "rgba(255,255,255,0.55)" : _shade(waveColor, 1.6);
         ctx.fill();
       }
+
       ctx.beginPath();
-      ctx.arc(totalProgressPx, cy, headR * 0.85, 0, Math.PI * 2);
-      ctx.fillStyle = overlay ? "#fff" : waveColor;
+      ctx.arc(headCX, headCY, hR, 0, Math.PI * 2);
+      ctx.fillStyle = bodyColor;
       ctx.fill();
+
       ctx.beginPath();
-      ctx.moveTo(totalProgressPx + headR * 0.4, cy - headR * 0.5);
-      ctx.lineTo(totalProgressPx + headR * 1.1, cy - headR * 1.1);
-      ctx.moveTo(totalProgressPx + headR * 0.4, cy + headR * 0.1);
-      ctx.lineTo(totalProgressPx + headR * 1.1, cy - headR * 0.4);
-      ctx.strokeStyle = overlay ? "#fff" : waveColor;
-      ctx.lineWidth = 1;
+      ctx.moveTo(headCX + hR * 0.5, headCY - hR * 0.6);
+      ctx.quadraticCurveTo(headCX + hR * 1.6, headCY - hR * 1.5, headCX + hR * 2.1, headCY - hR * 1.1);
+      ctx.moveTo(headCX + hR * 0.5, headCY + hR * 0.1);
+      ctx.quadraticCurveTo(headCX + hR * 1.6, headCY - hR * 0.7, headCX + hR * 2.1, headCY - hR * 0.2);
+      ctx.strokeStyle = bodyColor;
+      ctx.lineWidth = 0.9;
       ctx.stroke();
+
       ctx.beginPath();
-      ctx.arc(totalProgressPx + headR * 0.15, cy - headR * 0.3, headR * 0.15, 0, Math.PI * 2);
-      ctx.fillStyle = overlay ? "#333" : _shade(waveColor, 0.25);
+      ctx.arc(headCX + hR * 0.2, headCY - hR * 0.25, hR * 0.32, 0, Math.PI * 2);
+      ctx.fillStyle = eyeColor;
       ctx.fill();
       return;
     }
@@ -878,14 +914,8 @@ class SquigglyProgress {
     const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
     if (!m) return factor < 1 ? "#0a2e14" : "#ffffff";
     const num = parseInt(m[1], 16);
-    const r = Math.max(
-      0,
-      Math.min(255, Math.round(((num >> 16) & 0xff) * factor)),
-    );
-    const g = Math.max(
-      0,
-      Math.min(255, Math.round(((num >> 8) & 0xff) * factor)),
-    );
+    const r = Math.max(0, Math.min(255, Math.round(((num >> 16) & 0xff) * factor)));
+    const g = Math.max(0, Math.min(255, Math.round(((num >> 8) & 0xff) * factor)));
     const b = Math.max(0, Math.min(255, Math.round((num & 0xff) * factor)));
     return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
   }
@@ -1038,8 +1068,7 @@ class SquigglyProgress {
       let first = true;
       for (let x = leftInset; x <= bodyEnd; x += 1) {
         const t = (x - leftInset) / humpLen;
-        const y =
-          cy - Math.abs(Math.sin(t * Math.PI + phaseOffset * 3)) * humpH;
+        const y = cy - Math.abs(Math.sin(t * Math.PI + phaseOffset * 3)) * humpH;
         if (first) {
           ctx.moveTo(x, y);
           first = false;
@@ -1063,79 +1092,99 @@ class SquigglyProgress {
       ctx.lineWidth = 1;
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(
-        totalProgressPx - headR * 0.28,
-        cy - headR * 0.15,
-        headR * 0.16,
-        0,
-        Math.PI * 2,
-      );
-      ctx.arc(
-        totalProgressPx + headR * 0.28,
-        cy - headR * 0.15,
-        headR * 0.16,
-        0,
-        Math.PI * 2,
-      );
+      ctx.arc(totalProgressPx - headR * 0.28, cy - headR * 0.15, headR * 0.16, 0, Math.PI * 2);
+      ctx.arc(totalProgressPx + headR * 0.28, cy - headR * 0.15, headR * 0.16, 0, Math.PI * 2);
       ctx.fillStyle = overlay ? "#333" : this._shade(waveColor, 0.25);
       ctx.fill();
       return;
     }
 
     if (style === "ant") {
-      const bodyEnd = totalProgressPx - headR * 0.6;
-      const segSpacing = 6,
-        segR = 2.2;
-      let si = 0;
-      for (let x = bodyEnd; x > leftInset; x -= segSpacing) {
+      const bodyColor = overlay ? "#fff" : waveColor;
+      const legColor = overlay ? "rgba(255,255,255,0.85)" : this._shade(waveColor, 0.55);
+      const eyeColor = overlay ? "#333" : this._shade(waveColor, 0.25);
+      const headCX = totalProgressPx,
+        headCY = cy;
+      const hR = headR * 0.55;
+      const thoraxR = headR * 0.5;
+      const thoraxX = headCX - headR * 1.15;
+      const gasterRX = headR * 0.95,
+        gasterRY = headR * 0.62;
+      const gasterX = headCX - headR * 2.55;
+
+      const trailEnd = gasterX - gasterRX * 0.7;
+      if (trailEnd > leftInset) this._drawSegmentTrail(ctx, leftInset, trailEnd, cy);
+
+      ctx.beginPath();
+      ctx.ellipse(gasterX, cy, gasterRX, gasterRY, 0, 0, Math.PI * 2);
+      ctx.fillStyle = bodyColor;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(gasterX + gasterRX * 0.6, cy);
+      ctx.lineTo(thoraxX - thoraxR * 0.8, cy);
+      ctx.strokeStyle = bodyColor;
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+
+      const legLen = headR * 1.05;
+      const legBaseX = [
+        thoraxX + thoraxR * 0.5,
+        thoraxX - thoraxR * 0.1,
+        thoraxX - thoraxR * 0.8,
+      ];
+      const legBaseAngle = [0.55, 0.05, -0.55];
+      const legGait = [1, -1, 1];
+      const swing = playing ? Math.sin(phaseOffset * 6) : 0;
+      for (let li = 0; li < 3; li++) {
+        const hipX = legBaseX[li],
+          hipY = cy + thoraxR * 0.35;
+        const angle = legBaseAngle[li] + legGait[li] * 0.4 * swing;
+        const kneeX = hipX + Math.sin(angle) * legLen * 0.55;
+        const kneeY = hipY + Math.cos(angle) * legLen * 0.55;
+        const footAngle = angle * 0.5;
+        const footX = kneeX + Math.sin(footAngle) * legLen * 0.5;
+        const footY = kneeY + Math.cos(footAngle) * legLen * 0.5;
         ctx.beginPath();
-        ctx.arc(x, cy, segR, 0, Math.PI * 2);
-        ctx.fillStyle = overlay ? "#fff" : waveColor;
-        ctx.globalAlpha = si % 2 === 0 ? 1 : 0.6;
-        ctx.fill();
-        ctx.beginPath();
-        ctx.moveTo(x, cy - segR);
-        ctx.lineTo(x - 2, cy - segR - 3);
-        ctx.moveTo(x, cy + segR);
-        ctx.lineTo(x - 2, cy + segR + 3);
-        ctx.strokeStyle = overlay
-          ? "rgba(255,255,255,0.6)"
-          : this._shade(waveColor, 0.6);
-        ctx.lineWidth = 0.8;
+        ctx.moveTo(hipX, hipY);
+        ctx.lineTo(kneeX, kneeY);
+        ctx.lineTo(footX, footY);
+        ctx.strokeStyle = legColor;
+        ctx.lineWidth = 0.9;
+        ctx.lineCap = "round";
         ctx.stroke();
-        ctx.globalAlpha = 1;
-        si++;
       }
+
+      ctx.beginPath();
+      ctx.arc(thoraxX, cy, thoraxR, 0, Math.PI * 2);
+      ctx.fillStyle = bodyColor;
+      ctx.fill();
+
       const crumbX = W - rightInset - 3;
-      if (crumbX > totalProgressPx + headR) {
+      if (crumbX > headCX + hR * 1.5) {
         ctx.beginPath();
         ctx.roundRect(crumbX - 2.5, cy - 2.5, 5, 5, 1);
-        ctx.fillStyle = overlay
-          ? "rgba(255,255,255,0.55)"
-          : this._shade(waveColor, 1.6);
+        ctx.fillStyle = overlay ? "rgba(255,255,255,0.55)" : this._shade(waveColor, 1.6);
         ctx.fill();
       }
+
       ctx.beginPath();
-      ctx.arc(totalProgressPx, cy, headR * 0.85, 0, Math.PI * 2);
-      ctx.fillStyle = overlay ? "#fff" : waveColor;
+      ctx.arc(headCX, headCY, hR, 0, Math.PI * 2);
+      ctx.fillStyle = bodyColor;
       ctx.fill();
+
       ctx.beginPath();
-      ctx.moveTo(totalProgressPx + headR * 0.4, cy - headR * 0.5);
-      ctx.lineTo(totalProgressPx + headR * 1.1, cy - headR * 1.1);
-      ctx.moveTo(totalProgressPx + headR * 0.4, cy + headR * 0.1);
-      ctx.lineTo(totalProgressPx + headR * 1.1, cy - headR * 0.4);
-      ctx.strokeStyle = overlay ? "#fff" : waveColor;
-      ctx.lineWidth = 1;
+      ctx.moveTo(headCX + hR * 0.5, headCY - hR * 0.6);
+      ctx.quadraticCurveTo(headCX + hR * 1.6, headCY - hR * 1.5, headCX + hR * 2.1, headCY - hR * 1.1);
+      ctx.moveTo(headCX + hR * 0.5, headCY + hR * 0.1);
+      ctx.quadraticCurveTo(headCX + hR * 1.6, headCY - hR * 0.7, headCX + hR * 2.1, headCY - hR * 0.2);
+      ctx.strokeStyle = bodyColor;
+      ctx.lineWidth = 0.9;
       ctx.stroke();
+
       ctx.beginPath();
-      ctx.arc(
-        totalProgressPx + headR * 0.15,
-        cy - headR * 0.3,
-        headR * 0.15,
-        0,
-        Math.PI * 2,
-      );
-      ctx.fillStyle = overlay ? "#333" : this._shade(waveColor, 0.25);
+      ctx.arc(headCX + hR * 0.2, headCY - hR * 0.25, hR * 0.32, 0, Math.PI * 2);
+      ctx.fillStyle = eyeColor;
       ctx.fill();
       return;
     }
@@ -1164,20 +1213,8 @@ class SquigglyProgress {
       ctx.fill();
       ctx.restore();
       ctx.beginPath();
-      ctx.arc(
-        totalProgressPx - glowR * 0.3,
-        cy - glowR * 0.2,
-        glowR * 0.18,
-        0,
-        Math.PI * 2,
-      );
-      ctx.arc(
-        totalProgressPx + glowR * 0.3,
-        cy - glowR * 0.2,
-        glowR * 0.18,
-        0,
-        Math.PI * 2,
-      );
+      ctx.arc(totalProgressPx - glowR * 0.3, cy - glowR * 0.2, glowR * 0.18, 0, Math.PI * 2);
+      ctx.arc(totalProgressPx + glowR * 0.3, cy - glowR * 0.2, glowR * 0.18, 0, Math.PI * 2);
       ctx.fillStyle = overlay ? "#333" : this._shade(waveColor, 0.25);
       ctx.fill();
       return;
@@ -7030,16 +7067,7 @@ function _applyFont(font) {
  * "firefly"  = glowing pulsing head with a fading light-trail behind it
  */
 function _applySquigglyThumbStyle(style) {
-  const s = [
-    "amoeba",
-    "snake",
-    "pacman",
-    "inchworm",
-    "ant",
-    "firefly",
-  ].includes(style)
-    ? style
-    : "circle";
+  const s = ["amoeba", "snake", "pacman", "inchworm", "ant", "firefly"].includes(style) ? style : "circle";
   if (squigglyNP) squigglyNP.setThumbStyle(s);
   if (squigglyOV) squigglyOV.setThumbStyle(s);
 }
