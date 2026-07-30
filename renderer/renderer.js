@@ -447,7 +447,8 @@ const _squigglyWorkerCode = `
     if (style === "firefly") {
       const glowR = headR * (0.75 + 0.25 * Math.sin(phaseOffset * 4));
       const dotSpacing = 8, dotR = 1.3;
-      const bodyEnd = totalProgressPx - headR;
+      const headGap = headR * 2.2;
+      const bodyEnd = totalProgressPx - headGap;
       const span = Math.max(1, bodyEnd - leftInset);
       for (let x = bodyEnd; x > leftInset; x -= dotSpacing) {
         const distT = (bodyEnd - x) / span;
@@ -457,6 +458,18 @@ const _squigglyWorkerCode = `
         ctx.fillStyle = overlay ? "#fff" : waveColor;
         ctx.fill();
         ctx.globalAlpha = 1;
+      }
+      const aheadStart = totalProgressPx + headGap;
+      const rightEdge = W - rightInset;
+      if (aheadStart < rightEdge) {
+        for (let x = aheadStart; x < rightEdge; x += dotSpacing) {
+          ctx.beginPath();
+          ctx.arc(x, cy, dotR * 0.8, 0, Math.PI * 2);
+          ctx.globalAlpha = overlay ? 0.28 : 0.22;
+          ctx.fillStyle = overlay ? "#fff" : waveColor;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
       }
       ctx.save();
       ctx.shadowColor = overlay ? "#fff" : waveColor;
@@ -1193,7 +1206,8 @@ class SquigglyProgress {
       const glowR = headR * (0.75 + 0.25 * Math.sin(phaseOffset * 4));
       const dotSpacing = 8,
         dotR = 1.3;
-      const bodyEnd = totalProgressPx - headR;
+      const headGap = headR * 2.2;
+      const bodyEnd = totalProgressPx - headGap;
       const span = Math.max(1, bodyEnd - leftInset);
       for (let x = bodyEnd; x > leftInset; x -= dotSpacing) {
         const distT = (bodyEnd - x) / span;
@@ -1203,6 +1217,18 @@ class SquigglyProgress {
         ctx.fillStyle = overlay ? "#fff" : waveColor;
         ctx.fill();
         ctx.globalAlpha = 1;
+      }
+      const aheadStart = totalProgressPx + headGap;
+      const rightEdge = W - rightInset;
+      if (aheadStart < rightEdge) {
+        for (let x = aheadStart; x < rightEdge; x += dotSpacing) {
+          ctx.beginPath();
+          ctx.arc(x, cy, dotR * 0.8, 0, Math.PI * 2);
+          ctx.globalAlpha = overlay ? 0.28 : 0.22;
+          ctx.fillStyle = overlay ? "#fff" : waveColor;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
       }
       ctx.save();
       ctx.shadowColor = overlay ? "#fff" : waveColor;
