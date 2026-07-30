@@ -891,8 +891,14 @@ class SquigglyProgress {
     const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
     if (!m) return factor < 1 ? "#0a2e14" : "#ffffff";
     const num = parseInt(m[1], 16);
-    const r = Math.max(0, Math.min(255, Math.round(((num >> 16) & 0xff) * factor)));
-    const g = Math.max(0, Math.min(255, Math.round(((num >> 8) & 0xff) * factor)));
+    const r = Math.max(
+      0,
+      Math.min(255, Math.round(((num >> 16) & 0xff) * factor)),
+    );
+    const g = Math.max(
+      0,
+      Math.min(255, Math.round(((num >> 8) & 0xff) * factor)),
+    );
     const b = Math.max(0, Math.min(255, Math.round((num & 0xff) * factor)));
     return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
   }
@@ -1039,7 +1045,9 @@ class SquigglyProgress {
 
     if (style === "ant") {
       const bodyColor = overlay ? "#fff" : waveColor;
-      const legColor = overlay ? "rgba(255,255,255,0.85)" : this._shade(waveColor, 0.55);
+      const legColor = overlay
+        ? "rgba(255,255,255,0.85)"
+        : this._shade(waveColor, 0.55);
       const eyeColor = overlay ? "#333" : this._shade(waveColor, 0.25);
       const headCX = totalProgressPx,
         headCY = cy;
@@ -1051,7 +1059,8 @@ class SquigglyProgress {
       const gasterX = headCX - headR * 2.55;
 
       const trailEnd = gasterX - gasterRX * 0.7;
-      if (trailEnd > leftInset) this._drawSegmentTrail(ctx, leftInset, trailEnd, cy);
+      if (trailEnd > leftInset)
+        this._drawSegmentTrail(ctx, leftInset, trailEnd, cy);
 
       ctx.beginPath();
       ctx.ellipse(gasterX, cy, gasterRX, gasterRY, 0, 0, Math.PI * 2);
@@ -1102,7 +1111,9 @@ class SquigglyProgress {
       if (crumbX > headCX + hR * 1.5) {
         ctx.beginPath();
         ctx.roundRect(crumbX - 2.5, cy - 2.5, 5, 5, 1);
-        ctx.fillStyle = overlay ? "rgba(255,255,255,0.55)" : this._shade(waveColor, 1.6);
+        ctx.fillStyle = overlay
+          ? "rgba(255,255,255,0.55)"
+          : this._shade(waveColor, 1.6);
         ctx.fill();
       }
 
@@ -1113,9 +1124,19 @@ class SquigglyProgress {
 
       ctx.beginPath();
       ctx.moveTo(headCX + hR * 0.5, headCY - hR * 0.6);
-      ctx.quadraticCurveTo(headCX + hR * 1.6, headCY - hR * 1.5, headCX + hR * 2.1, headCY - hR * 1.1);
+      ctx.quadraticCurveTo(
+        headCX + hR * 1.6,
+        headCY - hR * 1.5,
+        headCX + hR * 2.1,
+        headCY - hR * 1.1,
+      );
       ctx.moveTo(headCX + hR * 0.5, headCY + hR * 0.1);
-      ctx.quadraticCurveTo(headCX + hR * 1.6, headCY - hR * 0.7, headCX + hR * 2.1, headCY - hR * 0.2);
+      ctx.quadraticCurveTo(
+        headCX + hR * 1.6,
+        headCY - hR * 0.7,
+        headCX + hR * 2.1,
+        headCY - hR * 0.2,
+      );
       ctx.strokeStyle = bodyColor;
       ctx.lineWidth = 0.9;
       ctx.stroke();
@@ -1164,8 +1185,20 @@ class SquigglyProgress {
       ctx.fill();
       ctx.restore();
       ctx.beginPath();
-      ctx.arc(totalProgressPx - glowR * 0.3, cy - glowR * 0.2, glowR * 0.18, 0, Math.PI * 2);
-      ctx.arc(totalProgressPx + glowR * 0.3, cy - glowR * 0.2, glowR * 0.18, 0, Math.PI * 2);
+      ctx.arc(
+        totalProgressPx - glowR * 0.3,
+        cy - glowR * 0.2,
+        glowR * 0.18,
+        0,
+        Math.PI * 2,
+      );
+      ctx.arc(
+        totalProgressPx + glowR * 0.3,
+        cy - glowR * 0.2,
+        glowR * 0.18,
+        0,
+        Math.PI * 2,
+      );
       ctx.fillStyle = overlay ? "#333" : this._shade(waveColor, 0.25);
       ctx.fill();
       return;
@@ -7017,7 +7050,9 @@ function _applyFont(font) {
  * "firefly"  = glowing pulsing head with a fading light-trail behind it
  */
 function _applySquigglyThumbStyle(style) {
-  const s = ["amoeba", "snake", "pacman", "ant", "firefly"].includes(style) ? style : "circle";
+  const s = ["amoeba", "snake", "pacman", "ant", "firefly"].includes(style)
+    ? style
+    : "circle";
   if (squigglyNP) squigglyNP.setThumbStyle(s);
   if (squigglyOV) squigglyOV.setThumbStyle(s);
 }
