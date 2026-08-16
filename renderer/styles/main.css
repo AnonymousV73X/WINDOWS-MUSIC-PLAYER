@@ -292,16 +292,6 @@
     transform: translateX(-50%) translateY(0);
   }
 }
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
 :root {
   --bg: #121212;
   --sidebar-bg: #181818;
@@ -316,7 +306,345 @@
   --lyrics-bg: #161616;
   --sidebar-w: 240px;
   --app-font: "Outfit", sans-serif;
+  --ui-scale: 1;
 }
+
+[data-theme="light"] {
+  --bg: #f7f7f5;
+  --sidebar-bg: #ffffff;
+  --surface: #ffffff;
+  --surface-hover: #f1f3f0;
+  --surface-active: color-mix(in srgb, var(--green, #1ed760) 12%, #ffffff);
+  --surface-2: #f2f4f1;
+  --border: #e6e8e3;
+  --text-primary: #1a1c19;
+  --text-secondary: #575a53;
+  --text-muted: #8e9288;
+  --lyrics-bg: #ffffff;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   REFERENCE-MATCHED LIGHT THEME DESIGN SYSTEM (DYNAMIC ACCENT)
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Sidebar */
+[data-theme="light"] .sidebar {
+  background: #ffffff !important;
+  border: 1px solid #e8eae5 !important;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .sidebar-search {
+  background: #f3f5f2 !important;
+  border: 1px solid #e3e6e0 !important;
+  border-radius: 20px !important;
+}
+
+[data-theme="light"] .sidebar-search input {
+  color: #1a1c19 !important;
+  font-weight: 500;
+}
+
+[data-theme="light"] .sidebar-search input::placeholder {
+  color: #8e9288 !important;
+}
+
+[data-theme="light"] .nav-item {
+  color: #444741 !important;
+  border-radius: 8px !important;
+  font-weight: 500 !important;
+}
+
+[data-theme="light"] .nav-item:hover:not(.active) {
+  background: #f2f4f1 !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .nav-item.active {
+  background: color-mix(in srgb, var(--green, #1ed760) 12%, #ffffff) !important;
+  color: #1a1c19 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="light"] .nav-item.active::before {
+  background: var(--green, #1ed760) !important;
+}
+
+/* Table Headers & Track List */
+[data-theme="light"] .col-headers {
+  border-bottom: 1px solid #e6e8e3 !important;
+  color: #72766d !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.5px !important;
+}
+
+[data-theme="light"] .track-row {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .track-row:hover {
+  background: #f2f4f1 !important;
+}
+
+[data-theme="light"] .track-row.active {
+  background: #ffffff !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05) !important;
+  border-radius: 12px !important;
+}
+
+[data-theme="light"] .track-row.active .track-title {
+  color: var(--green, #1ed760) !important;
+  font-weight: 600 !important;
+}
+
+/* Home Hero & Cards */
+[data-theme="light"] .home-hero {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .home-hero h2 {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .home-hero p,
+[data-theme="light"] .home-hero .section-muted,
+[data-theme="light"] .home-hero-stats span {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .section-panel,
+[data-theme="light"] .album-card,
+[data-theme="light"] .playlist-card,
+[data-theme="light"] .eq-layout {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.03) !important;
+  border-radius: 12px !important;
+}
+
+[data-theme="light"] .album-card:hover,
+[data-theme="light"] .playlist-card:hover {
+  background: #ffffff !important;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.07) !important;
+  transform: translateY(-2px);
+}
+
+[data-theme="light"] .album-cover,
+[data-theme="light"] .playlist-cover,
+[data-theme="light"] .artist-card-cover,
+[data-theme="light"] .art-placeholder {
+  background: #e9ebe6 !important;
+}
+
+/* Floating & Main Lyrics Panel Contrast Fixes */
+[data-theme="light"] .lyrics-panel,
+[data-theme="light"] #lyrics-flyout {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06) !important;
+  border-radius: 16px !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .lyrics-header {
+  border-bottom-color: #e6e8e3 !important;
+}
+
+[data-theme="light"] .lyrics-title {
+  color: #1a1c19 !important;
+  opacity: 1 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="light"] .lyrics-action-btn {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .lyrics-action-btn:hover {
+  color: #1a1c19 !important;
+  background: #f2f4f1 !important;
+}
+
+[data-theme="light"] .lyric-line {
+  color: #1a1c19 !important;
+  opacity: 0.45 !important;
+}
+
+[data-theme="light"] .lyric-line:hover {
+  opacity: 0.75 !important;
+}
+
+[data-theme="light"] .lyric-line.active {
+  color: #1a1c19 !important;
+  opacity: 1 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="light"] .synced-badge {
+  background: #ffffff !important;
+  border: 1px solid #d8dcd3 !important;
+  color: var(--green, #1ed760) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06) !important;
+}
+
+/* Track Table Cell Contrast Fixes */
+[data-theme="light"] .col-headers {
+  color: #444741 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="light"] .track-num,
+[data-theme="light"] .track-year,
+[data-theme="light"] .track-duration {
+  color: #575a53 !important;
+  opacity: 1 !important;
+  font-weight: 500 !important;
+}
+
+[data-theme="light"] .track-title {
+  color: #1a1c19 !important;
+  font-weight: 500 !important;
+}
+
+[data-theme="light"] .track-artist {
+  color: #575a53 !important;
+}
+
+/* Now Playing Bar Controls Contrast Fixes */
+[data-theme="light"] #now-playing {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.04) !important;
+}
+
+[data-theme="light"] .np-btn,
+[data-theme="light"] #np-menu-btn,
+[data-theme="light"] #prev-btn,
+[data-theme="light"] #next-btn {
+  color: #444741 !important;
+}
+
+[data-theme="light"] .np-btn:hover,
+[data-theme="light"] #np-menu-btn:hover,
+[data-theme="light"] #prev-btn:hover,
+[data-theme="light"] #next-btn:hover {
+  color: #1a1c19 !important;
+  opacity: 1 !important;
+}
+
+[data-theme="light"] .np-play {
+  background: #1a1c19 !important;
+  color: #ffffff !important;
+}
+
+[data-theme="light"] .np-play svg {
+  fill: #ffffff !important;
+}
+
+[data-theme="light"] .np-time {
+  color: #575a53 !important;
+  font-weight: 500 !important;
+}
+
+/* Buttons & Badges */
+[data-theme="light"] .action-btn-circle,
+[data-theme="light"] .action-btn-text,
+[data-theme="light"] .playlist-import-fab {
+  background: #ffffff !important;
+  border: 1px solid #d8dcd3 !important;
+  color: var(--green, #1ed760) !important;
+  border-radius: 20px !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="light"] .action-btn-circle:hover,
+[data-theme="light"] .action-btn-text:hover,
+[data-theme="light"] .playlist-import-fab:hover {
+  background: color-mix(in srgb, var(--green, #1ed760) 12%, #ffffff) !important;
+  border-color: var(--green, #1ed760) !important;
+}
+
+/* Settings Controls & Form Inputs */
+[data-theme="light"] .settings-toggle-btn {
+  background: #f0f2ee !important;
+  border-color: #d8dcd3 !important;
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .settings-toggle-btn:hover:not(.active) {
+  background: #e4e8e1 !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .settings-toggle-btn.active {
+  background: var(--green, #1ed760) !important;
+  color: #000000 !important;
+  border-color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .settings-row input[type="checkbox"],
+[data-theme="light"] .eq-enable input[type="checkbox"] {
+  background: #d8dcd3 !important;
+}
+
+[data-theme="light"] .settings-row input[type="checkbox"]::after,
+[data-theme="light"] .eq-enable input[type="checkbox"]::after {
+  background: #ffffff !important;
+}
+
+[data-theme="light"] .settings-row input[type="checkbox"]:checked,
+[data-theme="light"] .eq-enable input[type="checkbox"]:checked {
+  background: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .settings-row input[type="checkbox"]:checked::after,
+[data-theme="light"] .eq-enable input[type="checkbox"]:checked::after {
+  background: #ffffff !important;
+}
+
+[data-theme="light"] #accent-dynamic-btn {
+  border-color: #d8dcd3 !important;
+}
+
+/* Search Suggestions Popup in Light Theme */
+[data-theme="light"] .search-suggestions {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.08) !important;
+}
+
+[data-theme="light"] .search-suggestions button {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .search-suggestions button:hover {
+  background: #f2f4f1 !important;
+}
+
+[data-theme="light"] .search-suggestions small {
+  color: #575a53 !important;
+}
+
+/* Typography Crispness Optimization */
+[data-theme="light"] body,
+[data-theme="light"] input,
+[data-theme="light"] button {
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+  text-rendering: optimizeLegibility !important;
+}
+
+/* Active Track Row — Pure White Tile */
+[data-theme="light"] .track-row.active {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04) !important;
+  border-radius: 10px !important;
+}
+
+
 
 /* Global text selection — use accent green instead of native blue */
 ::selection {
@@ -5825,6 +6153,21 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 /* ── Floating art card (hidden by default, shown ≤460px) ── */
 .np-float-card {
   display: none;
+}
+
+/* Light theme: white frosted pill instead of dark */
+[data-theme="light"] .np-float-card {
+  background: rgba(255, 255, 255, 0.92) !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.10) !important;
+}
+
+[data-theme="light"] .np-float-title {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .np-float-artist {
+  color: #575a53 !important;
 }
 
 /* ≤460px: float card replaces the in-bar left panel */

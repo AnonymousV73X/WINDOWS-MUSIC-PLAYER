@@ -3082,6 +3082,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     playPrevious();
   });
 
+  // Sent by main process on 'show' (and potentially 'restore') to get the
+  // authoritative playing state from the renderer and sync the taskbar
+  // thumbnail toolbar icon immediately — fixes the race where the thumbar
+  // shows the play icon even when a song is already playing on first show.
+  window.novaAPI.on("player:request-thumbar-sync", () => {
+    _smtcStatus(state.isPlaying ? "playing" : "paused");
+  });
+
   // Check for file opened on startup
   window.novaAPI
     .invoke("app:get-startup-file")
@@ -6310,6 +6318,8 @@ async function _loadSettings() {
     _applyVolumeBarMode(state.settings.volumeBarMode || "hover");
     _applyNavMode(state.settings.navMode || "hover");
     _applyFont(state.settings.font || "outfit");
+    _applyThemeMode(state.settings.theme || "dark");
+    _applyUiScale(state.settings.uiScale || "1");
     // Apply squiggly thumb style (circle = default, amoeba = rounded rect)
     _applySquigglyThumbStyle(state.settings.squigglyThumbStyle || "circle");
     if (
@@ -7040,6 +7050,18 @@ function _applyFont(font) {
   document.body.style.fontFamily = `var(--app-font)`;
 }
 
+function _applyThemeMode(theme) {
+  const mode = theme === "light" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", mode);
+}
+
+function _applyUiScale(scale) {
+  const n = parseFloat(scale);
+  const s = (!isNaN(n) && n >= 0.7 && n <= 2.0) ? n.toFixed(2) : "1.00";
+  document.documentElement.style.setProperty("--ui-scale", s);
+  document.body.style.zoom = s;
+}
+
 /**
  * Apply the scrubber thumb style to both squiggly progress instances.
  * "circle"   = perfect filled circle (default)
@@ -7461,6 +7483,25 @@ function renderSettings() {
         </div>
       </div>
 
+      <!-- Row 2b: Theme Mode & Scaling -->
+      <div class="section-panel">
+        <div class="section-panel-title">Appearance &amp; Scaling</div>
+        <div class="settings-row settings-row--wrap">
+          <span>Theme mode</span>
+          <div class="settings-btn-group">
+            <button type="button" class="theme-mode-btn settings-toggle-btn${(state.settings.theme || "dark") === "dark" ? " active" : ""}" data-theme="dark">Dark (Default)</button>
+            <button type="button" class="theme-mode-btn settings-toggle-btn${(state.settings.theme || "dark") === "light" ? " active" : ""}" data-theme="light">Light</button>
+          </div>
+        </div>
+        <div class="settings-row settings-row--wrap">
+          <span>Interface scaling <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(for high-DPI / 1440p displays)</span></span>
+          <div style="display:flex;align-items:center;gap:12px;flex:1;min-width:180px;max-width:320px;">
+            <input type="range" id="setting-ui-scale" min="70" max="200" step="1" value="${Math.round(parseFloat(state.settings.uiScale || '1') * 100)}" style="flex:1;accent-color:var(--green);cursor:default;">
+            <span id="setting-ui-scale-label" style="font-size:13px;font-weight:600;color:var(--text-primary);font-variant-numeric:tabular-nums;min-width:42px;text-align:right;">${Math.round(parseFloat(state.settings.uiScale || '1') * 100)}%</span>
+          </div>
+        </div>
+      </div>
+
       <!-- Row 3: Font -->
       <div class="section-panel">
         <div class="section-panel-title">Font</div>
@@ -7657,6 +7698,35 @@ function renderSettings() {
       saveSetting("navMode", mode);
     });
   });
+
+  document.querySelectorAll(".theme-mode-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const theme = btn.dataset.theme;
+      document.querySelectorAll(".theme-mode-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.theme === theme);
+      });
+      state.settings.theme = theme;
+      _applyThemeMode(theme);
+      saveSetting("theme", theme);
+    });
+  });
+
+  const uiScaleSlider = $("setting-ui-scale");
+  const uiScaleLabel = $("setting-ui-scale-label");
+  if (uiScaleSlider) {
+    uiScaleSlider.addEventListener("input", (e) => {
+      const pct = parseInt(e.target.value, 10);
+      const scale = (pct / 100).toFixed(2);
+      if (uiScaleLabel) uiScaleLabel.textContent = pct + "%";
+      state.settings.uiScale = scale;
+      _applyUiScale(scale);
+    });
+    uiScaleSlider.addEventListener("change", (e) => {
+      const pct = parseInt(e.target.value, 10);
+      const scale = (pct / 100).toFixed(2);
+      saveSetting("uiScale", scale);
+    });
+  }
 
   document.querySelectorAll(".font-pick-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -10159,6 +10229,7 @@ function _attachEagerThumb(img, artPath, size, trackId) {
     return;
   }
 
+  
   // No protocol URL available - go straight to IPC fallback
   _cancelFallback();
   _loadThumbFallback(img, artPath, size);

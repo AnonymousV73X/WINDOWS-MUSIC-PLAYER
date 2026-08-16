@@ -132,10 +132,10 @@ class SettingsService {
     // Set CSS custom properties
     root.style.setProperty('--accent', this._settings.accentColor || '#1DB954');
 
-    if (this._settings.theme === 'dark') {
-      root.setAttribute('data-theme', 'dark');
+    if (this._settings.theme === 'light') {
+      root.setAttribute('data-theme', 'light');
     } else {
-      root.removeAttribute('data-theme');
+      root.setAttribute('data-theme', 'dark');
     }
   }
 

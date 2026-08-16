@@ -414,8 +414,18 @@ function createMainWindow() {
   mainWindow.on("show", () => {
     setTimeout(() => {
       if (global.updateThumbarButtons && mainWindow && !mainWindow.isDestroyed()) {
-        console.log("[thumbar] Applying buttons after show event + 200ms delay");
-        global.updateThumbarButtons(false);
+        // Use the last-known playing state as an immediate best-guess so the
+        // icon is never wrong on first paint.  On cold start _thumbarIsPlaying
+        // is undefined → false (play icon), which is the correct default.
+        const knownState = !!global._thumbarIsPlaying;
+        console.log("[thumbar] Applying buttons after show event + 200ms delay, knownState:", knownState);
+        global.updateThumbarButtons(knownState);
+        // Ask the renderer for the authoritative playing state and sync the
+        // thumbar immediately if it differs (handles the race where the
+        // renderer starts playing before it has sent smtc:update-status).
+        if (!mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("player:request-thumbar-sync");
+        }
       }
     }, 200);
   });
