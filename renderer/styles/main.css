@@ -813,6 +813,19 @@ input[type="range"] {
   accent-color: var(--green, #1ed760) !important;
 }
 
+/* Unfilled track for native range sliders (Equalizer bands, Volume Boost,
+   UI Scaling, Safe Volume) defaults to a dark UA track color in some
+   Chromium/Electron builds even when color-scheme is light. Force a
+   light-grey unfilled track explicitly; accent-color above still owns
+   the thumb + filled portion. */
+[data-theme="light"] input[type="range"]::-webkit-slider-runnable-track {
+  background: #d8dcd3 !important;
+}
+
+[data-theme="light"] input[type="range"]::-moz-range-track {
+  background: #d8dcd3 !important;
+}
+
 /* Typography Crispness Optimization */
 [data-theme="light"] body,
 [data-theme="light"] input,
