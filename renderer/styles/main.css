@@ -813,17 +813,23 @@ input[type="range"] {
   accent-color: var(--green, #1ed760) !important;
 }
 
-/* Unfilled track for native range sliders (Equalizer bands, Volume Boost,
-   UI Scaling, Safe Volume) defaults to a dark UA track color in some
-   Chromium/Electron builds even when color-scheme is light. Force a
-   light-grey unfilled track explicitly; accent-color above still owns
-   the thumb + filled portion. */
-[data-theme="light"] input[type="range"]::-webkit-slider-runnable-track {
-  background: #d8dcd3 !important;
+/* Round the track corners for horizontal sliders (Volume Boost, UI Scaling,
+   Safe Volume) in light mode. No background is set here — leaving that
+   alone preserves Chromium's native accent-color split fill (colored
+   left-of-thumb, neutral right-of-thumb); overriding it flattens the
+   fill to one solid tone and squares the ends. */
+[data-theme="light"] #setting-safe-volume::-webkit-slider-runnable-track,
+[data-theme="light"] #setting-volume-boost::-webkit-slider-runnable-track,
+[data-theme="light"] #setting-ui-scale::-webkit-slider-runnable-track,
+[data-theme="light"] #eq-boost-slider::-webkit-slider-runnable-track {
+  border-radius: 999px;
 }
 
-[data-theme="light"] input[type="range"]::-moz-range-track {
-  background: #d8dcd3 !important;
+[data-theme="light"] #setting-safe-volume::-moz-range-track,
+[data-theme="light"] #setting-volume-boost::-moz-range-track,
+[data-theme="light"] #setting-ui-scale::-moz-range-track,
+[data-theme="light"] #eq-boost-slider::-moz-range-track {
+  border-radius: 999px;
 }
 
 /* Typography Crispness Optimization */
