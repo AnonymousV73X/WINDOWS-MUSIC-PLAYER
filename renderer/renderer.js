@@ -591,10 +591,7 @@ class SquigglyProgress {
     this._heightTarget = 0;
     this._useWorker = false;
     this.worker = null;
-    this.themeMode =
-      document.documentElement.getAttribute("data-theme") === "light"
-        ? "light"
-        : "dark";
+    this.themeMode = (document.documentElement.getAttribute("data-theme") === "light") ? "light" : "dark";
 
     // Common config
     this.waveLength = opts.waveLength ?? 48;
@@ -816,9 +813,9 @@ class SquigglyProgress {
       ctx.lineTo(W, cy);
       ctx.strokeStyle = this.overlay
         ? "rgba(255,255,255,0.13)"
-        : this.themeMode === "light"
-          ? "rgba(0,0,0,0.18)"
-          : "rgba(255,255,255,0.24)";
+        : (this.themeMode === "light"
+            ? "rgba(0,0,0,0.18)"
+            : "rgba(255,255,255,0.24)");
       ctx.lineWidth = this.strokeWidth * 0.8;
       ctx.lineCap = "round";
       ctx.stroke();
@@ -3105,9 +3102,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   // thumbnail toolbar icon immediately — fixes the race where the thumbar
   // shows the play icon even when a song is already playing on first show.
   window.novaAPI.on("player:request-thumbar-sync", () => {
-    const isPlaying =
-      state.isPlaying ||
-      (audioEngine && audioEngine.audio && !audioEngine.audio.paused);
+    const isPlaying = state.isPlaying || (audioEngine && audioEngine.audio && !audioEngine.audio.paused);
     _smtcStatus(isPlaying ? "playing" : "paused");
   });
 
@@ -7084,7 +7079,7 @@ function _applyThemeMode(theme) {
 
 function _applyUiScale(scale) {
   const n = parseFloat(scale);
-  const s = !isNaN(n) && n >= 0.7 && n <= 2.0 ? n.toFixed(2) : "1.00";
+  const s = (!isNaN(n) && n >= 0.7 && n <= 2.0) ? n.toFixed(2) : "1.00";
   document.documentElement.style.setProperty("--ui-scale", s);
   document.body.style.zoom = s;
 }
@@ -7530,8 +7525,8 @@ function renderSettings() {
         <div class="settings-row settings-row--wrap">
           <span>Interface scaling <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(for high-DPI / 1440p displays)</span></span>
           <div style="display:flex;align-items:center;gap:12px;flex:1;min-width:180px;max-width:320px;">
-            <input type="range" id="setting-ui-scale" min="100" max="200" step="1" value="${Math.round(parseFloat(state.settings.uiScale || "1") * 100)}" style="flex:1;cursor:default;">
-            <span id="setting-ui-scale-label" style="font-size:13px;font-weight:600;color:var(--text-primary);font-variant-numeric:tabular-nums;min-width:42px;text-align:right;">${Math.round(parseFloat(state.settings.uiScale || "1") * 100)}%</span>
+            <input type="range" id="setting-ui-scale" min="100" max="200" step="1" value="${Math.round(parseFloat(state.settings.uiScale || '1') * 100)}" style="flex:1;cursor:default;">
+            <span id="setting-ui-scale-label" style="font-size:13px;font-weight:600;color:var(--text-primary);font-variant-numeric:tabular-nums;min-width:42px;text-align:right;">${Math.round(parseFloat(state.settings.uiScale || '1') * 100)}%</span>
           </div>
         </div>
       </div>
@@ -7715,6 +7710,7 @@ function renderSettings() {
     const val = parseFloat(input.value) || 0;
     const pct = Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100));
     input.style.setProperty("--range-pct", pct + "%");
+    input.style.setProperty("--range-frac", (pct / 100).toFixed(4));
   };
 
   // v1.1.0 — Safe volume slider
@@ -7943,6 +7939,10 @@ function renderSettings() {
   const hexLabel = $("accent-hex");
 
   function setAccent(hex, updatePicker = true) {
+    if (state.dynamicAccentColor) {
+      state.dynamicAccentColor = false;
+      saveSetting("dynamicAccentColor", false);
+    }
     _applyAccentColor(hex);
     if (hexLabel) hexLabel.textContent = hex;
     if (updatePicker && customPicker) customPicker.value = hex;
@@ -7951,6 +7951,7 @@ function renderSettings() {
       sw.style.borderColor = match ? "#fff" : "transparent";
       sw.classList.toggle("active", match);
     });
+    dynamicBtn?.classList.remove("active");
     saveSetting("accentColor", hex);
   }
 
@@ -7959,12 +7960,10 @@ function renderSettings() {
   });
 
   customPicker?.addEventListener("input", (e) => {
-    if (state.dynamicAccentColor) return;
     setAccent(e.target.value, false);
     if (hexLabel) hexLabel.textContent = e.target.value;
   });
   customPicker?.addEventListener("change", (e) => {
-    if (state.dynamicAccentColor) return;
     setAccent(e.target.value);
   });
 
@@ -8089,12 +8088,14 @@ function renderEqualizer() {
   });
 
   document.querySelectorAll(".eq-band input").forEach((input) => {
+    _updateEqBandPct(input);
     input.addEventListener("input", (e) => {
       const idx = Number(e.target.dataset.band);
       const value = Number(e.target.value);
       state.equalizer[idx] = value;
       const gain = $(`eq-gain-${idx}`);
       if (gain) gain.textContent = `${value} dB`;
+      _updateEqBandPct(e.target);
       ensureEQEngine();
       if (eqEngine) eqEngine.setBandGain(idx, value);
     });
@@ -8116,6 +8117,7 @@ function renderEqualizer() {
       const fillPct = Math.max(0, Math.min(100, pct - 100));
       boostSlider.style.setProperty("--pct", fillPct);
       boostSlider.style.setProperty("--range-pct", fillPct + "%");
+      boostSlider.style.setProperty("--range-frac", (fillPct / 100).toFixed(4));
     };
     _updateBoostTrack(Math.round(state.volumeBoost * 100));
     boostSlider.addEventListener("input", (e) => {
@@ -8144,6 +8146,16 @@ function renderEqualizer() {
 
   // Mark the pill that matches the current state on load
   _setActiveEQPill(_detectActivePreset());
+}
+
+function _updateEqBandPct(input) {
+  if (!input) return;
+  const min = parseFloat(input.min) || -12;
+  const max = parseFloat(input.max) || 12;
+  const val = parseFloat(input.value) || 0;
+  const pct = Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100));
+  input.style.setProperty("--range-pct", pct + "%");
+  input.style.setProperty("--range-frac", (pct / 100).toFixed(4));
 }
 
 function _setActiveEQPill(key) {
@@ -8192,6 +8204,7 @@ function applyEQPreset(values) {
     input.value = state.equalizer[idx];
     const gain = $(`eq-gain-${idx}`);
     if (gain) gain.textContent = `${state.equalizer[idx]} dB`;
+    _updateEqBandPct(input);
   });
   saveSetting("equalizer", state.equalizer);
 }
@@ -10210,7 +10223,7 @@ function _attachEagerThumb(img, artPath, size, trackId) {
     _fallbackFired = false; // allow reveal
     img.style.opacity = "1";
     _fadePlaceholder(img);
-
+    
     // Hide any art-placeholder that _showFinalFallback may have injected
     const container = img.closest(".cover-img-container");
     if (container) {
@@ -10301,6 +10314,7 @@ function _attachEagerThumb(img, artPath, size, trackId) {
     return;
   }
 
+  
   // No protocol URL available - go straight to IPC fallback
   _cancelFallback();
   _loadThumbFallback(img, artPath, size);
