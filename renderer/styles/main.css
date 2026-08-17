@@ -310,17 +310,26 @@
 }
 
 [data-theme="light"] {
-  --bg: #f7f7f5;
-  --sidebar-bg: #ffffff;
+  color-scheme: light;
+  --bg: #f5f6f3;
+  --sidebar-bg: #fafbfa;
   --surface: #ffffff;
-  --surface-hover: #f1f3f0;
+  --surface-hover: #edebe8;
   --surface-active: color-mix(in srgb, var(--green, #1ed760) 12%, #ffffff);
-  --surface-2: #f2f4f1;
-  --border: #e6e8e3;
-  --text-primary: #1a1c19;
+  --surface-2: #edebe8;
+  --border: #e2e4df;
+  --text-primary: #1f211d;
   --text-secondary: #575a53;
-  --text-muted: #8e9288;
-  --lyrics-bg: #ffffff;
+  --text-muted: #8b8f85;
+  --lyrics-bg: #fafbfa;
+}
+
+[data-theme="light"] .splash-screen {
+  background: #f5f6f3 !important;
+}
+
+[data-theme="light"] .splash-title {
+  color: #1f211d !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -434,8 +443,65 @@
 [data-theme="light"] .album-cover,
 [data-theme="light"] .playlist-cover,
 [data-theme="light"] .artist-card-cover,
-[data-theme="light"] .art-placeholder {
+[data-theme="light"] .art-placeholder,
+/* cover-img-container gets an inline backgroundColor from JS (_getDominantColorForTrack);
+   the JS already returns a light neutral in light mode, but this rule acts as a CSS
+   safety net for any brief flash before the JS evaluates the theme. */
+[data-theme="light"] .cover-img-container {
   background: #e9ebe6 !important;
+}
+
+/* Playlist collage cells and vinyl-grid base are hardcoded dark — override for light mode */
+[data-theme="light"] .playlist-cover-cell,
+[data-theme="light"] .playlist-cover-4,
+[data-theme="light"] .track-thumb,
+[data-theme="light"] .playlist-song-thumb,
+[data-theme="light"] .mini-track-thumb,
+[data-theme="light"] #scroll-pill-art {
+  background: #e9ebe6 !important;
+}
+
+/* Playlist card vinyl disc skeleton light mode fix — replace dark hole & black outline rings */
+[data-theme="light"] .playlist-vinyl-disc {
+  box-shadow: 0 0 0 1px #e6e8e3, 0 0 0 2px rgba(0, 0, 0, 0.05), 0 8px 24px rgba(0, 0, 0, 0.12) !important;
+}
+
+[data-theme="light"] .playlist-card:hover .playlist-vinyl-disc {
+  box-shadow: 0 0 0 1px #e6e8e3, 0 0 0 4px rgba(0, 0, 0, 0.08), 0 10px 28px rgba(0, 0, 0, 0.15) !important;
+}
+
+[data-theme="light"] .playlist-vinyl-disc::after {
+  background: #e9ebe6 !important;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Shuffle & Play button in Light Mode — give explicit perimeter border */
+[data-theme="light"] .shuffle-btn,
+[data-theme="light"] .home-shuffle-btn,
+[data-theme="light"] #home-shuffle-btn {
+  border: 1px solid rgba(0, 0, 0, 0.15) !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06) !important;
+}
+
+/* Now Playing floating scroll-to-track pill in Light Mode */
+[data-theme="light"] #scroll-to-track-pill {
+  background: rgba(255, 255, 255, 0.92) !important;
+  border-color: #e6e8e3 !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.03) inset !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] #scroll-to-track-pill:hover {
+  background: #ffffff !important;
+  border-color: var(--accent-color, #f59e0b) !important;
+}
+
+[data-theme="light"] #scroll-pill-title {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] #scroll-pill-artist {
+  color: #6a6e65 !important;
 }
 
 /* Floating & Main Lyrics Panel Contrast Fixes */
@@ -625,6 +691,126 @@
 
 [data-theme="light"] .search-suggestions small {
   color: #575a53 !important;
+}
+
+/* Custom Sort Dropdown in Light Theme */
+[data-theme="light"] .sort-label {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .dropdown-trigger {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  color: #1a1c19 !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03) !important;
+}
+
+[data-theme="light"] .dropdown-trigger:hover {
+  border-color: #d0d4cc !important;
+  background: #fcfdfe !important;
+}
+
+[data-theme="light"] .dropdown-arrow {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .dropdown-menu {
+  background: rgba(255, 255, 255, 0.95) !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.1) !important;
+}
+
+[data-theme="light"] .dropdown-item {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .dropdown-item:hover {
+  background: #f2f4f1 !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .dropdown-item.active {
+  color: var(--green, #1ed760) !important;
+  font-weight: 600 !important;
+}
+
+/* Equalizer Section in Light Theme */
+[data-theme="light"] .eq-preset-group-label {
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .eq-preset-pill {
+  background: #e9ebe6 !important;
+  border-color: #d8dcd3 !important;
+  color: #333631 !important;
+}
+
+[data-theme="light"] .eq-preset-pill:hover {
+  background: #dfe2dc !important;
+  color: #1a1c19 !important;
+  border-color: #c5cac0 !important;
+}
+
+[data-theme="light"] .eq-preset-pill.active {
+  background: var(--accent-color, #f59e0b) !important;
+  border-color: var(--accent-color, #f59e0b) !important;
+  color: #ffffff !important;
+}
+
+[data-theme="light"] .eq-gain {
+  color: #1a1c19 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="light"] .eq-band span {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .eq-enable {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .eq-boost-wrap {
+  border-top-color: #e6e8e3 !important;
+}
+
+[data-theme="light"] .eq-boost-header span:first-child {
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .eq-boost-value {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .eq-boost-ticks span {
+  color: #6a6e65 !important;
+}
+
+/* Accent Dynamic button in Light Mode */
+[data-theme="light"] .accent-dynamic-btn {
+  background: #e9ebe6 !important;
+  color: #575a53 !important;
+  border-color: #d8dcd3 !important;
+}
+
+[data-theme="light"] .accent-dynamic-btn:hover {
+  background: #dfe2dc !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .accent-dynamic-btn.active {
+  background: var(--accent-color, #f59e0b) !important;
+  color: #ffffff !important;
+  border-color: var(--accent-color, #f59e0b) !important;
+}
+
+/* Range input slider accent color (Equalizer, Volume Boost, UI Scaling, Safe Volume) */
+input[type="range"] {
+  accent-color: var(--green, #1ed760);
+}
+
+[data-theme="light"] input[type="range"] {
+  accent-color: var(--green, #1ed760) !important;
 }
 
 /* Typography Crispness Optimization */
@@ -4283,7 +4469,8 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   background: #333;
   border: none;
   outline: none;
-  cursor: default;
+  cursor: pointer;
+  pointer-events: auto;
   flex-shrink: 0;
   position: relative;
   transition: background 0.18s ease;
@@ -4311,6 +4498,27 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 .eq-enable input[type="checkbox"]:checked::after {
   transform: translateX(16px);
   background: #000;
+}
+
+[data-theme="light"] .settings-row input[type="checkbox"],
+[data-theme="light"] .eq-enable input[type="checkbox"] {
+  background: #d8dcd3 !important;
+}
+
+[data-theme="light"] .settings-row input[type="checkbox"]::after,
+[data-theme="light"] .eq-enable input[type="checkbox"]::after {
+  background: #ffffff !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15) !important;
+}
+
+[data-theme="light"] .settings-row input[type="checkbox"]:checked,
+[data-theme="light"] .eq-enable input[type="checkbox"]:checked {
+  background: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .settings-row input[type="checkbox"]:checked::after,
+[data-theme="light"] .eq-enable input[type="checkbox"]:checked::after {
+  background: #ffffff !important;
 }
 
 .eq-layout {

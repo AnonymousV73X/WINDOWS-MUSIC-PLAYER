@@ -203,7 +203,7 @@ const _squigglyWorkerCode = `
   let dpr = 1, cssWidth = 100, cssHeight = 20;
   let progress = 0, playing = false, heightFraction = 0, _heightTarget = 0;
   let phaseOffset = 0, lastFrameTime = null, rafId = null;
-  let waveColor = "#1ed760", overlay = false;
+  let waveColor = "#1ed760", overlay = false, themeMode = "dark";
   let waveLength = 48, lineAmplitude = 3.5, phaseSpeed = 3.5;
   let strokeWidth = 2;
   let thumbWidth = 10.6, thumbHeight = 6, thumbRadius = 4;
@@ -262,7 +262,7 @@ const _squigglyWorkerCode = `
       const pmBodyEnd = totalProgressPx - headR * 0.6;
       if (pmBodyEnd > leftInset) _drawSegmentTrail(leftInset, pmBodyEnd, cy);
       const dotSpacing = 9, dotR = overlay ? 1.6 : 1.4;
-      const dotColor = overlay ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.35)";
+      const dotColor = overlay ? "rgba(255,255,255,0.5)" : (themeMode === "light" ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.35)");
       const n = Math.floor(trackW / dotSpacing);
       for (let i = 0; i <= n; i++) {
         const dx = leftInset + i * dotSpacing;
@@ -301,7 +301,7 @@ const _squigglyWorkerCode = `
         const isLast = dx + dotSpacing > W - rightInset;
         ctx.beginPath();
         ctx.arc(dx, cy, isLast ? dotR * 2 : dotR, 0, Math.PI * 2);
-        ctx.fillStyle = isLast ? _shade(waveColor, 1.7) : (overlay ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.35)");
+        ctx.fillStyle = isLast ? _shade(waveColor, 1.7) : (overlay ? "rgba(255,255,255,0.4)" : (themeMode === "light" ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.35)"));
         ctx.fill();
       }
       ctx.beginPath();
@@ -475,7 +475,7 @@ const _squigglyWorkerCode = `
     const greyStart = progress <= 0 ? leftInset : Math.min(totalProgressPx + thumbR + 1, W);
     if (greyStart < W) {
       ctx.beginPath(); ctx.moveTo(greyStart, cy); ctx.lineTo(W, cy);
-      ctx.strokeStyle = overlay ? "rgba(255,255,255,0.13)" : "rgba(255,255,255,0.1)";
+      ctx.strokeStyle = overlay ? "rgba(255,255,255,0.13)" : (themeMode === "light" ? "rgba(0,0,0,0.18)" : "rgba(255,255,255,0.1)");
       ctx.lineWidth = strokeWidth * 0.8; ctx.lineCap = "round"; ctx.stroke();
     }
     if (progress > 0 && totalProgressPx > leftInset + thumbR * 2) {
@@ -546,6 +546,7 @@ const _squigglyWorkerCode = `
         thumbRadius = msg.thumbRadius ?? thumbRadius;
         thumbStyle = msg.thumbStyle || "circle";
         waveColor = msg.waveColor;
+        themeMode = msg.themeMode || "dark";
         lastFrameTime = performance.now();
         rafId = requestAnimationFrame(_raf);
         break;
@@ -563,6 +564,10 @@ const _squigglyWorkerCode = `
         break;
       case "setWaveColor":
         waveColor = msg.waveColor;
+        break;
+      case "setThemeMode":
+        themeMode = msg.themeMode || "dark";
+        _draw();
         break;
       case "setThumbStyle":
         thumbStyle = msg.thumbStyle || "circle";
@@ -586,6 +591,7 @@ class SquigglyProgress {
     this._heightTarget = 0;
     this._useWorker = false;
     this.worker = null;
+    this.themeMode = (document.documentElement.getAttribute("data-theme") === "light") ? "light" : "dark";
 
     // Common config
     this.waveLength = opts.waveLength ?? 48;
@@ -637,6 +643,7 @@ class SquigglyProgress {
             thumbRadius: this.thumbRadius,
             thumbStyle: this.thumbStyle,
             waveColor: this.waveColor,
+            themeMode: this.themeMode,
           },
           [offscreen],
         );
@@ -806,7 +813,9 @@ class SquigglyProgress {
       ctx.lineTo(W, cy);
       ctx.strokeStyle = this.overlay
         ? "rgba(255,255,255,0.13)"
-        : "rgba(255,255,255,0.1)";
+        : (this.themeMode === "light"
+            ? "rgba(0,0,0,0.18)"
+            : "rgba(255,255,255,0.1)");
       ctx.lineWidth = this.strokeWidth * 0.8;
       ctx.lineCap = "round";
       ctx.stroke();
@@ -1340,6 +1349,12 @@ const _artGradientColors = [
 ];
 
 function _getDominantColorForTrack(track) {
+  // In light mode, always use a neutral light placeholder instead of dark gradient
+  // colors — the cover-img-container background is set inline and would otherwise
+  // produce a black wait screen that clashes with the light UI.
+  if (document.documentElement.getAttribute("data-theme") === "light") {
+    return "#e9ebe6";
+  }
   if (!track) return "#1a1a1a";
   if (_dominantColorCache.has(track.id))
     return _dominantColorCache.get(track.id);
@@ -3087,7 +3102,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   // thumbnail toolbar icon immediately — fixes the race where the thumbar
   // shows the play icon even when a song is already playing on first show.
   window.novaAPI.on("player:request-thumbar-sync", () => {
-    _smtcStatus(state.isPlaying ? "playing" : "paused");
+    const isPlaying = state.isPlaying || (audioEngine && audioEngine.audio && !audioEngine.audio.paused);
+    _smtcStatus(isPlaying ? "playing" : "paused");
   });
 
   // Check for file opened on startup
@@ -7053,6 +7069,12 @@ function _applyFont(font) {
 function _applyThemeMode(theme) {
   const mode = theme === "light" ? "light" : "dark";
   document.documentElement.setAttribute("data-theme", mode);
+  if (squigglyNP && typeof squigglyNP.setThemeMode === "function") {
+    squigglyNP.setThemeMode(mode);
+  }
+  if (squigglyOV && typeof squigglyOV.setThemeMode === "function") {
+    squigglyOV.setThemeMode(mode);
+  }
 }
 
 function _applyUiScale(scale) {
@@ -7442,8 +7464,15 @@ function renderSettings() {
         <div class="settings-row settings-row--wrap"${(state.settings.volumePersistMode || "persist") === "safe" ? "" : ' style="opacity:0.55;"'}>
           <span>Safe volume level</span>
           <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:160px;max-width:280px;">
-            <input type="range" id="setting-safe-volume" min="0" max="100" step="1" value="${Math.round((typeof state.settings.safeVolume === "number" ? state.settings.safeVolume : 0.5) * 100)}" style="flex:1;accent-color:var(--green,#1ed760);cursor:default;">
+            <input type="range" id="setting-safe-volume" min="0" max="100" step="1" value="${Math.round((typeof state.settings.safeVolume === "number" ? state.settings.safeVolume : 0.5) * 100)}" style="flex:1;cursor:default;">
             <span id="setting-safe-volume-label" style="font-size:12px;color:var(--text-secondary);font-variant-numeric:tabular-nums;min-width:36px;text-align:right;">${Math.round((typeof state.settings.safeVolume === "number" ? state.settings.safeVolume : 0.5) * 100)}%</span>
+          </div>
+        </div>
+        <div class="settings-row settings-row--wrap">
+          <span>Volume Boost (up to 200%)</span>
+          <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:160px;max-width:280px;">
+            <input type="range" id="setting-volume-boost" min="100" max="200" step="1" value="${Math.round((typeof state.volumeBoost === "number" ? state.volumeBoost : 1.0) * 100)}" style="flex:1;cursor:default;">
+            <span id="setting-volume-boost-label" style="font-size:12px;color:var(--text-secondary);font-variant-numeric:tabular-nums;min-width:36px;text-align:right;">${Math.round((typeof state.volumeBoost === "number" ? state.volumeBoost : 1.0) * 100)}%</span>
           </div>
         </div>
       </div>
@@ -7473,8 +7502,8 @@ function renderSettings() {
             <span id="accent-hex" style="font-size:12px;color:var(--text-muted);font-variant-numeric:tabular-nums;">${currentAccent}</span>
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-            <button type="button" id="accent-dynamic-btn"
-              style="font-family:inherit;font-size:12px;padding:5px 14px;border-radius:6px;border:1px solid #383838;background:${state.dynamicAccentColor ? "var(--green)" : "#2a2a2a"};color:${state.dynamicAccentColor ? "#000" : "var(--text-secondary)"};cursor:default;transition:background 0.15s,color 0.15s,border-color 0.15s;display:flex;align-items:center;gap:6px;flex-shrink:0;">
+            <button type="button" id="accent-dynamic-btn" class="accent-dynamic-btn${state.dynamicAccentColor ? " active" : ""}"
+              style="font-family:inherit;font-size:12px;padding:5px 14px;border-radius:6px;border:1px solid var(--border);cursor:default;transition:background 0.15s,color 0.15s,border-color 0.15s;display:flex;align-items:center;gap:6px;flex-shrink:0;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
               Dynamic (from album art)
             </button>
@@ -7496,7 +7525,7 @@ function renderSettings() {
         <div class="settings-row settings-row--wrap">
           <span>Interface scaling <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(for high-DPI / 1440p displays)</span></span>
           <div style="display:flex;align-items:center;gap:12px;flex:1;min-width:180px;max-width:320px;">
-            <input type="range" id="setting-ui-scale" min="70" max="200" step="1" value="${Math.round(parseFloat(state.settings.uiScale || '1') * 100)}" style="flex:1;accent-color:var(--green);cursor:default;">
+            <input type="range" id="setting-ui-scale" min="100" max="200" step="1" value="${Math.round(parseFloat(state.settings.uiScale || '1') * 100)}" style="flex:1;cursor:default;">
             <span id="setting-ui-scale-label" style="font-size:13px;font-weight:600;color:var(--text-primary);font-variant-numeric:tabular-nums;min-width:42px;text-align:right;">${Math.round(parseFloat(state.settings.uiScale || '1') * 100)}%</span>
           </div>
         </div>
@@ -7590,10 +7619,15 @@ function renderSettings() {
 
   shuffle?.addEventListener("change", async (e) => {
     state.shuffleEnabled = e.target.checked;
-    $("shuffle-btn").classList.toggle("active", state.shuffleEnabled);
+    if (!state.settings) state.settings = {};
+    state.settings.shuffle = e.target.checked;
+    const sBtn = $("shuffle-btn");
+    if (sBtn) sBtn.classList.toggle("active", state.shuffleEnabled);
     await saveSetting("shuffle", state.shuffleEnabled);
   });
   lyrics?.addEventListener("change", async (e) => {
+    if (!state.settings) state.settings = {};
+    state.settings.showLyrics = e.target.checked;
     await saveSetting("showLyrics", e.target.checked);
     if (e.target.checked && state.currentTrack) openLyricsPanel();
     if (!e.target.checked) closeLyricsPanel();
@@ -7669,11 +7703,22 @@ function renderSettings() {
     });
   });
 
+  const _updateRangePct = (input) => {
+    if (!input) return;
+    const min = parseFloat(input.min) || 0;
+    const max = parseFloat(input.max) || 100;
+    const val = parseFloat(input.value) || 0;
+    const pct = Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100));
+    input.style.setProperty("--range-pct", pct + "%");
+  };
+
   // v1.1.0 — Safe volume slider
   const safeVolSlider = $("setting-safe-volume");
   const safeVolLabel = $("setting-safe-volume-label");
   if (safeVolSlider) {
+    _updateRangePct(safeVolSlider);
     safeVolSlider.addEventListener("input", (e) => {
+      _updateRangePct(e.target);
       const pct = parseInt(e.target.value, 10) || 0;
       const vol = pct / 100;
       if (safeVolLabel) safeVolLabel.textContent = pct + "%";
@@ -7714,7 +7759,9 @@ function renderSettings() {
   const uiScaleSlider = $("setting-ui-scale");
   const uiScaleLabel = $("setting-ui-scale-label");
   if (uiScaleSlider) {
+    _updateRangePct(uiScaleSlider);
     uiScaleSlider.addEventListener("input", (e) => {
+      _updateRangePct(e.target);
       const pct = parseInt(e.target.value, 10);
       const scale = (pct / 100).toFixed(2);
       if (uiScaleLabel) uiScaleLabel.textContent = pct + "%";
@@ -7725,6 +7772,23 @@ function renderSettings() {
       const pct = parseInt(e.target.value, 10);
       const scale = (pct / 100).toFixed(2);
       saveSetting("uiScale", scale);
+    });
+  }
+
+  // Volume boost setting slider (synced with AudioEngine & Equalizer)
+  const volBoostSlider = $("setting-volume-boost");
+  const volBoostLabel = $("setting-volume-boost-label");
+  if (volBoostSlider) {
+    _updateRangePct(volBoostSlider);
+    volBoostSlider.addEventListener("input", (e) => {
+      _updateRangePct(e.target);
+      const pct = Number(e.target.value);
+      state.volumeBoost = pct / 100;
+      if (volBoostLabel) volBoostLabel.textContent = `${pct}%`;
+      audioEngine.setBoost(state.volumeBoost);
+    });
+    volBoostSlider.addEventListener("change", () => {
+      saveSetting("volumeBoost", state.volumeBoost);
     });
   }
 
@@ -8044,7 +8108,9 @@ function renderEqualizer() {
   const boostValue = $("eq-boost-value");
   if (boostSlider) {
     const _updateBoostTrack = (pct) => {
-      boostSlider.style.setProperty("--pct", ((pct - 100) / 100) * 100);
+      const fillPct = Math.max(0, Math.min(100, pct - 100));
+      boostSlider.style.setProperty("--pct", fillPct);
+      boostSlider.style.setProperty("--range-pct", fillPct + "%");
     };
     _updateBoostTrack(Math.round(state.volumeBoost * 100));
     boostSlider.addEventListener("input", (e) => {
@@ -10139,6 +10205,7 @@ function _attachEagerThumb(img, artPath, size, trackId) {
     _fallbackFired = false; // allow reveal
     img.style.opacity = "1";
     _fadePlaceholder(img);
+    
     // Hide any art-placeholder that _showFinalFallback may have injected
     const container = img.closest(".cover-img-container");
     if (container) {
@@ -14168,12 +14235,16 @@ function _setupAudioEvents() {
     startSmoothProgress(cur, dur);
   });
 
-  audioEngine.on("ended", () => _handleTrackEnd());
+  audioEngine.on("ended", () => {
+    _smtcStatus("paused");
+    _handleTrackEnd();
+  });
   audioEngine.on("play", () => {
     state.isPlaying = true;
     _updatePlayPauseIcon(true);
     if (squigglyNP) squigglyNP.setPlaying(true);
     if (squigglyOV) squigglyOV.setPlaying(true);
+    _smtcStatus("playing");
   });
   audioEngine.on("pause", () => {
     state.isPlaying = false;
@@ -14184,6 +14255,7 @@ function _setupAudioEvents() {
     _updatePlayPauseIcon(false);
     if (squigglyNP) squigglyNP.setPlaying(false);
     if (squigglyOV) squigglyOV.setPlaying(false);
+    _smtcStatus("paused");
   });
   audioEngine.on("error", (data) => {
     console.error("Playback error:", data.error, "(code", data.code + ")");

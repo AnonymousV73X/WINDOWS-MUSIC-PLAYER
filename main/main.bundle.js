@@ -43057,8 +43057,12 @@ var require_main = __commonJS({
       mainWindow.on("show", () => {
         setTimeout(() => {
           if (global.updateThumbarButtons && mainWindow && !mainWindow.isDestroyed()) {
-            console.log("[thumbar] Applying buttons after show event + 200ms delay");
-            global.updateThumbarButtons(false);
+            const knownState = !!global._thumbarIsPlaying;
+            console.log("[thumbar] Applying buttons after show event + 200ms delay, knownState:", knownState);
+            global.updateThumbarButtons(knownState);
+            if (!mainWindow.isDestroyed()) {
+              mainWindow.webContents.send("player:request-thumbar-sync");
+            }
           }
         }, 200);
       });

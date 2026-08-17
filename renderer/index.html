@@ -37,10 +37,19 @@
   <link rel="stylesheet" href="styles/figtree.css" id="figtree-css" media="not all">
   <link rel="stylesheet" href="styles/main.css">
   <script>
-    // Activate Figtree CSS once loaded (non-blocking). CSP-safe because
-    // inline <script> is allowed by the worker-src/blob: policy, and
-    // script-src defaults to 'self' which allows inline scripts in
-    // Electron with nodeIntegration enabled.
+    // Early synchronous theme initialization: Read saved theme setting before DOM render
+    // to prevent dark-to-light flash (FOUC) when app starts up.
+    try {
+      var rawSettings = localStorage.getItem("novatune_settings");
+      if (rawSettings) {
+        var parsed = JSON.parse(rawSettings);
+        if (parsed && parsed.theme === "light") {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      }
+    } catch (_) {}
+
+    // Activate Figtree CSS once loaded (non-blocking).
     document.getElementById('figtree-css').addEventListener('load', function () {
       this.media = 'all';
     });
