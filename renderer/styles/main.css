@@ -910,6 +910,33 @@ input[type="range"] {
   border-color: rgba(0, 0, 0, 0.18) !important;
 }
 
+/* ── Equalizer band sliders (vertical) in light mode ──────────────
+   Same root cause as the horizontal sliders above: Chromium's
+   accent-based unfilled-track colour goes near-black for a light/vivid
+   custom accent. These bands are vertical (writing-mode: vertical-rl;
+   direction: rtl), so the fill runs bottom (min) → top (max) — same
+   value normalization as _updateRangePct, consumed here via a
+   "to top" gradient instead of "to right". _updateEqBandPct in
+   renderer.js keeps --range-pct in sync on init/input/preset-apply. */
+[data-theme="light"] .eq-band input::-webkit-slider-runnable-track {
+  background: linear-gradient(
+    to top,
+    var(--green, #1ed760) var(--range-pct, 50%),
+    #d8dcd3 var(--range-pct, 50%)
+  ) !important;
+  border-radius: 999px;
+}
+
+[data-theme="light"] .eq-band input::-moz-range-track {
+  background: #d8dcd3 !important;
+  border-radius: 999px;
+}
+
+[data-theme="light"] .eq-band input::-moz-range-progress {
+  background: var(--green, #1ed760) !important;
+  border-radius: 999px;
+}
+
 /* Typography Crispness Optimization */
 [data-theme="light"] body,
 [data-theme="light"] input,
