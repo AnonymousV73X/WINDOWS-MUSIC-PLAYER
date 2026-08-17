@@ -307,6 +307,7 @@
   --sidebar-w: 240px;
   --app-font: "Outfit", sans-serif;
   --ui-scale: 1;
+  --slider-track-unfilled: #3a3a3a;
 }
 
 [data-theme="light"] {
@@ -322,6 +323,7 @@
   --text-secondary: #575a53;
   --text-muted: #8b8f85;
   --lyrics-bg: #fafbfa;
+  --slider-track-unfilled: #d8dcd3;
 }
 
 [data-theme="light"] .splash-screen {
@@ -799,14 +801,22 @@
 }
 
 [data-theme="light"] .accent-dynamic-btn.active {
-  background: var(--accent-color, #f59e0b) !important;
+  background: var(--green, #1ed760) !important;
   color: #ffffff !important;
-  border-color: var(--accent-color, #f59e0b) !important;
+  border-color: var(--green, #1ed760) !important;
 }
 
 /* Range input slider accent color (Equalizer, Volume Boost, UI Scaling, Safe Volume) */
 input[type="range"] {
   accent-color: var(--green, #1ed760);
+}
+
+/* Dynamic accent button had no active-state style at all in dark mode —
+   toggling it on was visually invisible. */
+.accent-dynamic-btn.active {
+  background: var(--green, #1ed760) !important;
+  color: #000000 !important;
+  border-color: var(--green, #1ed760) !important;
 }
 
 [data-theme="light"] input[type="range"] {
@@ -815,35 +825,39 @@ input[type="range"] {
 
 /* Chromium picks the *unfilled* track's neutral colour based on the
    lightness of accent-color itself — with a light/vivid custom accent
-   (e.g. purple) it swaps to a near-black track, ignoring color-scheme:
-   light. renderer.js already computes --range-pct on these four sliders
-   (init + "input") but nothing ever consumed it. Use it to paint the
-   track ourselves: accent-colored up to the thumb, fixed light-grey
-   after — so the unfilled portion is never accent-dependent. */
-[data-theme="light"] #setting-safe-volume::-webkit-slider-runnable-track,
-[data-theme="light"] #setting-volume-boost::-webkit-slider-runnable-track,
-[data-theme="light"] #setting-ui-scale::-webkit-slider-runnable-track,
-[data-theme="light"] #eq-boost-slider::-webkit-slider-runnable-track {
+   it can swap to a near-black (light mode) or overly-white (dark mode,
+   since color-scheme isn't pinned there) track. renderer.js computes
+   --range-pct/--range-frac on these four sliders (init + "input").
+   Paint the track ourselves: accent-colored up to the thumb, a fixed
+   theme-appropriate grey after — so the unfilled portion never
+   depends on the accent's lightness. The calc() offsets by 8px (half
+   the native ~16px thumb) on each end so the colour boundary lines up
+   with the thumb's visual center instead of the raw value fraction,
+   which otherwise drifts noticeably near the track's ends. */
+#setting-safe-volume::-webkit-slider-runnable-track,
+#setting-volume-boost::-webkit-slider-runnable-track,
+#setting-ui-scale::-webkit-slider-runnable-track,
+#eq-boost-slider::-webkit-slider-runnable-track {
   background: linear-gradient(
     to right,
-    var(--green, #1ed760) var(--range-pct, 50%),
-    #d8dcd3 var(--range-pct, 50%)
+    var(--green, #1ed760) calc(8px + var(--range-frac, 0.5) * (100% - 16px)),
+    var(--slider-track-unfilled) calc(8px + var(--range-frac, 0.5) * (100% - 16px))
   ) !important;
   border-radius: 999px;
 }
 
-[data-theme="light"] #setting-safe-volume::-moz-range-track,
-[data-theme="light"] #setting-volume-boost::-moz-range-track,
-[data-theme="light"] #setting-ui-scale::-moz-range-track,
-[data-theme="light"] #eq-boost-slider::-moz-range-track {
-  background: #d8dcd3 !important;
+#setting-safe-volume::-moz-range-track,
+#setting-volume-boost::-moz-range-track,
+#setting-ui-scale::-moz-range-track,
+#eq-boost-slider::-moz-range-track {
+  background: var(--slider-track-unfilled) !important;
   border-radius: 999px;
 }
 
-[data-theme="light"] #setting-safe-volume::-moz-range-progress,
-[data-theme="light"] #setting-volume-boost::-moz-range-progress,
-[data-theme="light"] #setting-ui-scale::-moz-range-progress,
-[data-theme="light"] #eq-boost-slider::-moz-range-progress {
+#setting-safe-volume::-moz-range-progress,
+#setting-volume-boost::-moz-range-progress,
+#setting-ui-scale::-moz-range-progress,
+#eq-boost-slider::-moz-range-progress {
   background: var(--green, #1ed760) !important;
   border-radius: 999px;
 }
@@ -910,40 +924,41 @@ input[type="range"] {
   border-color: rgba(0, 0, 0, 0.18) !important;
 }
 
-/* ── Equalizer band sliders (vertical) in light mode ──────────────
-   Same root cause as the horizontal sliders above: Chromium's
-   accent-based unfilled-track colour goes near-black for a light/vivid
-   custom accent. These bands are vertical (writing-mode: vertical-rl;
-   direction: rtl), so the fill runs bottom (min) → top (max) — same
-   value normalization as _updateRangePct, consumed here via a
-   "to top" gradient instead of "to right". _updateEqBandPct in
-   renderer.js keeps --range-pct in sync on init/input/preset-apply.
+/* ── Equalizer band sliders (vertical) ─────────────────────────────
+   Same root cause and fix as the horizontal sliders above. Bands are
+   vertical (writing-mode: vertical-rl; direction: rtl), so the fill
+   runs bottom (min) → top (max) — same value normalization as
+   _updateRangePct, consumed here via a "to top" gradient instead of
+   "to right", with the same thumb-radius calc() correction.
+   _updateEqBandPct in renderer.js keeps --range-pct/--range-frac in
+   sync on init/input/preset-apply.
 
-   Track width is unset in the base .eq-band input rule, so it falls
-   back to Chromium's native OS-themed slim line — UNTIL a custom
-   ::-webkit-slider-runnable-track background is added (right below),
-   which drops native theming and expands the track to the input's
-   full auto layout width, producing a thick capsule bar instead of
-   the original slim equalizer look. Pin that width back down. */
-[data-theme="light"] .eq-band input {
+   Track width is unset in the base .eq-band input rule, so it would
+   otherwise fall back to Chromium's native OS-themed slim line —
+   UNTIL a custom ::-webkit-slider-runnable-track background is added
+   (right below), which drops native theming and expands the track to
+   the input's full auto layout width, producing a thick capsule bar
+   instead of the original slim equalizer look. Pin that width down
+   in both themes, since both now get a custom track. */
+.eq-band input {
   width: 4px;
 }
 
-[data-theme="light"] .eq-band input::-webkit-slider-runnable-track {
+.eq-band input::-webkit-slider-runnable-track {
   background: linear-gradient(
     to top,
-    var(--green, #1ed760) var(--range-pct, 50%),
-    #d8dcd3 var(--range-pct, 50%)
+    var(--green, #1ed760) calc(8px + var(--range-frac, 0.5) * (100% - 16px)),
+    var(--slider-track-unfilled) calc(8px + var(--range-frac, 0.5) * (100% - 16px))
   ) !important;
   border-radius: 999px;
 }
 
-[data-theme="light"] .eq-band input::-moz-range-track {
-  background: #d8dcd3 !important;
+.eq-band input::-moz-range-track {
+  background: var(--slider-track-unfilled) !important;
   border-radius: 999px;
 }
 
-[data-theme="light"] .eq-band input::-moz-range-progress {
+.eq-band input::-moz-range-progress {
   background: var(--green, #1ed760) !important;
   border-radius: 999px;
 }
