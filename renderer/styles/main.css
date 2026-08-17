@@ -813,15 +813,22 @@ input[type="range"] {
   accent-color: var(--green, #1ed760) !important;
 }
 
-/* Round the track corners for horizontal sliders (Volume Boost, UI Scaling,
-   Safe Volume) in light mode. No background is set here — leaving that
-   alone preserves Chromium's native accent-color split fill (colored
-   left-of-thumb, neutral right-of-thumb); overriding it flattens the
-   fill to one solid tone and squares the ends. */
+/* Chromium picks the *unfilled* track's neutral colour based on the
+   lightness of accent-color itself — with a light/vivid custom accent
+   (e.g. purple) it swaps to a near-black track, ignoring color-scheme:
+   light. renderer.js already computes --range-pct on these four sliders
+   (init + "input") but nothing ever consumed it. Use it to paint the
+   track ourselves: accent-colored up to the thumb, fixed light-grey
+   after — so the unfilled portion is never accent-dependent. */
 [data-theme="light"] #setting-safe-volume::-webkit-slider-runnable-track,
 [data-theme="light"] #setting-volume-boost::-webkit-slider-runnable-track,
 [data-theme="light"] #setting-ui-scale::-webkit-slider-runnable-track,
 [data-theme="light"] #eq-boost-slider::-webkit-slider-runnable-track {
+  background: linear-gradient(
+    to right,
+    var(--green, #1ed760) var(--range-pct, 50%),
+    #d8dcd3 var(--range-pct, 50%)
+  ) !important;
   border-radius: 999px;
 }
 
@@ -829,6 +836,15 @@ input[type="range"] {
 [data-theme="light"] #setting-volume-boost::-moz-range-track,
 [data-theme="light"] #setting-ui-scale::-moz-range-track,
 [data-theme="light"] #eq-boost-slider::-moz-range-track {
+  background: #d8dcd3 !important;
+  border-radius: 999px;
+}
+
+[data-theme="light"] #setting-safe-volume::-moz-range-progress,
+[data-theme="light"] #setting-volume-boost::-moz-range-progress,
+[data-theme="light"] #setting-ui-scale::-moz-range-progress,
+[data-theme="light"] #eq-boost-slider::-moz-range-progress {
+  background: var(--green, #1ed760) !important;
   border-radius: 999px;
 }
 
