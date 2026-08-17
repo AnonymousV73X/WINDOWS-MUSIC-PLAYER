@@ -941,7 +941,7 @@ input[type="range"] {
    instead of the original slim equalizer look. Pin that width down
    in both themes, since both now get a custom track. */
 .eq-band input {
-  width: 4px;
+  width: 2px;
 }
 
 .eq-band input::-webkit-slider-runnable-track {
