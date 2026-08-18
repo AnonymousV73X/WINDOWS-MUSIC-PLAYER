@@ -410,19 +410,28 @@
 
 /* Home Hero & Cards */
 [data-theme="light"] .home-hero {
-  background: #ffffff !important;
-  border: 1px solid #e6e8e3 !important;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.72) 0%, rgba(246, 248, 244, 0.48) 100%) !important;
+  backdrop-filter: blur(24px) saturate(190%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(190%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.85) !important;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.05),
+              0 1px 2px rgba(0, 0, 0, 0.02),
+              inset 0 1px 1px 0 rgba(255, 255, 255, 0.9) !important;
+  border-radius: 16px !important;
+}
+
+[data-theme="light"] .home-hero-bg {
+  display: none !important;
 }
 
 [data-theme="light"] .home-hero h2 {
-  color: #1a1c19 !important;
+  color: #111310 !important;
 }
 
 [data-theme="light"] .home-hero p,
 [data-theme="light"] .home-hero .section-muted,
 [data-theme="light"] .home-hero-stats span {
-  color: #575a53 !important;
+  color: #43463f !important;
 }
 
 [data-theme="light"] .section-panel,
@@ -483,16 +492,32 @@
   fill: #ffffff !important;
 }
 
-/* Shuffle & Play & Custom Queue buttons in Light Mode */
+/* Shuffle & Play, Custom Queue, Settings toggles & EQ pills in Light Mode */
 [data-theme="light"] .shuffle-btn,
 [data-theme="light"] .home-shuffle-btn,
 [data-theme="light"] #shuffle-play-btn,
 [data-theme="light"] #home-shuffle-btn,
 [data-theme="light"] .section-primary-btn,
-[data-theme="light"] .cqb-home-btn {
+[data-theme="light"] .cqb-home-btn,
+[data-theme="light"] .settings-toggle-btn.active,
+[data-theme="light"] .accent-dynamic-btn.active,
+[data-theme="light"] .eq-preset-pill.active,
+[data-theme="light"] .help-contact-btn,
+[data-theme="light"] .help-version-btn .version-badge {
   border: 1px solid rgba(0, 0, 0, 0.15) !important;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06) !important;
-  color: #ffffff !important;
+  color: #f5f6f3 !important;
+}
+
+[data-theme="light"] #help-check-update-btn {
+  background: #f0f2ee !important;
+  border: 1px solid #d8dcd3 !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] #help-check-update-btn:hover {
+  background: #e4e8e1 !important;
+  color: #000000 !important;
 }
 
 /* Now Playing floating scroll-to-track pill in Light Mode */
@@ -658,7 +683,7 @@
 
 [data-theme="light"] .settings-toggle-btn.active {
   background: var(--green, #1ed760) !important;
-  color: #000000 !important;
+  color: #f5f6f3 !important;
   border-color: var(--green, #1ed760) !important;
 }
 
@@ -766,7 +791,7 @@
 [data-theme="light"] .eq-preset-pill.active {
   background: var(--green, #1ed760) !important;
   border-color: var(--green, #1ed760) !important;
-  color: #ffffff !important;
+  color: #f5f6f3 !important;
 }
 
 [data-theme="light"] .eq-gain {
@@ -812,7 +837,7 @@
 
 [data-theme="light"] .accent-dynamic-btn.active {
   background: var(--green, #1ed760) !important;
-  color: #ffffff !important;
+  color: #f5f6f3 !important;
   border-color: var(--green, #1ed760) !important;
 }
 
@@ -825,7 +850,7 @@ input[type="range"] {
    toggling it on was visually invisible. */
 .accent-dynamic-btn.active {
   background: var(--green, #1ed760) !important;
-  color: #000000 !important;
+  color: var(--text-secondary) !important;
   border-color: var(--green, #1ed760) !important;
 }
 
@@ -908,20 +933,20 @@ input[type="range"] {
    (#282828 / near-black glass) with no light-mode variant. */
 [data-theme="light"] [data-tooltip]::before,
 [data-theme="light"] .sidebar-tooltip-portal {
-  background: #2a2c27 !important;
-  color: #f5f6f3 !important;
-  border-color: #3d403a !important;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18) !important;
+  background: #ffffff !important;
+  color: #1a1c19 !important;
+  border: 1px solid rgba(0, 0, 0, 0.12) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1) !important;
 }
 
 [data-theme="light"] [data-tooltip]::after {
-  border-top-color: #2a2c27 !important;
+  border-top-color: #ffffff !important;
 }
 
 [data-theme="light"] .sidebar-help-btn[data-tooltip]::after,
 [data-theme="light"] #float-nav-trigger[data-tooltip]::after,
 [data-theme="light"] #lyrics-toggle-btn[data-tooltip]::after {
-  border-bottom-color: #2a2c27 !important;
+  border-bottom-color: #ffffff !important;
 }
 
 /* ── Floating nav card (icon-strip nav, ≤950px) in light mode ── */
@@ -1117,13 +1142,16 @@ body.overlay-visible .titlebar {
   cursor: pointer; /* v2.9: clickable — toggles floating menu */
 }
 
-.titlebar-logo svg,
-.titlebar-logo svg * {
-  width: 8px;
-  height: 8px;
-  fill: #ffffff !important;
+.titlebar-logo svg {
+  width: 6px;
+  height: 6px;
   display: block;
   margin-left: 2px;
+}
+
+.titlebar-logo svg,
+.titlebar-logo svg * {
+  fill: #ffffff !important;
 }
 
 button,
@@ -1546,7 +1574,7 @@ textarea {
   align-items: center;
   gap: 8px;
   background: var(--green);
-  color: #f0f2ed;
+  color: var(--text-secondary);
   border: none;
   border-radius: 8px;
   padding: 8px 18px;
@@ -4260,7 +4288,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 
 .settings-toggle-btn.active {
   background: var(--green);
-  color: #000;
+  color: var(--text-secondary);
   border-color: var(--green);
 }
 
@@ -4325,17 +4353,28 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   gap: 6px;
   padding: 8px 16px;
   background: var(--green);
-  color: #fff;
+  color: var(--text-secondary);
   font-weight: 600;
   font-size: 13px;
   border-radius: 8px;
   text-decoration: none;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
   flex-shrink: 0;
 }
 
 .help-contact-btn:hover {
   background: var(--green-hover);
+}
+
+#help-check-update-btn {
+  color: var(--text-secondary);
+  background: #2a2a2a;
+  border: 1px solid #383838;
+}
+
+#help-check-update-btn:hover {
+  background: #333333;
+  color: #ffffff;
 }
 
 .help-version-btn {
@@ -4364,7 +4403,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 
 .help-version-btn .version-badge {
   background: var(--green);
-  color: #000;
+  color: var(--text-secondary);
   padding: 2px 8px;
   border-radius: 12px;
   font-size: 12px;
@@ -4561,7 +4600,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   border: 0;
   border-radius: 8px;
   background: var(--green);
-  color: #f0f2ed;
+  color: var(--text-secondary);
   font-family: inherit;
   font-size: 13px;
   font-weight: 800;
@@ -4865,7 +4904,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 
 .eq-preset-pill.active {
   background: var(--green);
-  color: #000;
+  color: var(--text-secondary);
   border-color: var(--green);
 }
 
