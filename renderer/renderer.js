@@ -472,11 +472,12 @@ const _squigglyWorkerCode = `
     const waveEndPx = Math.max(0, totalProgressPx - thumbR - 1);
     const waveProgressPx = W * (progress > matchedWaveEndpoint ? progress : _lerp(minWaveEndpoint, matchedWaveEndpoint, _lerpInv(0, matchedWaveEndpoint, progress)));
 
-    const greyStart = progress <= 0 ? leftInset : Math.min(totalProgressPx + thumbR + 1, W);
-    if (greyStart < W) {
-      ctx.beginPath(); ctx.moveTo(greyStart, cy); ctx.lineTo(W, cy);
-      ctx.strokeStyle = overlay ? "rgba(255,255,255,0.13)" : (themeMode === "light" ? "rgba(0,0,0,0.18)" : "rgba(255,255,255,0.24)");
-      ctx.lineWidth = strokeWidth * 0.8; ctx.lineCap = "round"; ctx.stroke();
+    const greyEnd = W - rightInset;
+    const greyStart = progress <= 0 ? leftInset : Math.min(totalProgressPx + thumbR + 1, greyEnd);
+    if (greyStart < greyEnd) {
+      ctx.beginPath(); ctx.moveTo(greyStart, cy); ctx.lineTo(greyEnd, cy);
+      ctx.strokeStyle = overlay ? "rgba(255,255,255,0.15)" : (themeMode === "light" ? "rgba(0,0,0,0.14)" : "rgba(255,255,255,0.15)");
+      ctx.lineWidth = 2.3; ctx.lineCap = "round"; ctx.stroke();
     }
     if (progress > 0 && totalProgressPx > leftInset + thumbR * 2) {
       ctx.beginPath(); ctx.arc(leftInset, cy, strokeWidth / 2, 0, Math.PI * 2);
@@ -808,18 +809,21 @@ class SquigglyProgress {
             this._lerpInv(0, this.matchedWaveEndpoint, progress),
           ));
 
+    const greyEnd = W - rightInset;
     const greyStart =
-      progress <= 0 ? leftInset : Math.min(totalProgressPx + thumbR + 1, W);
-    if (greyStart < W) {
+      progress <= 0
+        ? leftInset
+        : Math.min(totalProgressPx + thumbR + 1, greyEnd);
+    if (greyStart < greyEnd) {
       ctx.beginPath();
       ctx.moveTo(greyStart, cy);
-      ctx.lineTo(W, cy);
+      ctx.lineTo(greyEnd, cy);
       ctx.strokeStyle = this.overlay
-        ? "rgba(255,255,255,0.13)"
+        ? "rgba(255,255,255,0.15)"
         : this.themeMode === "light"
-          ? "rgba(0,0,0,0.18)"
-          : "rgba(255,255,255,0.24)";
-      ctx.lineWidth = this.strokeWidth * 0.8;
+          ? "rgba(0,0,0,0.14)"
+          : "rgba(255,255,255,0.15)";
+      ctx.lineWidth = 2.3;
       ctx.lineCap = "round";
       ctx.stroke();
     }
@@ -893,6 +897,18 @@ class SquigglyProgress {
       this.worker.postMessage({
         type: "setThumbStyle",
         thumbStyle: this.thumbStyle,
+      });
+      return;
+    }
+    this._draw();
+  }
+
+  setThemeMode(mode) {
+    this.themeMode = mode || "dark";
+    if (this._useWorker && this.worker) {
+      this.worker.postMessage({
+        type: "setThemeMode",
+        themeMode: this.themeMode,
       });
       return;
     }
@@ -7086,7 +7102,9 @@ function _applyUiScale(scale) {
   const n = parseFloat(scale);
   const s = !isNaN(n) && n >= 0.7 && n <= 2.0 ? n.toFixed(2) : "1.00";
   document.documentElement.style.setProperty("--ui-scale", s);
+  document.documentElement.style.overflow = "hidden";
   document.body.style.zoom = s;
+  document.body.style.overflow = "hidden";
 }
 
 /**

@@ -834,6 +834,17 @@ input[type="range"] {
    the native ~16px thumb) on each end so the colour boundary lines up
    with the thumb's visual center instead of the raw value fraction,
    which otherwise drifts noticeably near the track's ends. */
+/* Disable native accent-color rendering so pseudo-element track/thumb
+   overrides actually take effect in Chromium/Electron */
+#setting-safe-volume,
+#setting-volume-boost,
+#setting-ui-scale,
+#eq-boost-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+
 #setting-safe-volume::-webkit-slider-runnable-track,
 #setting-volume-boost::-webkit-slider-runnable-track,
 #setting-ui-scale::-webkit-slider-runnable-track,
@@ -845,6 +856,21 @@ input[type="range"] {
     var(--slider-track-unfilled) calc(8px + var(--range-frac, 0.5) * (100% - 16px))
   ) !important;
   border-radius: 999px;
+}
+
+/* Thumb: fully custom size/color now that native appearance is off.
+   margin-top re-centers: (track-height - thumb-height) / 2 = (3px - 12px) / 2 */
+#setting-safe-volume::-webkit-slider-thumb,
+#setting-volume-boost::-webkit-slider-thumb,
+#setting-ui-scale::-webkit-slider-thumb,
+#eq-boost-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--green, #1ed760);
+  cursor: default;
+  margin-top: -4.5px;
 }
 
 #setting-safe-volume::-moz-range-track,
@@ -995,6 +1021,21 @@ input[type="range"] {
   color: var(--text-primary);
 }
 
+html {
+  overflow: hidden !important;
+  height: 100vh;
+  width: 100vw;
+  margin: 0;
+  padding: 0;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
 body {
   font-family: var(--app-font);
   background: var(--bg);
@@ -1002,7 +1043,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  overflow: hidden;
+  overflow: hidden !important;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
   user-select: none;
@@ -3201,7 +3242,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 }
 
 .np-play svg path {
-  transform: translateX(1px);
+  transform: translateX(1.5px);
 }
 
 .np-progress {
@@ -3391,7 +3432,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 .vol-bar {
   width: 100px;
   height: 5px;
-  background: #333;
+  background: var(--slider-track-unfilled);
   border-radius: 999px;
   cursor: default;
   overflow: visible;
@@ -3441,7 +3482,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   height: 12px;
   border-radius: 50%;
   background: var(--green);
-  border: 2px solid #fff;
+  border: 2px solid var(--bg);
   box-shadow: 0 0 6px rgba(0, 0, 0, 0.5);
   transition: transform 0.12s ease, box-shadow 0.12s ease;
 }
@@ -5147,7 +5188,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 #vol-bar {
   width: 0;
   height: 3px;
-  background: #333;
+  background: var(--slider-track-unfilled);
   border-radius: 999px;
   cursor: default;
   overflow: visible;
