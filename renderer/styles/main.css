@@ -477,12 +477,22 @@
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1) !important;
 }
 
-/* Shuffle & Play button in Light Mode — give explicit perimeter border */
+/* NovaTune logo play icon in Light Mode */
+[data-theme="light"] .titlebar-logo svg,
+[data-theme="light"] .titlebar-logo svg * {
+  fill: #ffffff !important;
+}
+
+/* Shuffle & Play & Custom Queue buttons in Light Mode */
 [data-theme="light"] .shuffle-btn,
 [data-theme="light"] .home-shuffle-btn,
-[data-theme="light"] #home-shuffle-btn {
+[data-theme="light"] #shuffle-play-btn,
+[data-theme="light"] #home-shuffle-btn,
+[data-theme="light"] .section-primary-btn,
+[data-theme="light"] .cqb-home-btn {
   border: 1px solid rgba(0, 0, 0, 0.15) !important;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06) !important;
+  color: #ffffff !important;
 }
 
 /* Now Playing floating scroll-to-track pill in Light Mode */
@@ -1107,10 +1117,11 @@ body.overlay-visible .titlebar {
   cursor: pointer; /* v2.9: clickable — toggles floating menu */
 }
 
-.titlebar-logo svg {
+.titlebar-logo svg,
+.titlebar-logo svg * {
   width: 8px;
   height: 8px;
-  fill: #000;
+  fill: #ffffff !important;
   display: block;
   margin-left: 2px;
 }
@@ -1535,7 +1546,7 @@ textarea {
   align-items: center;
   gap: 8px;
   background: var(--green);
-  color: #000;
+  color: #f0f2ed;
   border: none;
   border-radius: 8px;
   padding: 8px 18px;
@@ -3229,7 +3240,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
     background 0.15s,
     transform 0.1s;
   flex-shrink: 0;
-  padding-left: 1px;
+  padding-left: 0.8px;
 }
 
 .np-play:hover {
@@ -4550,7 +4561,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   border: 0;
   border-radius: 8px;
   background: var(--green);
-  color: #000;
+  color: #f0f2ed;
   font-family: inherit;
   font-size: 13px;
   font-weight: 800;
