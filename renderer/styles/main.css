@@ -838,6 +838,7 @@ input[type="range"] {
 #setting-volume-boost::-webkit-slider-runnable-track,
 #setting-ui-scale::-webkit-slider-runnable-track,
 #eq-boost-slider::-webkit-slider-runnable-track {
+  height: 3px;
   background: linear-gradient(
     to right,
     var(--green, #1ed760) calc(8px + var(--range-frac, 0.5) * (100% - 16px)),
@@ -850,6 +851,7 @@ input[type="range"] {
 #setting-volume-boost::-moz-range-track,
 #setting-ui-scale::-moz-range-track,
 #eq-boost-slider::-moz-range-track {
+  height: 3px;
   background: var(--slider-track-unfilled) !important;
   border-radius: 999px;
 }
@@ -858,6 +860,7 @@ input[type="range"] {
 #setting-volume-boost::-moz-range-progress,
 #setting-ui-scale::-moz-range-progress,
 #eq-boost-slider::-moz-range-progress {
+  height: 3px;
   background: var(--green, #1ed760) !important;
   border-radius: 999px;
 }
