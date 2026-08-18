@@ -2243,51 +2243,68 @@ function _sampleArtColor(trackId, src, cb) {
     return;
   }
 
+  const isLight = document.documentElement.dataset.theme === "light";
+
   _Vibrant
     .from(source)
     .quality(1) // quality=1: no downsampling, most accurate
     .getPalette()
     .then((palette) => {
-      // Priority: DarkVibrant > DarkMuted > Vibrant darkened > fallback
-      const swatch =
-        palette.DarkVibrant ||
-        palette.DarkMuted ||
-        palette.Vibrant ||
-        palette.Muted;
-      if (!swatch) {
-        _resolve("rgb(18,18,18)");
-        return;
-      }
-      let [r, g, b] = swatch.rgb;
-      // If we landed on Vibrant/Muted (not already dark), force luminance dark
-      if (!palette.DarkVibrant && !palette.DarkMuted) {
-        // Convert to HSL, clamp L to 0.15
-        r /= 255;
-        g /= 255;
-        b /= 255;
-        const max = Math.max(r, g, b),
-          min = Math.min(r, g, b);
-        const l = (max + min) / 2;
-        const delta = max - min;
-        const s = delta === 0 ? 0 : delta / (1 - Math.abs(2 * l - 1));
-        let h = 0;
-        if (delta > 0) {
-          if (max === r) h = ((g - b) / delta + 6) % 6;
-          else if (max === g) h = (b - r) / delta + 2;
-          else h = (r - g) / delta + 4;
-          h *= 60;
+      if (isLight) {
+        const swatch =
+          palette.LightVibrant ||
+          palette.LightMuted ||
+          palette.Vibrant ||
+          palette.Muted;
+        if (!swatch) {
+          _resolve("rgb(245,246,243)");
+          return;
         }
-        _resolve(`hsl(${Math.round(h)},${Math.round(s * 100)}%,15%)`);
-      } else {
+        const [r, g, b] = swatch.rgb;
         _resolve(`rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`);
+      } else {
+        // Priority: DarkVibrant > DarkMuted > Vibrant darkened > fallback
+        const swatch =
+          palette.DarkVibrant ||
+          palette.DarkMuted ||
+          palette.Vibrant ||
+          palette.Muted;
+        if (!swatch) {
+          _resolve("rgb(18,18,18)");
+          return;
+        }
+        let [r, g, b] = swatch.rgb;
+        // If we landed on Vibrant/Muted (not already dark), force luminance dark
+        if (!palette.DarkVibrant && !palette.DarkMuted) {
+          // Convert to HSL, clamp L to 0.15
+          r /= 255;
+          g /= 255;
+          b /= 255;
+          const max = Math.max(r, g, b),
+            min = Math.min(r, g, b);
+          const l = (max + min) / 2;
+          const delta = max - min;
+          const s = delta === 0 ? 0 : delta / (1 - Math.abs(2 * l - 1));
+          let h = 0;
+          if (delta > 0) {
+            if (max === r) h = ((g - b) / delta + 6) % 6;
+            else if (max === g) h = (b - r) / delta + 2;
+            else h = (r - g) / delta + 4;
+            h *= 60;
+          }
+          _resolve(`hsl(${Math.round(h)},${Math.round(s * 100)}%,15%)`);
+        } else {
+          _resolve(`rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`);
+        }
       }
     })
-    .catch(() => _resolve("rgb(18,18,18)"));
+    .catch(() => _resolve(isLight ? "rgb(245,246,243)" : "rgb(18,18,18)"));
 }
 
 function _setNpBg(track) {
   const el = $("np-overlay-bg");
   if (!el) return;
+  const isLight = document.documentElement.dataset.theme === "light";
   if (track.coverArt || track._hasCoverArt) {
     const artSrc = track.coverArt
       ? _getCoverArtDisplayUrl(track.coverArt)
@@ -2301,7 +2318,7 @@ function _setNpBg(track) {
       }
     });
   } else {
-    el.style.background = "rgb(18,18,18)";
+    el.style.background = isLight ? "rgb(245,246,243)" : "rgb(18,18,18)";
     if (state.dynamicAccentColor) _applyAccentColor("#1ed760");
   }
 }
@@ -15989,6 +16006,7 @@ function _openTagEditor(track) {
             state.currentTrack._hasCoverArt = true;
           }
         }
+        
         // Re-render current section
         invalidateSectionCache();
         // Invalidate thumbnail cache for this track (cover art may have changed)

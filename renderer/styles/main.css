@@ -541,6 +541,75 @@
   color: #6a6e65 !important;
 }
 
+/* ── Now Playing Controls & Heart in Light Mode ──────────────────── */
+[data-theme="light"] .np-heart {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .np-heart:hover {
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .np-heart.liked {
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .np-heart.liked svg {
+  fill: var(--green, #1ed760) !important;
+  stroke: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .np-btn {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .np-btn:hover {
+  color: #1a1c19 !important;
+}
+
+/* ── Playlist Popover & Track Context Menus in Light Mode ─────────── */
+[data-theme="light"] .playlist-popover {
+  background: rgba(255, 255, 255, 0.94) !important;
+  backdrop-filter: blur(24px) saturate(1.8) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.8) !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.12),
+              0 0 0 1px rgba(255, 255, 255, 0.8) inset !important;
+}
+
+[data-theme="light"] .playlist-popover button {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .playlist-popover button:hover {
+  background: rgba(0, 0, 0, 0.06) !important;
+}
+
+[data-theme="light"] .playlist-popover button:disabled {
+  color: #8a8d86 !important;
+  opacity: 0.65 !important;
+}
+
+[data-theme="light"] .playlist-popover button span {
+  color: #72766e !important;
+}
+
+[data-theme="light"] .playlist-popover-title {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .context-menu-divider {
+  background: rgba(0, 0, 0, 0.08) !important;
+}
+
+[data-theme="light"] .track-context-menu .context-menu-danger {
+  color: #e74c3c !important;
+}
+
+[data-theme="light"] .track-context-menu .context-menu-danger:hover {
+  background: rgba(231, 76, 60, 0.1) !important;
+}
+
 /* Floating & Main Lyrics Panel Contrast Fixes */
 [data-theme="light"] .lyrics-panel,
 [data-theme="light"] #lyrics-flyout {
@@ -1042,6 +1111,191 @@ input[type="range"] {
   border: 1px solid #e6e8e3 !important;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04) !important;
   border-radius: 10px !important;
+}
+
+/* ── Now Playing Full-Screen Overlay in Light Mode ───────────────── */
+[data-theme="light"] .np-overlay {
+  background: #f7f9f5 !important;
+}
+
+[data-theme="light"] .np-overlay-bg {
+  filter: blur(85px) brightness(1.15) saturate(1.2) !important;
+  opacity: 0.35 !important;
+}
+
+[data-theme="light"] .np-overlay-shade {
+  background: rgba(247, 249, 245, 0.76) !important;
+}
+
+[data-theme="light"] .np-overlay-close {
+  background: rgba(0, 0, 0, 0.06) !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .np-overlay-close:hover {
+  background: rgba(0, 0, 0, 0.12) !important;
+  color: #000000 !important;
+}
+
+[data-theme="light"] .np-overlay-label {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .np-overlay-track-title {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .np-overlay-track-artist {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .ov-mini-title {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .ov-mini-artist,
+[data-theme="light"] .ov-time {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .ov-btn {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .ov-btn:hover {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .ov-play {
+  background: #1a1c19 !important;
+  color: #ffffff !important;
+}
+
+[data-theme="light"] .ov-play:hover {
+  background: #000000 !important;
+  transform: scale(1.05);
+}
+
+[data-theme="light"] .ov-play svg,
+[data-theme="light"] .ov-play svg * {
+  fill: #ffffff !important;
+  stroke: #ffffff !important;
+}
+
+[data-theme="light"] .ov-lyric {
+  color: #1a1c19 !important;
+  opacity: 0.28 !important;
+}
+
+[data-theme="light"] .ov-lyric:hover {
+  opacity: 0.55 !important;
+}
+
+[data-theme="light"] .ov-lyric.prev-1,
+[data-theme="light"] .ov-lyric.next-1 {
+  opacity: 0.65 !important;
+}
+
+[data-theme="light"] .ov-lyric.prev-2,
+[data-theme="light"] .ov-lyric.next-2 {
+  opacity: 0.4 !important;
+}
+
+[data-theme="light"] .ov-lyric.active {
+  color: #000000 !important;
+  opacity: 1 !important;
+  font-weight: 700 !important;
+  text-shadow: 0 0 12px rgba(255, 255, 255, 0.9);
+}
+
+[data-theme="light"] .ov-lyric.unsynced-lit {
+  opacity: 0.95 !important;
+}
+
+[data-theme="light"] .ov-lyric-artist {
+  color: rgba(0, 0, 0, 0.4) !important;
+}
+
+[data-theme="light"] .np-overlay-synced {
+  background: rgba(0, 0, 0, 0.05) !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .np-overlay-synced.unsynced {
+  color: rgba(0, 0, 0, 0.45) !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+[data-theme="light"] .ov-lyrics-empty {
+  color: #575a53 !important;
+}
+
+/* ── Dialogs & Alert Cards in Light Mode ──────────────────────────── */
+[data-theme="light"] .app-dialog-backdrop {
+  background: rgba(0, 0, 0, 0.35) !important;
+}
+
+[data-theme="light"] .app-dialog-card {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.12) !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .app-dialog-title {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .app-dialog-message {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .app-dialog-input {
+  background: #f0f2ee !important;
+  border: 1px solid #d8dcd3 !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .app-dialog-btn {
+  background: #f0f2ee !important;
+  color: #1a1c19 !important;
+  border: 1px solid #d8dcd3 !important;
+}
+
+[data-theme="light"] .app-dialog-btn:hover {
+  background: #e4e8e1 !important;
+}
+
+[data-theme="light"] .app-dialog-btn.primary {
+  background: var(--green, #1ed760) !important;
+  color: #f5f6f3 !important;
+  border-color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .app-dialog-btn.danger {
+  background: #ff4d6d !important;
+  color: #ffffff !important;
+  border-color: #ff4d6d !important;
+}
+
+/* ── Modals in Light Mode ─────────────────────────────────────────── */
+[data-theme="light"] .lyrics-editor-backdrop,
+[data-theme="light"] .cqb-modal-overlay {
+  background: rgba(0, 0, 0, 0.4) !important;
+}
+
+[data-theme="light"] .lyrics-editor-inner,
+[data-theme="light"] .cqb-modal-card,
+[data-theme="light"] .aie-dialog {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.15) !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .cqb-header {
+  border-bottom: 1px solid #e6e8e3 !important;
 }
 
 
