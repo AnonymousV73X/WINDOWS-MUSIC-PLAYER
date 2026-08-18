@@ -327,7 +327,7 @@
 }
 
 [data-theme="light"] .splash-screen {
-  background: #f5f6f3 !important;
+  background: color-mix(in srgb, var(--green, #1ed760) 10%, #f3f5f0) !important;
 }
 
 [data-theme="light"] .splash-title {
@@ -489,7 +489,7 @@
 /* NovaTune logo play icon in Light Mode */
 [data-theme="light"] .titlebar-logo svg,
 [data-theme="light"] .titlebar-logo svg * {
-  fill: #ffffff !important;
+  fill: #efefef !important;
 }
 
 /* Shuffle & Play, Custom Queue, Settings toggles & EQ pills in Light Mode */
@@ -565,6 +565,20 @@
 
 [data-theme="light"] .np-btn:hover {
   color: #1a1c19 !important;
+}
+
+/* Active transport controls (shuffle / repeat) stay green in light mode */
+[data-theme="light"] .np-btn.active {
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .np-btn.active svg {
+  filter: none !important;
+}
+
+[data-theme="light"] .np-btn.active:hover {
+  color: var(--green, #1ed760) !important;
+  opacity: 0.85;
 }
 
 /* ── Playlist Popover & Track Context Menus in Light Mode ─────────── */
@@ -1115,25 +1129,25 @@ input[type="range"] {
 
 /* ── Now Playing Full-Screen Overlay in Light Mode ───────────────── */
 [data-theme="light"] .np-overlay {
-  background: #f7f9f5 !important;
+  background: #e4e7e0 !important;
 }
 
 [data-theme="light"] .np-overlay-bg {
-  filter: blur(85px) brightness(1.15) saturate(1.2) !important;
-  opacity: 0.35 !important;
+  filter: blur(85px) brightness(1.05) saturate(1.2) !important;
+  opacity: 0.42 !important;
 }
 
 [data-theme="light"] .np-overlay-shade {
-  background: rgba(247, 249, 245, 0.76) !important;
+  background: rgba(228, 231, 224, 0.72) !important;
 }
 
 [data-theme="light"] .np-overlay-close {
-  background: rgba(0, 0, 0, 0.06) !important;
+  background: rgba(0, 0, 0, 0.08) !important;
   color: #1a1c19 !important;
 }
 
 [data-theme="light"] .np-overlay-close:hover {
-  background: rgba(0, 0, 0, 0.12) !important;
+  background: rgba(0, 0, 0, 0.15) !important;
   color: #000000 !important;
 }
 
@@ -1155,15 +1169,41 @@ input[type="range"] {
 
 [data-theme="light"] .ov-mini-artist,
 [data-theme="light"] .ov-time {
-  color: #575a53 !important;
+  color: #4a4d46 !important;
+  font-weight: 500;
 }
 
 [data-theme="light"] .ov-btn {
-  color: #575a53 !important;
+  color: #4a4d46 !important;
 }
 
 [data-theme="light"] .ov-btn:hover {
   color: #1a1c19 !important;
+}
+
+/* Active overlay controls (shuffle / repeat) stay green in light mode */
+[data-theme="light"] .ov-btn.active {
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .ov-btn.active svg {
+  filter: none !important;
+}
+
+[data-theme="light"] .ov-btn.active:hover {
+  color: var(--green, #1ed760) !important;
+  opacity: 0.85;
+}
+
+/* Overlay and Now-Playing volume bar in light mode */
+[data-theme="light"] #ov-vol-bar,
+[data-theme="light"] .vol-bar {
+  background: rgba(0, 0, 0, 0.18) !important;
+}
+
+[data-theme="light"] #ov-vol-bar #ov-vol-fill,
+[data-theme="light"] .vol-fill {
+  background: var(--green, #1ed760) !important;
 }
 
 [data-theme="light"] .ov-play {
@@ -6802,7 +6842,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 }
 
 .ov-btn.active svg {
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--green) 50%, transparent));
+  filter: none;
 }
 
 @media (max-width: 680px) {

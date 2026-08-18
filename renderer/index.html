@@ -46,6 +46,9 @@
         if (parsed && parsed.theme === "light") {
           document.documentElement.setAttribute("data-theme", "light");
         }
+        if (parsed && parsed.accentColor) {
+          document.documentElement.style.setProperty("--green", parsed.accentColor);
+        }
       }
     } catch (_) {}
 

@@ -231,7 +231,7 @@ const _squigglyWorkerCode = `
       const cr = overlay ? 3.5 : 4.5;
       ctx.arc(x, cy, cr, 0, Math.PI * 2);
     }
-    ctx.fillStyle = overlay ? "#fff" : waveColor;
+    ctx.fillStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
     ctx.fill();
   }
 
@@ -243,8 +243,8 @@ const _squigglyWorkerCode = `
       if (w <= 0) break;
       ctx.beginPath();
       ctx.roundRect(x, cy - 3, w, 6, 2);
-      ctx.fillStyle = overlay ? "#fff" : waveColor;
-      ctx.globalAlpha = i % 2 === 0 ? 1 : (overlay ? 0.55 : 0.6);
+      ctx.fillStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
+      ctx.globalAlpha = i % 2 === 0 ? 1 : (overlay && themeMode !== "light" ? 0.55 : 0.6);
       ctx.fill();
       ctx.globalAlpha = 1;
       i++;
@@ -262,7 +262,7 @@ const _squigglyWorkerCode = `
       const pmBodyEnd = totalProgressPx - headR * 0.6;
       if (pmBodyEnd > leftInset) _drawSegmentTrail(leftInset, pmBodyEnd, cy);
       const dotSpacing = 9, dotR = overlay ? 1.6 : 1.4;
-      const dotColor = overlay ? "rgba(255,255,255,0.5)" : (themeMode === "light" ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.35)");
+      const dotColor = (overlay && themeMode !== "light") ? "rgba(255,255,255,0.5)" : (themeMode === "light" ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.35)");
       const n = Math.floor(trackW / dotSpacing);
       for (let i = 0; i <= n; i++) {
         const dx = leftInset + i * dotSpacing;
@@ -271,7 +271,7 @@ const _squigglyWorkerCode = `
         const r = isLast ? dotR * 2.2 * (0.85 + 0.15 * Math.sin(phaseOffset * 2)) : dotR;
         ctx.beginPath();
         ctx.arc(dx, cy, r, 0, Math.PI * 2);
-        ctx.fillStyle = isLast ? (overlay ? "#fff" : waveColor) : dotColor;
+        ctx.fillStyle = isLast ? ((overlay && themeMode !== "light") ? "#fff" : waveColor) : dotColor;
         ctx.fill();
       }
       const mouthMax = 0.78;
@@ -281,11 +281,11 @@ const _squigglyWorkerCode = `
       ctx.moveTo(totalProgressPx, cy);
       ctx.arc(totalProgressPx, cy, headR, mouth, Math.PI * 2 - mouth);
       ctx.closePath();
-      ctx.fillStyle = overlay ? "#fff" : waveColor;
+      ctx.fillStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
       ctx.fill();
       ctx.beginPath();
       ctx.arc(totalProgressPx - headR * 0.15, cy - headR * 0.55, headR * 0.13, 0, Math.PI * 2);
-      ctx.fillStyle = overlay ? "#333" : _shade(waveColor, 0.25);
+      ctx.fillStyle = (overlay && themeMode !== "light") ? "#333" : _shade(waveColor, 0.25);
       ctx.fill();
       return;
     }
@@ -301,17 +301,17 @@ const _squigglyWorkerCode = `
         const isLast = dx + dotSpacing > W - rightInset;
         ctx.beginPath();
         ctx.arc(dx, cy, isLast ? dotR * 2 : dotR, 0, Math.PI * 2);
-        ctx.fillStyle = isLast ? _shade(waveColor, 1.7) : (overlay ? "rgba(255,255,255,0.4)" : (themeMode === "light" ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.35)"));
+        ctx.fillStyle = isLast ? _shade(waveColor, 1.7) : ((overlay && themeMode !== "light") ? "rgba(255,255,255,0.4)" : (themeMode === "light" ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.35)"));
         ctx.fill();
       }
       ctx.beginPath();
       ctx.roundRect(totalProgressPx - headR, cy - headR * 0.85, headR * 1.9, headR * 1.7, headR * 0.6);
-      ctx.fillStyle = overlay ? "#fff" : waveColor;
+      ctx.fillStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
       ctx.fill();
       ctx.beginPath();
       ctx.arc(totalProgressPx + headR * 0.5, cy - headR * 0.35, headR * 0.16, 0, Math.PI * 2);
       ctx.arc(totalProgressPx + headR * 0.5, cy + headR * 0.15, headR * 0.16, 0, Math.PI * 2);
-      ctx.fillStyle = overlay ? "#222" : _shade(waveColor, 0.25);
+      ctx.fillStyle = (overlay && themeMode !== "light") ? "#222" : _shade(waveColor, 0.25);
       ctx.fill();
       if (playing && Math.sin(phaseOffset * 5) > 0.6) {
         ctx.beginPath();
@@ -327,9 +327,9 @@ const _squigglyWorkerCode = `
     }
 
     if (style === "ant") {
-      const bodyColor = overlay ? "#fff" : waveColor;
-      const legColor = overlay ? "rgba(255,255,255,0.85)" : _shade(waveColor, 0.55);
-      const eyeColor = overlay ? "#333" : _shade(waveColor, 0.25);
+      const bodyColor = (overlay && themeMode !== "light") ? "#fff" : waveColor;
+      const legColor = (overlay && themeMode !== "light") ? "rgba(255,255,255,0.85)" : _shade(waveColor, 0.55);
+      const eyeColor = (overlay && themeMode !== "light") ? "#333" : _shade(waveColor, 0.25);
       const headCX = totalProgressPx, headCY = cy;
       const hR = headR * 0.55;
       const thoraxR = headR * 0.5;
@@ -384,7 +384,7 @@ const _squigglyWorkerCode = `
       if (crumbX > headCX + hR * 1.5) {
         ctx.beginPath();
         ctx.roundRect(crumbX - 2.5, cy - 2.5, 5, 5, 1);
-        ctx.fillStyle = overlay ? "rgba(255,255,255,0.55)" : _shade(waveColor, 1.6);
+        ctx.fillStyle = (overlay && themeMode !== "light") ? "rgba(255,255,255,0.55)" : _shade(waveColor, 1.6);
         ctx.fill();
       }
 
@@ -419,8 +419,8 @@ const _squigglyWorkerCode = `
         const distT = (bodyEnd - x) / span;
         ctx.beginPath();
         ctx.arc(x, cy, dotR, 0, Math.PI * 2);
-        ctx.globalAlpha = Math.max(0.08, 1 - distT) * (overlay ? 0.7 : 0.55);
-        ctx.fillStyle = overlay ? "#fff" : waveColor;
+        ctx.globalAlpha = Math.max(0.08, 1 - distT) * ((overlay && themeMode !== "light") ? 0.7 : 0.55);
+        ctx.fillStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
         ctx.fill();
         ctx.globalAlpha = 1;
       }
@@ -430,24 +430,24 @@ const _squigglyWorkerCode = `
         for (let x = aheadStart; x < rightEdge; x += dotSpacing) {
           ctx.beginPath();
           ctx.arc(x, cy, dotR * 0.8, 0, Math.PI * 2);
-          ctx.globalAlpha = overlay ? 0.28 : 0.22;
-          ctx.fillStyle = overlay ? "#fff" : waveColor;
+          ctx.globalAlpha = (overlay && themeMode !== "light") ? 0.28 : 0.22;
+          ctx.fillStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
           ctx.fill();
           ctx.globalAlpha = 1;
         }
       }
       ctx.save();
-      ctx.shadowColor = overlay ? "#fff" : waveColor;
+      ctx.shadowColor = (overlay && themeMode !== "light") ? "#fff" : waveColor;
       ctx.shadowBlur = 8;
       ctx.beginPath();
       ctx.arc(totalProgressPx, cy, glowR, 0, Math.PI * 2);
-      ctx.fillStyle = overlay ? "#fff" : waveColor;
+      ctx.fillStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
       ctx.fill();
       ctx.restore();
       ctx.beginPath();
       ctx.arc(totalProgressPx - glowR * 0.3, cy - glowR * 0.2, glowR * 0.18, 0, Math.PI * 2);
       ctx.arc(totalProgressPx + glowR * 0.3, cy - glowR * 0.2, glowR * 0.18, 0, Math.PI * 2);
-      ctx.fillStyle = overlay ? "#333" : _shade(waveColor, 0.25);
+      ctx.fillStyle = (overlay && themeMode !== "light") ? "#333" : _shade(waveColor, 0.25);
       ctx.fill();
       return;
     }
@@ -476,16 +476,32 @@ const _squigglyWorkerCode = `
     const greyStart = progress <= 0 ? leftInset : Math.min(totalProgressPx + thumbR + 1, greyEnd);
     if (greyStart < greyEnd) {
       ctx.beginPath(); ctx.moveTo(greyStart, cy); ctx.lineTo(greyEnd, cy);
-      ctx.strokeStyle = overlay ? "rgba(255,255,255,0.15)" : (themeMode === "light" ? "rgba(0,0,0,0.14)" : "rgba(255,255,255,0.15)");
+      ctx.strokeStyle = (overlay && themeMode !== "light")
+        ? "rgba(255,255,255,0.18)"
+        : (themeMode === "light" ? "rgba(0,0,0,0.22)" : "rgba(255,255,255,0.18)");
       ctx.lineWidth = 2.3; ctx.lineCap = "round"; ctx.stroke();
     }
     if (progress > 0 && totalProgressPx > leftInset + thumbR * 2) {
       ctx.beginPath(); ctx.arc(leftInset, cy, strokeWidth / 2, 0, Math.PI * 2);
-      ctx.fillStyle = overlay ? "rgba(255,255,255,0.3)" : waveColor; ctx.fill();
+      ctx.fillStyle = (overlay && themeMode !== "light") ? "rgba(255,255,255,0.4)" : waveColor; ctx.fill();
     }
     if (waveEndPx < 1) {
       if (progress > 0) _drawThumb(totalProgressPx, cy, thumbR);
       ctx.restore(); return;
+    }
+
+    if (thumbStyle === "boring" || thumbStyle === "simple") {
+      ctx.beginPath();
+      ctx.moveTo(leftInset, cy);
+      ctx.lineTo(waveEndPx, cy);
+      ctx.strokeStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
+      ctx.lineWidth = strokeWidth;
+      ctx.lineCap = "round";
+      ctx.stroke();
+
+      _drawThumb(totalProgressPx, cy, thumbR);
+      ctx.restore();
+      return;
     }
 
     const amp = lineAmplitude, hf = heightFraction, tp = transitionPeriods, edgeTaper = edgeTaperPx;
@@ -511,7 +527,7 @@ const _squigglyWorkerCode = `
       const envelope = computeAmp(waveEndPx);
       ctx.lineTo(waveEndPx, cy + Math.sin(k * waveEndPx + phase) * envelope);
     }
-    ctx.strokeStyle = overlay ? "#fff" : waveColor;
+    ctx.strokeStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
     ctx.lineWidth = strokeWidth; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.stroke();
     ctx.restore();
 
@@ -818,11 +834,11 @@ class SquigglyProgress {
       ctx.beginPath();
       ctx.moveTo(greyStart, cy);
       ctx.lineTo(greyEnd, cy);
-      ctx.strokeStyle = this.overlay
-        ? "rgba(255,255,255,0.15)"
-        : this.themeMode === "light"
-          ? "rgba(0,0,0,0.14)"
-          : "rgba(255,255,255,0.15)";
+      ctx.strokeStyle = (this.overlay && this.themeMode !== "light")
+        ? "rgba(255,255,255,0.18)"
+        : (this.themeMode === "light"
+          ? "rgba(0,0,0,0.22)"
+          : "rgba(255,255,255,0.18)");
       ctx.lineWidth = 2.3;
       ctx.lineCap = "round";
       ctx.stroke();
@@ -831,12 +847,26 @@ class SquigglyProgress {
     if (progress > 0 && totalProgressPx > leftInset + thumbR * 2) {
       ctx.beginPath();
       ctx.arc(leftInset, cy, this.strokeWidth / 2, 0, Math.PI * 2);
-      ctx.fillStyle = this.overlay ? "rgba(255,255,255,0.3)" : this.waveColor;
+      ctx.fillStyle = (this.overlay && this.themeMode !== "light") ? "rgba(255,255,255,0.4)" : this.waveColor;
       ctx.fill();
     }
 
     if (waveEndPx < 1) {
       if (progress > 0) this._drawThumb(ctx, totalProgressPx, cy, thumbR);
+      ctx.restore();
+      return;
+    }
+
+    if (this.thumbStyle === "boring" || this.thumbStyle === "simple") {
+      ctx.beginPath();
+      ctx.moveTo(leftInset, cy);
+      ctx.lineTo(waveEndPx, cy);
+      ctx.strokeStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
+      ctx.lineWidth = this.strokeWidth;
+      ctx.lineCap = "round";
+      ctx.stroke();
+
+      this._drawThumb(ctx, totalProgressPx, cy, thumbR);
       ctx.restore();
       return;
     }
@@ -880,7 +910,7 @@ class SquigglyProgress {
       const envelope = computeAmp(waveEndPx);
       ctx.lineTo(waveEndPx, cy + Math.sin(k * waveEndPx + phase) * envelope);
     }
-    ctx.strokeStyle = this.overlay ? "#fff" : this.waveColor;
+    ctx.strokeStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
     ctx.lineWidth = this.strokeWidth;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -1244,7 +1274,7 @@ class SquigglyProgress {
       const cr = this.overlay ? 3.5 : 4.5;
       ctx.arc(x, cy, cr, 0, Math.PI * 2);
     }
-    ctx.fillStyle = this.overlay ? "#fff" : this.waveColor;
+    ctx.fillStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
     ctx.fill();
   }
 
@@ -7590,7 +7620,10 @@ function renderSettings() {
           <span>Progress bar thumb style</span>
           <div class="settings-btn-group settings-btn-group--full">
             <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "circle" ? " active" : ""}" data-style="circle">
-              ● Circle
+              ● Squiggly
+            </button>
+            <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "boring" ? " active" : ""}" data-style="boring">
+              ━ Boring
             </button>
             <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "amoeba" ? " active" : ""}" data-style="amoeba">
               🦠 Amoeba
