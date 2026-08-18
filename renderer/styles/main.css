@@ -1868,7 +1868,7 @@ textarea {
   align-items: center;
   gap: 8px;
   background: var(--green);
-  color: var(--text-secondary);
+  color:;
   border: none;
   border-radius: 8px;
   padding: 8px 18px;
