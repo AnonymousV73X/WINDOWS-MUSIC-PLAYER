@@ -3268,7 +3268,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
     background 0.15s,
     transform 0.1s;
   flex-shrink: 0;
-  padding-left: 0.4px;
+  padding-left: 0.6px;
 }
 
 .np-play:hover {

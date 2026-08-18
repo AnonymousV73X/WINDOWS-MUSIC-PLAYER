@@ -10563,82 +10563,38 @@ function renderHelp() {
 
       <div class="help-sections">
         <div class="section-panel" id="help-updates-section">
-          <div class="section-panel-title">What's New in v1.1.3</div>
+          <div class="section-panel-title">What's New in v1.1.5</div>
 
           <div class="help-item">
-            <div class="help-item-title">🎵 Smart Artist Detection (Background Worker)</div>
+            <div class="help-item-title">☀️ Light Theme Support</div>
             <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
-                <li><strong>Auto-Resolves Unknown Artists:</strong> A lightweight background worker now scans your library on startup for tracks tagged "Unknown Artist" and intelligently extracts real artist names directly from the song title — with zero impact on playback or UI performance.</li>
-                <li><strong>High-Confidence Patterns Only:</strong> Artist extraction uses only proven, high-accuracy patterns — <code>Artist - Title</code>, <code>Artist &amp; Artist2 Title</code>, <code>Artist ft. Artist2 Title</code>, and repeated artist block deduplication (common in YouTube rips like <em>"Joé DwèT Filé &amp; Burna Boy Joé DwèT Filé &amp; Burna Boy 4 Kampe II"</em>). It never guesses on plain song titles.</li>
-                <li><strong>Cleans Up Song Titles Too:</strong> When the title contains a repeated artist prefix, the title is cleaned and stored without the duplicate noise.</li>
-                <li><strong>Persisted Permanently:</strong> Once resolved, the corrected artist and title are saved back to the database — so you never lose the fix between restarts.</li>
-                <li><strong>Idle Batching:</strong> Processed in batches of 15 tracks per idle frame using <code>requestIdleCallback</code> — the app never hangs or skips a beat.</li>
+                <li><strong>Full Light Mode:</strong> Seamlessly switch between Dark and Light mode from <strong>Settings &rarr; Theme Mode</strong>. The entire interface adapts with clean, bright surfaces, soft neutral contrasts, and crisp legible typography.</li>
+                <li><strong>Super Glassmorphic Hero Banner:</strong> The Home screen hero card features a frosted glass gradient with specular highlights, fine borders, and clean typography.</li>
+                <li><strong>Adaptive Toggles &amp; Buttons:</strong> Active buttons, settings toggles (Font, Scrubber Head, Card Sorting), and Equalizer preset pills adapt with harmonious contrast across both light and dark themes.</li>
+                <li><strong>Light-Mode Tooltips:</strong> Tooltips and hover bubbles automatically adapt to light mode with bright cards and crisp dark text.</li>
               </ul>
             </div>
           </div>
 
           <div class="help-item">
-            <div class="help-item-title">🎛️ Scrubber Head Style</div>
+            <div class="help-item-title">🖥️ UI Scaling for High-Resolution Displays (1440p / 4K)</div>
             <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
-                <li><strong>Six Thumb Styles:</strong> Choose your progress bar scrubber head style in <strong>Settings → Scrubber Head</strong>.</li>
-                <li><strong>Circle</strong> (default): A clean, minimal perfect circle.</li>
-                <li><strong>Amoeba</strong>: A rounded rectangle / pill shape for a bolder look.</li>
-                <li><strong>Snake</strong>: A segmented snake body eats its way along the track, dodging leftover food dots ahead.</li>
-                <li><strong>Pac-Man</strong>: A chomping Pac-Man munches pellets across the bar, with a power pellet waiting at the end.</li>
-                <li><strong>Ant</strong>: A tiny-legged ant marches segment by segment toward a crumb waiting at the end.</li>
-                <li><strong>Firefly</strong>: A glowing head pulses forward, leaving a fading light-trail behind it.</li>
-                <li>All thumb styles are drawn in your theme's accent color, so they match whichever <strong>--green</strong> palette you've picked. Style applies instantly to both the now-playing bar and the full-screen overlay, and is saved and restored on every launch.</li>
+                <li><strong>Customizable UI Scale:</strong> Adjust interface size anywhere from <strong>80% up to 150%</strong> in <strong>Settings &rarr; Interface &amp; Appearance &rarr; UI Scaling</strong>. Perfect for 1440p, 4K, or large desktop monitors where default UI elements feel too small.</li>
+                <li><strong>Zero Viewport Scrollbars:</strong> Zooming and scaling above 100% maintains a clean, native desktop application viewport with no scrollbars.</li>
+                <li><strong>Persisted Automatically:</strong> Your chosen scale is saved and restored instantly on every application launch.</li>
               </ul>
             </div>
           </div>
 
           <div class="help-item">
-            <div class="help-item-title">🗂️ Custom Queue Opt-Out</div>
+            <div class="help-item-title">🎛️ Equalizer &amp; Slider Refinements</div>
             <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
-                <li><strong>Prefer Shuffle &amp; Play?</strong> Head to <strong>Settings → Playback</strong> and enable <em>"Use Shuffle &amp; Play"</em> to swap the home screen hero button back to the classic Shuffle &amp; Play action.</li>
-                <li>When enabled, the Saved Custom Queues dashboard is also hidden from the home screen.</li>
-                <li>Switching is instant — the home screen updates live without a restart.</li>
-              </ul>
-            </div>
-          </div>
-
-          <div class="help-item">
-            <div class="help-item-title">UI &amp; Navigation Refinements</div>
-            <div class="help-item-body" style="padding-left: 15px;">
-              <ul style="padding-left: 10px;">
-                <li><strong>Added Tooltip:</strong> Helpful tooltip for the floating navigation.</li>
-                <li><strong>Active Indicator:</strong> A sleek new visual indicator highlights your active menu item in the sidebar.</li>
-                <li><strong>Menu/X Icon Sync:</strong> The hamburger menu perfectly transitions to a close (X) icon when the sidebar is toggled.</li>
-                <li><strong>Playlist Add Interactions:</strong> The playlist "Add" button now smoothly morphs into an X to cancel out of the creation menu.</li>
-                <li><strong>Taskbar Playback:</strong> Added Windows taskbar thumbnail controls (Thumbar icons) for quick access.</li>
-              </ul>
-            </div>
-          </div>
-
-          <div class="help-item">
-            <div class="help-item-title">Performance &amp; Library</div>
-            <div class="help-item-body" style="padding-left: 15px;">
-              <ul style="padding-left: 10px;">
-                <li><strong>Blazing Fast Refreshes:</strong> Partial library updates completely eliminate the long waits when adding a handful of songs or updating cover art.</li>
-                <li><strong>Library Sort Persistence:</strong> Your chosen sort order (by title, date, artist, etc.) is now saved and restored automatically on every launch.</li>
-                <li><strong>Playlist Collage Logic:</strong> Playlists under 5 songs no longer cache collages, and existing collages instantly adapt to content changes without startup delays.</li>
-                <li><strong>Proper Lyrics Management:</strong> Added a dedicated <code>lyricz</code> folder for accurate, lightning-fast offline lyric retrieval without cluttering your music folders.</li>
-                <li><strong>Improved Search Sorting:</strong> Added Ascending (A-Z) and Descending (Z-A) sorting options to the search results.</li>
-                <li><strong>External Music Play:</strong> When you click open with... NovaTune will be able to play the actual song clicked.</li>
-              </ul>
-            </div>
-          </div>
-
-          <div class="help-item">
-            <div class="help-item-title">Customization</div>
-            <div class="help-item-body" style="padding-left: 15px;">
-              <ul style="padding-left: 10px;">
-                <li><strong>Vinyl Player Enhancements:</strong> When no lyrics are found, the spinning vinyl smoothly displays a gorgeous, dynamic visualizer customized to your color palette.</li>
-                <li><strong>Song Tag Editor:</strong> Seamlessly edit Title, Artist, Album, Year, and Cover Art directly inside the app, saving changes instantly to the actual file metadata.</li>
-                <li><strong>Desktop Menu Visibility:</strong> Added experimental support for keeping the full sidebar visible on smaller desktop/tablet screens.</li>
+                <li><strong>Refined Slider Tracks:</strong> Horizontal sliders (UI Scale, Safe Volume, Volume Boost, EQ Boost) and equalizer bands feature thinner, sleeker tracks and perfectly centered 12px thumbs.</li>
+                <li><strong>Squiggly Progress Bar:</strong> 2.3px progress track with smoothed, non-clipped rounded end caps and theme-adaptive unfilled track coloring.</li>
+                <li><strong>Optical Alignment:</strong> Centered play icons and refined button padding throughout now-playing controls and titlebar logos.</li>
               </ul>
             </div>
           </div>
@@ -10795,7 +10751,7 @@ function renderHelp() {
       </div>
 
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
-        NovaTune v1.1.3 &bull; Made by SIR ALEX for music lovers
+        NovaTune v1.1.5 &bull; Made by SIR ALEX for music lovers
       </div>
     </div>
   `);
@@ -13375,35 +13331,152 @@ function togglePlayPause(forceState) {
   }
 }
 
+function _fastShuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    const temp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = temp;
+  }
+  return arr;
+}
+
+function _getSortedLibraryTracks() {
+  if (state.filteredTracks && state.filteredTracks.length > 0) {
+    return state.filteredTracks;
+  }
+  if (!state.tracks || state.tracks.length === 0) return [];
+  const tracks = state.tracks.slice();
+  const key = state.sortKey || "dateAdded";
+  const asc = state.sortAsc !== undefined ? state.sortAsc : false;
+  tracks.sort((a, b) => {
+    let va = a[key];
+    let vb = b[key];
+    if (va === undefined || va === null) va = "";
+    if (vb === undefined || vb === null) vb = "";
+    if (typeof va === "string") va = va.toLowerCase();
+    if (typeof vb === "string") vb = vb.toLowerCase();
+    if (va < vb) return asc ? -1 : 1;
+    if (va > vb) return asc ? 1 : -1;
+    return 0;
+  });
+  return tracks;
+}
+
 async function playNext() {
-  if (state.queue.length === 0) return;
-  // ALWAYS follow the queue order — the queue is the authoritative source.
-  // When shuffle is on, the queue was already shuffled when the user enabled it.
-  // When the user manually shuffles, the queue is reshuffled.
-  state.queueIndex++;
-  if (state.queueIndex >= state.queue.length) {
-    if (state.repeatMode === "all") {
+  // If queue is empty, populate from library and play
+  if (!state.queue || state.queue.length === 0) {
+    const libTracks = _getSortedLibraryTracks();
+    if (libTracks.length > 0) {
+      state.queue = state.shuffleEnabled
+        ? _fastShuffle(libTracks.slice())
+        : libTracks.slice();
       state.queueIndex = 0;
+      await playTrack(state.queue[0]);
+    }
+    return;
+  }
+
+  state.queueIndex++;
+
+  // When loop ends or queue was 1 song:
+  if (state.queueIndex >= state.queue.length) {
+    const libTracks = _getSortedLibraryTracks();
+
+    if (state.shuffleEnabled) {
+      // Shuffle is ON: Recreate a fresh randomized queue from the library in O(N) time
+      if (libTracks.length > 0) {
+        const curId = state.currentTrack ? state.currentTrack.id : null;
+        const pool = [];
+        for (let i = 0; i < libTracks.length; i++) {
+          if (libTracks[i].id !== curId) pool.push(libTracks[i]);
+        }
+        state.queue = pool.length > 0 ? _fastShuffle(pool) : _fastShuffle(libTracks.slice());
+        state.queueIndex = 0;
+        state.queueSource = null;
+      } else {
+        state.queueIndex = 0;
+      }
+    } else if (state.repeatMode === "all") {
+      // Repeat All is ON:
+      if (state.queue.length > 1) {
+        // Multi-song queue: loop back to beginning
+        state.queueIndex = 0;
+      } else {
+        // Single-song queue: look up next song in library using active user sort logic
+        if (libTracks.length > 1 && state.currentTrack) {
+          const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
+          const nextIdx = curIdx >= 0 ? (curIdx + 1) % libTracks.length : 0;
+          const after = libTracks.slice(nextIdx);
+          const before = libTracks.slice(0, nextIdx);
+          state.queue = [...after, ...before];
+          state.queueIndex = 0;
+          state.queueSource = null;
+        } else {
+          state.queueIndex = 0;
+        }
+      }
     } else {
-      state.queueIndex = state.queue.length - 1;
-      audioEngine.pause();
-      return;
+      // Repeat is OFF & Shuffle is OFF:
+      if (state.queue.length === 1 && state.currentTrack && libTracks.length > 1) {
+        // Queue was 1 song: continue with user's library sort order
+        const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
+        if (curIdx >= 0 && curIdx + 1 < libTracks.length) {
+          const after = libTracks.slice(curIdx + 1);
+          const before = libTracks.slice(0, curIdx + 1);
+          state.queue = [...after, ...before];
+          state.queueIndex = 0;
+          state.queueSource = null;
+        } else {
+          state.queueIndex = state.queue.length - 1;
+          audioEngine.pause();
+          return;
+        }
+      } else {
+        state.queueIndex = state.queue.length - 1;
+        audioEngine.pause();
+        return;
+      }
     }
   }
-  await playTrack(state.queue[state.queueIndex]);
+
+  if (state.queue && state.queue[state.queueIndex]) {
+    await playTrack(state.queue[state.queueIndex]);
+  }
 }
 
 async function playPrevious() {
-  if (state.queue.length === 0) return;
+  if (!state.queue || state.queue.length === 0) return;
   if (audioEngine.getCurrentTime() > 3) {
     audioEngine.seek(0);
     return;
   }
   state.queueIndex--;
   if (state.queueIndex < 0) {
-    state.queueIndex = state.repeatMode === "all" ? state.queue.length - 1 : 0;
+    if (state.repeatMode === "all") {
+      if (state.queue.length > 1) {
+        state.queueIndex = state.queue.length - 1;
+      } else {
+        const libTracks = _getSortedLibraryTracks();
+        if (libTracks.length > 1 && state.currentTrack) {
+          const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
+          const prevIdx = curIdx > 0 ? curIdx - 1 : libTracks.length - 1;
+          const after = libTracks.slice(prevIdx);
+          const before = libTracks.slice(0, prevIdx);
+          state.queue = [...after, ...before];
+          state.queueIndex = 0;
+          state.queueSource = null;
+        } else {
+          state.queueIndex = 0;
+        }
+      }
+    } else {
+      state.queueIndex = 0;
+    }
   }
-  await playTrack(state.queue[state.queueIndex]);
+  if (state.queue && state.queue[state.queueIndex]) {
+    await playTrack(state.queue[state.queueIndex]);
+  }
 }
 
 function _handleTrackEnd() {
