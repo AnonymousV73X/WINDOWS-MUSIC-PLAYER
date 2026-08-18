@@ -3242,7 +3242,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 }
 
 .np-play svg path {
-  transform: translateX(1.5px);
+  transform: translateX(1px);
 }
 
 .np-progress {
