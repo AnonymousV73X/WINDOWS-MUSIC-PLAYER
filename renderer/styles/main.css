@@ -8315,3 +8315,13 @@ body.expanded-sidebar .sidebar-search {
   background: var(--green-hover, #1ed760);
   transform: translateY(-1px);
 }
+
+
+[data-theme="light"] .shuffle-btn,
+[data-theme="light"] .home-shuffle-btn,
+[data-theme="light"] #home-shuffle-btn,
+[data-theme="light"] .section-primary-btn {
+  border: 1px solid rgba(0, 0, 0, 0.15) !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06) !important;
+  color: #ffffff !important; /* ← Add this */
+}
