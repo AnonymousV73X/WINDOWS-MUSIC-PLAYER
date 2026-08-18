@@ -506,7 +506,7 @@
 [data-theme="light"] .help-version-btn .version-badge {
   border: 1px solid rgba(0, 0, 0, 0.15) !important;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06) !important;
-  color: #f5f6f3 !important;
+  color: #e8e8e7 !important;
 }
 
 [data-theme="light"] #help-check-update-btn {
