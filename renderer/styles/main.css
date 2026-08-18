@@ -1445,7 +1445,7 @@ body.overlay-visible .titlebar {
 
 .titlebar-logo svg,
 .titlebar-logo svg * {
-  fill: #ffffff !important;
+  fill: #d7d5d5 !important;
 }
 
 button,
