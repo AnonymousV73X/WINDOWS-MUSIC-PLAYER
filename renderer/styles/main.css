@@ -1146,7 +1146,7 @@ body.overlay-visible .titlebar {
   width: 6.4px;
   height: 6.4px;
   display: block;
-  margin-left: 2px;
+  margin-left: 1px;
 }
 
 .titlebar-logo svg,
