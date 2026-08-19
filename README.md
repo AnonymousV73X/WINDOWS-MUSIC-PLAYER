@@ -939,7 +939,7 @@ NovaTune stands on the shoulders of giants:
 
 ## License
 
-MIT License — see [LICENSE](./LICENSE) for the full text.
+ License — see [LICENSE](./LICENSE) for the full text.
 
 © 2026 NovaTune. All rights reserved.
 
