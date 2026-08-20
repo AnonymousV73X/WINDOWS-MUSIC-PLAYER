@@ -3575,7 +3575,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   transition:
     background 0.15s,
     border-color 0.15s,
-    transform 0.1s,
+    
     box-shadow 0.15s;
   flex-shrink: 0;
 }
