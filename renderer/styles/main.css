@@ -3596,7 +3596,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   height: 18px;
   fill: var(--green, #1ed760);
   color: var(--green, #1ed760);
-  margin-left: ;
+  margin-left: 1px;
 }
 
 .np-play svg path {
