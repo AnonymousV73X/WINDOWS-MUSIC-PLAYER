@@ -3600,7 +3600,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 /* Margin-left of 1px ONLY when it's the triangle (play) SVG, not the two vertical pause bars */
 body:not(.is-playing) .np-play svg,
 .np-play svg:has(path) {
-  margin-left: 10px;
+  margin-left: 2px;
 }
 
 body.is-playing .np-play svg,
