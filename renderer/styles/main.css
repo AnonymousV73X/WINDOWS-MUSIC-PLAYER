@@ -1290,7 +1290,7 @@ input[type="range"] {
     var(--green, #1ed760) 12%,
     transparent
   ) !important;
-  transform: scale(1.05);
+  transform: scale(1.01) !important;
 }
 
 [data-theme="light"] .ov-play svg,
