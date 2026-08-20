@@ -3578,17 +3578,16 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
     transform 0.1s,
     box-shadow 0.15s;
   flex-shrink: 0;
-  padding-left: 0.6px;
 }
 
 .np-play:hover {
-  background: color-mix(in srgb, var(--green, #1ed760) 7%, transparent);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--green, #1ed760) 18%, transparent);
-  
+  background: color-mix(in srgb, var(--green, #1ed760) 15%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--green, #1ed760) 30%, transparent);
+  transform: scale(1.05);
 }
 
 .np-play:active {
-  transform: scale(0.04);
+  transform: scale(0.96);
 }
 
 .np-play svg {
@@ -3596,11 +3595,17 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   height: 18px;
   fill: var(--green, #1ed760);
   color: var(--green, #1ed760);
-  margin-left: 1px;
 }
 
-.np-play svg path {
-  transform: translateX(1px);
+/* Margin-left of 1px ONLY when it's the triangle (play) SVG, not the two vertical pause bars */
+body:not(.is-playing) .np-play svg,
+.np-play svg:has(path) {
+  margin-left: 10px;
+}
+
+body.is-playing .np-play svg,
+.np-play svg:has(rect) {
+  margin-left: 0;
 }
 
 .np-progress {
@@ -5477,8 +5482,14 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   color: var(--green, #1ed760);
 }
 
-.ov-play svg path {
-  transform: translateX(1px);
+body:not(.is-playing) .ov-play svg,
+.ov-play svg:has(path) {
+  margin-left: 1px;
+}
+
+body.is-playing .ov-play svg,
+.ov-play svg:has(rect) {
+  margin-left: 0;
 }
 
 .ov-progress {
