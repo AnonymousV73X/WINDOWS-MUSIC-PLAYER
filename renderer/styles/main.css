@@ -3694,11 +3694,17 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 
 /* Margin-left ONLY when it's the triangle (play) SVG, not the two vertical pause bars */
 /* Triangle Play Icon (Paused) */
+/* Triangle Play Icon (Paused) */
 body:not(.is-playing) .np-play svg,
 body:not(.is-playing) .ov-play svg,
 .np-play svg:has(path),
 .ov-play svg:has(path) {
   margin-left: 2px;
+}
+
+body:not(.is-playing) .ov-play svg,
+.ov-play svg:has(path) {
+  margin-left: 3px;
 }
 
 /* Two Vertical Bars (Playing) */
@@ -3708,7 +3714,6 @@ body.is-playing .ov-play svg,
 .ov-play svg:has(rect) {
   margin-left: 0;
 }
-
 .np-progress {
   width: 100%;
   max-width: 600px;
