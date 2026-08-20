@@ -94,6 +94,7 @@ const DEFAULT_SETTINGS = {
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────
+const _coverArtByIdCache = new Map(); // trackId → coverArt string | null
 let db = null;
 const DB_SCHEMA = `
   CREATE TABLE IF NOT EXISTS tracks (
@@ -3507,6 +3508,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   });
 
   // ── Task 9: Write metadata tags to audio file ──
+  // ── Task 9: Write metadata tags to audio file ──
   ipcMain.handle(
     "metadata:write-tags",
     async (event, { trackId, filePath, tags }) => {
@@ -3527,13 +3529,11 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
 
         const ext = path.extname(filePath).toLowerCase();
 
-        // ── 1. Write tags INTO the actual audio file on disk ──────────────
-        // This is what makes tags survive app restarts and show on other devices.
+        // ── 1. Write tags INTO the actual audio file on disk with retry ───
+        // This is what makes tags survive app restarts, reboots, and show on other devices.
         if (ext === ".mp3") {
-          // node-id3 supports full ID3v2 read+write for MP3
           const NodeID3 = require("node-id3");
 
-          // Build the ID3 tag object (only include fields the user actually changed)
           const id3Tags = {};
           if (tags.title !== undefined) id3Tags.title = tags.title || "";
           if (tags.artist !== undefined) id3Tags.artist = tags.artist || "";
@@ -3564,73 +3564,108 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             }
           }
 
-          // node-id3.update() merges with existing tags; returns true on success
-          const written = NodeID3.update(id3Tags, filePath);
-          if (written !== true) {
-            console.warn(
-              "[metadata:write-tags] node-id3 write returned:",
-              written,
+          let writeSuccess = false;
+          let lastWriteErr = null;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              const written = NodeID3.update(id3Tags, filePath);
+              if (written === true) {
+                writeSuccess = true;
+                break;
+              }
+              // If update failed, try reading existing + writing merged
+              const existing = NodeID3.read(filePath) || {};
+              const merged = { ...existing, ...id3Tags };
+              const writeResult = NodeID3.write(merged, filePath);
+              if (writeResult === true) {
+                writeSuccess = true;
+                break;
+              }
+              lastWriteErr = new Error(
+                typeof writeResult === "object" && writeResult
+                  ? writeResult.message
+                  : `node-id3 returned ${writeResult}`,
+              );
+            } catch (err) {
+              lastWriteErr = err;
+            }
+            if (attempt < 3) {
+              await new Promise((resolve) => setTimeout(resolve, 150));
+            }
+          }
+
+          if (!writeSuccess) {
+            console.error(
+              "[metadata:write-tags] MP3 tag write failed:",
+              lastWriteErr ? lastWriteErr.message : "Unknown error",
             );
+            return {
+              success: false,
+              error: `Failed to write tags to audio file: ${lastWriteErr ? lastWriteErr.message : "File locked or unwriteable"}`,
+            };
           }
         }
-        // For FLAC / M4A(MP4) / OGG / WAV / APE / WMA — write via
-        // node-taglib-sharp (pure JS, no native build, no ffmpeg required).
-        // This actually persists the tags into the file, same as the mp3
-        // path above, instead of only updating the DB.
+        // For FLAC / M4A(MP4) / OGG / WAV / APE / WMA — write via node-taglib-sharp
         else {
-          try {
-            const tagFile = TagLib.File.createFromPath(filePath);
+          let writeSuccess = false;
+          let lastWriteErr = null;
+          for (let attempt = 1; attempt <= 3; attempt++) {
             try {
-              const t = tagFile.tag;
-              if (tags.title !== undefined) t.title = tags.title || "";
-              if (tags.artist !== undefined)
-                t.performers = tags.artist ? [tags.artist] : [];
-              if (tags.album !== undefined) t.album = tags.album || "";
-              if (tags.genre !== undefined)
-                t.genres = tags.genre ? [tags.genre] : [];
-              if (tags.year !== undefined)
-                t.year = tags.year ? parseInt(tags.year, 10) || 0 : 0;
-
-              if (tags.coverArt) {
-                const match = tags.coverArt.match(/^data:([^;]+);base64,(.+)$/);
-                if (match) {
-                  const mime = match[1];
-                  const buf = Buffer.from(match[2], "base64");
-                  const picture = TagLib.Picture.fromData(
-                    TagLib.ByteVector.fromByteArray(buf),
-                  );
-                  picture.mimeType = mime;
-                  picture.type = TagLib.PictureType.FrontCover;
-                  t.pictures = [picture];
+              const tagFile = TagLib.File.createFromPath(filePath);
+              try {
+                const t = tagFile.tag;
+                if (tags.title !== undefined) t.title = tags.title || "";
+                if (tags.artist !== undefined) {
+                  t.performers = tags.artist ? [tags.artist] : [];
+                  t.albumArtists = tags.artist ? [tags.artist] : [];
                 }
-              }
+                if (tags.album !== undefined) t.album = tags.album || "";
+                if (tags.genre !== undefined)
+                  t.genres = tags.genre ? [tags.genre] : [];
+                if (tags.year !== undefined)
+                  t.year = tags.year ? parseInt(tags.year, 10) || 0 : 0;
 
-              tagFile.save();
-            } finally {
-              tagFile.dispose();
+                if (tags.coverArt) {
+                  const match = tags.coverArt.match(/^data:([^;]+);base64,(.+)$/);
+                  if (match) {
+                    const mime = match[1];
+                    const buf = Buffer.from(match[2], "base64");
+                    const picture = TagLib.Picture.fromData(
+                      TagLib.ByteVector.fromByteArray(buf),
+                    );
+                    picture.mimeType = mime;
+                    picture.type = TagLib.PictureType.FrontCover;
+                    t.pictures = [picture];
+                  }
+                }
+
+                tagFile.save();
+                writeSuccess = true;
+                break;
+              } finally {
+                tagFile.dispose();
+              }
+            } catch (tagLibErr) {
+              lastWriteErr = tagLibErr;
             }
-          } catch (tagLibErr) {
-            console.warn(
+            if (attempt < 3) {
+              await new Promise((resolve) => setTimeout(resolve, 150));
+            }
+          }
+
+          if (!writeSuccess) {
+            console.error(
               "[metadata:write-tags] node-taglib-sharp write failed:",
-              tagLibErr.message,
+              lastWriteErr ? lastWriteErr.message : "Unknown error",
             );
+            return {
+              success: false,
+              error: `Failed to write tags to audio file: ${lastWriteErr ? lastWriteErr.message : "File locked or unwriteable"}`,
+            };
           }
         }
 
         // ── 1b. Re-stat the file and stamp the NEW mtime onto the track ────
-        // BUGFIX (tag-editor edits reverting on Refresh): writing tags with
-        // node-id3 / node-taglib-sharp above rewrites the file's bytes,
-        // which changes its mtime on disk. library:scan's cache check is
-        // `existing.dateModified === file.modifiedTime` — if we don't
-        // update dateModified here, the NEXT refresh sees a mismatch,
-        // concludes the file "changed", and re-parses it from disk,
-        // discarding these in-memory/DB edits in favor of whatever a
-        // fresh read produces (which can differ from the DB copy, e.g.
-        // if a field wasn't fully supported by the tag writer for this
-        // format, or cover art didn't round-trip). Stamping the fresh
-        // mtime here means the next scan treats this track as "unchanged"
-        // and trusts the DB copy (which we just correctly updated),
-        // instead of re-reading and clobbering the edit.
         let freshMtime = null;
         try {
           const stat = fs.statSync(filePath);
@@ -3642,7 +3677,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
           );
         }
 
-        // ── 2. Update in-memory library & SQLite so the UI is instant ─────
+        // ── 2. Update in-memory library & SQLite so the UI and queries are instant ──
         let updatedTrack = null;
         if (libraryById && libraryById.has(trackId)) {
           const track = libraryById.get(trackId);
@@ -3659,7 +3694,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
           track._userEdited = true;
           updatedTrack = track;
 
-          // Persist to SQLite
+          // Persist to SQLite: update indexed columns AND data JSON
           try {
             const row = db
               .prepare("SELECT data FROM tracks WHERE id = ?")
@@ -3678,10 +3713,34 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   ? { coverArt: tags.coverArt, _hasCoverArt: true }
                   : {}),
               });
-              db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(
+              db.prepare(
+                `UPDATE tracks 
+                 SET title = ?, artist = ?, album = ?, genre = ?, year = ?, dateModified = ?, data = ? 
+                 WHERE id = ?`,
+              ).run(
+                track.title || "",
+                Array.isArray(track.artist)
+                  ? track.artist.join(", ")
+                  : track.artist || "",
+                track.album || "",
+                track.genre || "",
+                Number(track.year) || null,
+                freshMtime !== null
+                  ? freshMtime
+                  : track.dateModified || Date.now(),
                 JSON.stringify(dbTrack),
                 trackId,
               );
+            }
+
+            // Update track_covers table and memory cache if coverArt changed
+            if (tags.coverArt) {
+              db.prepare(
+                "INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)",
+              ).run(trackId, tags.coverArt);
+              if (typeof _coverArtByIdCache !== "undefined") {
+                _coverArtByIdCache.set(trackId, tags.coverArt);
+              }
             }
           } catch (dbErr) {
             console.error(
@@ -3690,41 +3749,25 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             );
           }
 
-          // We no longer rebuild the binary manifest synchronously here.
-          // The renderer applies the metadata edits to its in-memory state instantly,
-          // so the UI updates accurately and quickly. The disk manifest will catch up
-          // on the next full app restart or full library scan. This solves the minutes-long
-          // freeze when editing tags in large libraries.
-          // ── 3. Sync the binary manifest in the BACKGROUND ──────────────
-          // The renderer's fast startup path reads from library.bin, not
-          // SQLite. Without this, an edited tag looks "saved" in the UI
-          // but reverts to the old value on next launch because the
-          // renderer loads the stale manifest instead of the updated DB
-          // row. We fire this off without awaiting it so the IPC reply
-          // (and the UI) stays instant — the rebuild itself is a single
-          // in-memory buffer build + one atomic file write, done here on
-          // whatever tracks are already parsed in RAM (no re-scan, no
-          // re-read of the DB), so it's cheap even for large libraries.
+          // ── 3. Sync the binary manifest ────────────────────────────────
           if (ManifestIPC.isFeatureFlagEnabled()) {
-            setImmediate(() => {
-              try {
-                const tracksForManifest =
-                  typeof module.exports.getLibraryForManifest === "function"
-                    ? module.exports.getLibraryForManifest()
-                    : getLibrary();
-                ManifestIPC.rebuildManifest(tracksForManifest).catch((err) => {
-                  console.warn(
-                    "[metadata:write-tags] background manifest resync failed:",
-                    err.message,
-                  );
-                });
-              } catch (syncErr) {
+            try {
+              const tracksForManifest =
+                typeof module.exports.getLibraryForManifest === "function"
+                  ? module.exports.getLibraryForManifest()
+                  : getLibrary();
+              ManifestIPC.rebuildManifest(tracksForManifest).catch((err) => {
                 console.warn(
                   "[metadata:write-tags] background manifest resync failed:",
-                  syncErr.message,
+                  err.message,
                 );
-              }
-            });
+              });
+            } catch (syncErr) {
+              console.warn(
+                "[metadata:write-tags] background manifest resync failed:",
+                syncErr.message,
+              );
+            }
           }
         }
 
@@ -5285,7 +5328,6 @@ module.exports.getLibraryForManifest = function () {
  * track row, now-playing display), so caching the lookup result eliminates
  * redundant Map.get() calls and null checks.
  */
-const _coverArtByIdCache = new Map(); // trackId → coverArt string | null
 function getCoverArtByTrackId(trackId) {
   const cached = _coverArtByIdCache.get(trackId);
   if (cached !== undefined) return cached;

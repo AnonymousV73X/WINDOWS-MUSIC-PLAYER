@@ -37937,6 +37937,7 @@ var require_ipc = __commonJS({
       hardwareAcceleration: true,
       outputDevice: "default"
     };
+    var _coverArtByIdCache = /* @__PURE__ */ new Map();
     var db = null;
     var DB_SCHEMA = `
   CREATE TABLE IF NOT EXISTS tracks (
@@ -40425,48 +40426,95 @@ var require_ipc = __commonJS({
                   );
                 }
               }
-              const written = NodeID3.update(id3Tags, filePath);
-              if (written !== true) {
-                console.warn(
-                  "[metadata:write-tags] node-id3 write returned:",
-                  written
+              let writeSuccess = false;
+              let lastWriteErr = null;
+              for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                  const written = NodeID3.update(id3Tags, filePath);
+                  if (written === true) {
+                    writeSuccess = true;
+                    break;
+                  }
+                  const existing = NodeID3.read(filePath) || {};
+                  const merged = { ...existing, ...id3Tags };
+                  const writeResult = NodeID3.write(merged, filePath);
+                  if (writeResult === true) {
+                    writeSuccess = true;
+                    break;
+                  }
+                  lastWriteErr = new Error(
+                    typeof writeResult === "object" && writeResult ? writeResult.message : `node-id3 returned ${writeResult}`
+                  );
+                } catch (err) {
+                  lastWriteErr = err;
+                }
+                if (attempt < 3) {
+                  await new Promise((resolve) => setTimeout(resolve, 150));
+                }
+              }
+              if (!writeSuccess) {
+                console.error(
+                  "[metadata:write-tags] MP3 tag write failed:",
+                  lastWriteErr ? lastWriteErr.message : "Unknown error"
                 );
+                return {
+                  success: false,
+                  error: `Failed to write tags to audio file: ${lastWriteErr ? lastWriteErr.message : "File locked or unwriteable"}`
+                };
               }
             } else {
-              try {
-                const tagFile = TagLib.File.createFromPath(filePath);
+              let writeSuccess = false;
+              let lastWriteErr = null;
+              for (let attempt = 1; attempt <= 3; attempt++) {
                 try {
-                  const t = tagFile.tag;
-                  if (tags.title !== void 0) t.title = tags.title || "";
-                  if (tags.artist !== void 0)
-                    t.performers = tags.artist ? [tags.artist] : [];
-                  if (tags.album !== void 0) t.album = tags.album || "";
-                  if (tags.genre !== void 0)
-                    t.genres = tags.genre ? [tags.genre] : [];
-                  if (tags.year !== void 0)
-                    t.year = tags.year ? parseInt(tags.year, 10) || 0 : 0;
-                  if (tags.coverArt) {
-                    const match = tags.coverArt.match(/^data:([^;]+);base64,(.+)$/);
-                    if (match) {
-                      const mime = match[1];
-                      const buf = Buffer.from(match[2], "base64");
-                      const picture = TagLib.Picture.fromData(
-                        TagLib.ByteVector.fromByteArray(buf)
-                      );
-                      picture.mimeType = mime;
-                      picture.type = TagLib.PictureType.FrontCover;
-                      t.pictures = [picture];
+                  const tagFile = TagLib.File.createFromPath(filePath);
+                  try {
+                    const t = tagFile.tag;
+                    if (tags.title !== void 0) t.title = tags.title || "";
+                    if (tags.artist !== void 0) {
+                      t.performers = tags.artist ? [tags.artist] : [];
+                      t.albumArtists = tags.artist ? [tags.artist] : [];
                     }
+                    if (tags.album !== void 0) t.album = tags.album || "";
+                    if (tags.genre !== void 0)
+                      t.genres = tags.genre ? [tags.genre] : [];
+                    if (tags.year !== void 0)
+                      t.year = tags.year ? parseInt(tags.year, 10) || 0 : 0;
+                    if (tags.coverArt) {
+                      const match = tags.coverArt.match(/^data:([^;]+);base64,(.+)$/);
+                      if (match) {
+                        const mime = match[1];
+                        const buf = Buffer.from(match[2], "base64");
+                        const picture = TagLib.Picture.fromData(
+                          TagLib.ByteVector.fromByteArray(buf)
+                        );
+                        picture.mimeType = mime;
+                        picture.type = TagLib.PictureType.FrontCover;
+                        t.pictures = [picture];
+                      }
+                    }
+                    tagFile.save();
+                    writeSuccess = true;
+                    break;
+                  } finally {
+                    tagFile.dispose();
                   }
-                  tagFile.save();
-                } finally {
-                  tagFile.dispose();
+                } catch (tagLibErr) {
+                  lastWriteErr = tagLibErr;
                 }
-              } catch (tagLibErr) {
-                console.warn(
+                if (attempt < 3) {
+                  await new Promise((resolve) => setTimeout(resolve, 150));
+                }
+              }
+              if (!writeSuccess) {
+                console.error(
                   "[metadata:write-tags] node-taglib-sharp write failed:",
-                  tagLibErr.message
+                  lastWriteErr ? lastWriteErr.message : "Unknown error"
                 );
+                return {
+                  success: false,
+                  error: `Failed to write tags to audio file: ${lastWriteErr ? lastWriteErr.message : "File locked or unwriteable"}`
+                };
               }
             }
             let freshMtime = null;
@@ -40508,10 +40556,28 @@ var require_ipc = __commonJS({
                     ...freshMtime !== null ? { dateModified: freshMtime } : {},
                     ...tags.coverArt ? { coverArt: tags.coverArt, _hasCoverArt: true } : {}
                   });
-                  db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(
+                  db.prepare(
+                    `UPDATE tracks 
+                 SET title = ?, artist = ?, album = ?, genre = ?, year = ?, dateModified = ?, data = ? 
+                 WHERE id = ?`
+                  ).run(
+                    track.title || "",
+                    Array.isArray(track.artist) ? track.artist.join(", ") : track.artist || "",
+                    track.album || "",
+                    track.genre || "",
+                    Number(track.year) || null,
+                    freshMtime !== null ? freshMtime : track.dateModified || Date.now(),
                     JSON.stringify(dbTrack),
                     trackId
                   );
+                }
+                if (tags.coverArt) {
+                  db.prepare(
+                    "INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)"
+                  ).run(trackId, tags.coverArt);
+                  if (typeof _coverArtByIdCache !== "undefined") {
+                    _coverArtByIdCache.set(trackId, tags.coverArt);
+                  }
                 }
               } catch (dbErr) {
                 console.error(
@@ -40520,22 +40586,20 @@ var require_ipc = __commonJS({
                 );
               }
               if (ManifestIPC.isFeatureFlagEnabled()) {
-                setImmediate(() => {
-                  try {
-                    const tracksForManifest = typeof module2.exports.getLibraryForManifest === "function" ? module2.exports.getLibraryForManifest() : getLibrary();
-                    ManifestIPC.rebuildManifest(tracksForManifest).catch((err) => {
-                      console.warn(
-                        "[metadata:write-tags] background manifest resync failed:",
-                        err.message
-                      );
-                    });
-                  } catch (syncErr) {
+                try {
+                  const tracksForManifest = typeof module2.exports.getLibraryForManifest === "function" ? module2.exports.getLibraryForManifest() : getLibrary();
+                  ManifestIPC.rebuildManifest(tracksForManifest).catch((err) => {
                     console.warn(
                       "[metadata:write-tags] background manifest resync failed:",
-                      syncErr.message
+                      err.message
                     );
-                  }
-                });
+                  });
+                } catch (syncErr) {
+                  console.warn(
+                    "[metadata:write-tags] background manifest resync failed:",
+                    syncErr.message
+                  );
+                }
               }
             }
             return { success: true, updatedTrack };
@@ -41740,7 +41804,6 @@ ${items}
         return null;
       }
     };
-    var _coverArtByIdCache = /* @__PURE__ */ new Map();
     function getCoverArtByTrackId(trackId) {
       const cached = _coverArtByIdCache.get(trackId);
       if (cached !== void 0) return cached;

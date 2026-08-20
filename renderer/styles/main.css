@@ -308,6 +308,8 @@
   --app-font: "Outfit", sans-serif;
   --ui-scale: 1;
   --slider-track-unfilled: #3a3a3a;
+  /* Soft dark text for green-background buttons & active toggles in dark mode */
+  --btn-text-dark: #1e2420;
 }
 
 [data-theme="light"] {
@@ -324,6 +326,8 @@
   --text-muted: #8b8f85;
   --lyrics-bg: #fafbfa;
   --slider-track-unfilled: #d8dcd3;
+  /* Light mode: button text stays light (handled by !important overrides below) */
+  --btn-text-dark: #e8e8e7;
 }
 
 [data-theme="light"] .splash-screen {
@@ -721,12 +725,20 @@
 }
 
 [data-theme="light"] .np-play {
-  background: #1a1c19 !important;
-  color: #ffffff !important;
+  background: transparent !important;
+  border: 2px solid var(--green, #1ed760) !important;
+  color: var(--green, #1ed760) !important;
 }
 
-[data-theme="light"] .np-play svg {
-  fill: #ffffff !important;
+[data-theme="light"] .np-play:hover {
+  background: color-mix(in srgb, var(--green, #1ed760) 6%, transparent) !important;
+}
+
+[data-theme="light"] .np-play svg,
+[data-theme="light"] .np-play svg * {
+  fill: var(--green, #1ed760) !important;
+  color: var(--green, #1ed760) !important;
+  stroke: var(--green, #1ed760) !important;
 }
 
 [data-theme="light"] .np-time {
@@ -933,7 +945,7 @@ input[type="range"] {
    toggling it on was visually invisible. */
 .accent-dynamic-btn.active {
   background: var(--green, #1ed760) !important;
-  color: var(--text-secondary) !important;
+  color: var(--btn-text-dark, #1e2420) !important;
   border-color: var(--green, #1ed760) !important;
 }
 
@@ -1207,19 +1219,21 @@ input[type="range"] {
 }
 
 [data-theme="light"] .ov-play {
-  background: #1a1c19 !important;
-  color: #ffffff !important;
+  background: transparent !important;
+  border: 2px solid var(--green, #1ed760) !important;
+  color: var(--green, #1ed760) !important;
 }
 
 [data-theme="light"] .ov-play:hover {
-  background: #000000 !important;
+  background: color-mix(in srgb, var(--green, #1ed760) 12%, transparent) !important;
   transform: scale(1.05);
 }
 
 [data-theme="light"] .ov-play svg,
 [data-theme="light"] .ov-play svg * {
-  fill: #ffffff !important;
-  stroke: #ffffff !important;
+  fill: var(--green, #1ed760) !important;
+  color: var(--green, #1ed760) !important;
+  stroke: var(--green, #1ed760) !important;
 }
 
 [data-theme="light"] .ov-lyric {
@@ -1868,7 +1882,7 @@ textarea {
   align-items: center;
   gap: 8px;
   background: var(--green);
-  color: rgb(225, 225, 225);
+  color: var(--btn-text-dark, #1e2420);
   border: none;
   border-radius: 8px;
   padding: 8px 18px;
@@ -3551,28 +3565,37 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  background: #fff;
-  border: none;
+  background: transparent;
+  border: 2px solid var(--green, #1ed760);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: default;
-  color: #000;
+  color: var(--green, #1ed760);
   transition:
     background 0.15s,
-    transform 0.1s;
+    border-color 0.15s,
+    transform 0.1s,
+    box-shadow 0.15s;
   flex-shrink: 0;
   padding-left: 0.6px;
 }
 
 .np-play:hover {
-  opacity: 0.8;
+  background: color-mix(in srgb, var(--green, #1ed760) 7%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--green, #1ed760) 18%, transparent);
+  
+}
+
+.np-play:active {
+  transform: scale(0.04);
 }
 
 .np-play svg {
   width: 18px;
   height: 18px;
-  fill: #000;
+  fill: var(--green, #1ed760);
+  color: var(--green, #1ed760);
 }
 
 .np-play svg path {
@@ -4582,7 +4605,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 
 .settings-toggle-btn.active {
   background: var(--green);
-  color: var(--text-secondary);
+  color: var(--btn-text-dark, #1e2420);
   border-color: var(--green);
 }
 
@@ -4894,7 +4917,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   border: 0;
   border-radius: 8px;
   background: var(--green);
-  color: var(--text-secondary);
+  color: var(--btn-text-dark, #1e2420);
   font-family: inherit;
   font-size: 13px;
   font-weight: 800;
@@ -5198,7 +5221,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 
 .eq-preset-pill.active {
   background: var(--green);
-  color: var(--text-secondary);
+  color: var(--btn-text-dark, #1e2420);
   border-color: var(--green);
 }
 
@@ -5422,25 +5445,35 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   width: 46px;
   height: 46px;
   border-radius: 50%;
-  background: #fff;
-  border: none;
+  background: transparent;
+  border: 2px solid var(--green, #1ed760);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: default;
+  color: var(--green, #1ed760);
   transition:
     background 0.15s,
-    transform 0.1s;
+    border-color 0.15s,
+    transform 0.1s,
+    box-shadow 0.15s;
 }
 
 .ov-play:hover {
-  opacity: 0.9;
+  background: color-mix(in srgb, var(--green, #1ed760) 15%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--green, #1ed760) 30%, transparent);
+  transform: scale(1.05);
+}
+
+.ov-play:active {
+  transform: scale(0.96);
 }
 
 .ov-play svg {
-  width: 19px;
-  height: 19px;
-  fill: #000;
+  width: 20px;
+  height: 20px;
+  fill: var(--green, #1ed760);
+  color: var(--green, #1ed760);
 }
 
 .ov-play svg path {
@@ -8157,7 +8190,7 @@ body.expanded-sidebar .sidebar-search {
 }
 .tag-editor-actions .btn-save {
   background: var(--green, #1DB954);
-  color: #000;
+  color: var(--btn-text-dark, #1e2420);
 }
 
 /* ─── Custom Queue Builder Styles ────────────────────────────────────── */
@@ -8314,7 +8347,7 @@ body.expanded-sidebar .sidebar-search {
 
 .home-cq-play-btn:hover {
   background: var(--green);
-  color: #000;
+  color: var(--btn-text-dark, #1e2420);
 }
 
 .home-cq-delete-btn:hover {

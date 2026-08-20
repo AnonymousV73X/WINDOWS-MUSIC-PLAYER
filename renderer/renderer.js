@@ -15989,12 +15989,16 @@ function _openTagEditor(track) {
   });
 
   // Save
-  overlay.querySelector("#tag-save").addEventListener("click", async () => {
+  const saveBtn = overlay.querySelector("#tag-save");
+  saveBtn.addEventListener("click", async () => {
     const newTitle = overlay.querySelector("#tag-title").value.trim();
     const newArtist = overlay.querySelector("#tag-artist").value.trim();
     const newAlbum = overlay.querySelector("#tag-album").value.trim();
     const newGenre = overlay.querySelector("#tag-genre").value.trim();
     const newYear = overlay.querySelector("#tag-year").value.trim();
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving...";
 
     try {
       const result = await window.novaAPI.invoke("metadata:write-tags", {
@@ -16082,10 +16086,18 @@ function _openTagEditor(track) {
             artist: newArtist,
           });
         }
+        _showActionToast(newTitle || track.title, "tags saved");
         overlay.remove();
+      } else {
+        alert("Failed to save tags: " + (result.error || "Unknown error"));
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Save";
       }
     } catch (err) {
       console.error("[TagEditor] Save failed:", err);
+      alert("Error saving tags: " + (err.message || err));
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save";
     }
   });
 }
