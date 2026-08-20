@@ -5642,7 +5642,7 @@ body.is-playing .ov-play svg,
 
 body:not(.is-playing) .ov-play svg,
 .ov-play svg:has(path) {
-  margin-left: 1px;
+  margin-left: 3px;
 }
 
 body.is-playing .ov-play svg,
