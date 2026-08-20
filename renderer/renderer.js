@@ -15997,6 +15997,7 @@ function _openTagEditor(track) {
     const newGenre = overlay.querySelector("#tag-genre").value.trim();
     const newYear = overlay.querySelector("#tag-year").value.trim();
 
+
     saveBtn.disabled = true;
     saveBtn.textContent = "Saving...";
 

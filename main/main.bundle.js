@@ -37840,6 +37840,12 @@ var require_package = __commonJS({
         sharp: "^0.34.5",
         "v8-compile-cache": "^2.4.0"
       },
+      overrides: {
+        "js-yaml": "^4.3.1",
+        "@istanbuljs/load-nyc-config": {
+          "js-yaml": "^3.15.1"
+        }
+      },
       build: {
         appId: "com.novatune.player",
         productName: "NovaTune",
