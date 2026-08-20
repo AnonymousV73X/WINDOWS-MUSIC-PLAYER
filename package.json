@@ -1,7 +1,7 @@
 {
   "name": "novatune",
   "version": "1.1.1",
-  "description": "NovaTune — A premium Windows music player with Spotify-dark aesthetics",
+  "description": "NovaTune \u2014 A premium Windows music player with Spotify-dark aesthetics",
   "main": "main/main.bundle.js",
   "scripts": {
     "build:main": "node esbuild.main.config.js",
@@ -53,5 +53,8 @@
       "assets/**/*",
       "package.json"
     ]
+  },
+  "overrides": {
+    "js-yaml": "4.3.1"
   }
 }
