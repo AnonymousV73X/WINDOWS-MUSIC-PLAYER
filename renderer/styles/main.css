@@ -3587,7 +3587,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 }
 
 .np-play:active {
-  transform: scale(0.96);
+  transform: scale(0.6);
 }
 
 .np-play svg {
