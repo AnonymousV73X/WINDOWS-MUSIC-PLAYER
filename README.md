@@ -16,7 +16,7 @@
 
 ### Download
 
-[![Download the latest release](https://img.shields.io/badge/⬇%20Download-NovaTune%20Setup%20v1.1.4-1ed760?style=for-the-badge&logo=github&logoColor=white)](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases/latest)
+[![Download the latest release](https://img.shields.io/badge/⬇%20Download-NovaTune%20Setup%20v1.1.5-1ed760?style=for-the-badge&logo=github&logoColor=white)](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases/latest)
 
 > **Prefer a portable build?** Grab `NovaTune-Setup-1.1.4.exe` from the [Releases page](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases) — no installer, just double-click and play. Ensure You download the latest version it has some critical fixez ... oh b the way this will ook nice with a 14 incher and above i dont know how its gonna look like in smaller screens (i mean in the full screen aspect).
 
@@ -945,7 +945,7 @@ NovaTune stands on the shoulders of giants:
 
 <div align="center">
 
-**NovaTune v1.1.4 • Made with love for music lovers**
+**NovaTune v1.1.5 • Made with love for music lovers**
 
 *If NovaTune brings you joy, star the repo and tell a friend.*
 
