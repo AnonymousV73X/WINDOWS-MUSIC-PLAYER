@@ -170,6 +170,7 @@ const state = {
   volumeBoost: 1.0,
   recentlyPlayed: [],
   dynamicAccentColor: false,
+  showRemainingTime: false,
 };
 
 const audioEngine = AudioEngine.getInstance();
@@ -3233,17 +3234,14 @@ document.addEventListener("keydown", (e) => {
   }
 
   // ─── 2. F11 closes the Now Playing overlay (always active when open) ──
-  // The Help docs say "F11 → Close Now Playing overlay". The scaffold
-  // NowPlayingOverlay.js wired this but the live app never did. The
-  // standard F11 (fullscreen) behaviour is also suppressed here while
-  // the overlay is open, so the user's intent (close the overlay) wins.
   if (e.key === "F11" && state.overlayOpen) {
     e.preventDefault();
     closeOverlay();
     return;
   }
 
-  // ─── 3. Ctrl+F / Cmd+F / "/" focus search ─────────────────────
+  // ─── 3. Global modifier shortcuts (Ctrl / Cmd) ────────────────
+  // Ctrl+F / Cmd+F → Focus search
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
     e.preventDefault();
     if (state.overlayOpen) closeOverlay();
@@ -3253,6 +3251,40 @@ document.addEventListener("keydown", (e) => {
       searchInput.focus();
       searchInput.select();
     }
+    return;
+  }
+
+  // Ctrl+P / Cmd+P → Add current track to playlist
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
+    e.preventDefault();
+    if (state.currentTrack) {
+      const anchor = state.overlayOpen
+        ? ($("ov-add-btn") || $("ov-more-btn") || $("ov-title"))
+        : ($("np-menu-btn") || $("np-title") || document.body);
+      if (anchor) openPlaylistMenu(anchor, state.currentTrack);
+    }
+    return;
+  }
+
+  // Ctrl+L / Cmd+L → Light mode
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "l") {
+    e.preventDefault();
+    _applyThemeMode("light");
+    saveSetting("theme", "light");
+    $$(".theme-mode-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.theme === "light");
+    });
+    return;
+  }
+
+  // Ctrl+D / Cmd+D → Dark mode
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
+    e.preventDefault();
+    _applyThemeMode("dark");
+    saveSetting("theme", "dark");
+    $$(".theme-mode-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.theme === "dark");
+    });
     return;
   }
 
@@ -3267,8 +3299,6 @@ document.addEventListener("keydown", (e) => {
 
   if (!isEditable) {
     // "/" focuses search (Google / YouTube / Gmail convention).
-    // Shift+"/" produces "?" — let that fall through so it doesn't steal
-    // the keystroke from any future help-overlay shortcut.
     if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
       const searchInput = $("search-input");
@@ -3282,14 +3312,7 @@ document.addEventListener("keydown", (e) => {
 
   // ─── 4. Editable-field guard ──────────────────────────────────
   // Everything below this point is suppressed while the user is typing
-  // in an input, textarea, select, or contenteditable element. The
-  // individual dialog / lyrics-editor Enter+Esc handlers (registered on
-  // the document by those components) still fire because they were added
-  // AFTER this listener in document order — actually they were added
-  // before, but they call e.stopPropagation() implicitly by being
-  // registered on document with the same priority. To be safe, dialogs
-  // and the lyrics editor handle their own Enter/Esc via per-input
-  // listeners that fire before this global handler.
+  // in an input, textarea, select, or contenteditable element.
   if (isEditable) return;
 
   // ─── 5. Escape: close overlay / dialog / clear search ────────
@@ -3301,16 +3324,11 @@ document.addEventListener("keydown", (e) => {
       return;
     }
     const openDialog = document.querySelector(".app-dialog");
-    if (openDialog) {
-      // The dialog's own keydown handler (registered in showAppDialog)
-      // will catch this and resolve(null). Don't double-handle.
-      return;
-    }
+    if (openDialog) return;
+
     const lyricsEditor = $("lyrics-editor");
-    if (lyricsEditor && lyricsEditor.classList.contains("open")) {
-      // Lyrics editor has its own close path
-      return;
-    }
+    if (lyricsEditor && lyricsEditor.classList.contains("open")) return;
+
     // Otherwise: clear the search box if it has content
     const searchInput = $("search-input");
     if (searchInput && searchInput.value) {
@@ -3320,8 +3338,6 @@ document.addEventListener("keydown", (e) => {
       searchInput.blur();
       return;
     }
-    // Last resort: blur whatever has focus so the next keypress doesn't
-    // accidentally trigger a button's space-bar click.
     if (document.activeElement && document.activeElement !== document.body) {
       document.activeElement.blur();
     }
@@ -3348,8 +3364,6 @@ document.addEventListener("keydown", (e) => {
   }
 
   // ─── 8. M → mute / unmute ────────────────────────────────────
-  // Mirrors the click handler on #vol-btn in _wireVolume (line 8109):
-  // if volume > 0, store it as _prevVolume and mute; if muted, restore.
   if (e.code === "KeyM" && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault();
     if (state.volume > 0) {
@@ -3360,58 +3374,99 @@ document.addEventListener("keydown", (e) => {
     }
     audioEngine.setVolume(state.volume);
     updateVolumeUi();
-    // v1.1.0 — Persist volume change (debounced, respects volumePersistMode).
     _persistVolumeDebounced();
     return;
   }
 
-  // ─── 9. ArrowUp / ArrowDown → scroll library 200 px ──────────
-  if (e.code === "ArrowUp" && !e.shiftKey) {
+  // ─── 9. T → open Tag Editor for currently playing track ──────
+  if (e.code === "KeyT" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    if (state.currentTrack) _openTagEditor(state.currentTrack);
+    return;
+  }
+
+  // ─── 10. L → Like / Favorite currently playing track ─────────
+  if (e.code === "KeyL" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    toggleFavorite();
+    return;
+  }
+
+  // ─── 11. S → Toggle Shuffle ──────────────────────────────────
+  if (e.code === "KeyS" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    _toggleShuffle();
+    return;
+  }
+
+  // ─── 12. 1 or R → Repeat One (toggle) ─────────────────────────
+  if ((e.key === "1" || e.code === "KeyR") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    _setRepeatMode("one");
+    return;
+  }
+
+  // ─── 13. 0 or O → Repeat All (toggle) ─────────────────────────
+  if ((e.key === "0" || e.code === "KeyO") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    _setRepeatMode("all");
+    return;
+  }
+
+  // ─── 14. ArrowUp / ArrowDown → Volume Up / Down ──────────────
+  if (e.code === "ArrowUp" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    e.preventDefault();
+    state.volume = Math.max(0, Math.min(1, state.volume + 0.05));
+    audioEngine.setVolume(state.volume);
+    updateVolumeUi();
+    _persistVolumeDebounced();
+    return;
+  }
+  if (e.code === "ArrowDown" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    e.preventDefault();
+    state.volume = Math.max(0, Math.min(1, state.volume - 0.05));
+    audioEngine.setVolume(state.volume);
+    updateVolumeUi();
+    _persistVolumeDebounced();
+    return;
+  }
+
+  // ─── 15. PageUp / PageDown / Shift+ArrowUp/Down → Scroll library ─
+  if (e.code === "PageUp" || (e.code === "ArrowUp" && e.shiftKey)) {
     e.preventDefault();
     const area = $("track-area");
     if (area) area.scrollTop -= 200;
     return;
   }
-  if (e.code === "ArrowDown" && !e.shiftKey) {
+  if (e.code === "PageDown" || (e.code === "ArrowDown" && e.shiftKey)) {
     e.preventDefault();
     const area = $("track-area");
     if (area) area.scrollTop += 200;
     return;
   }
 
-  // ─── 10 & 11. ArrowLeft / ArrowRight ─────────────────────────
-  // Help docs specify three behaviours for horizontal arrows:
-  //   (a) When seek bar is focused AND no Shift → adjust volume ±5%
-  //   (b) Shift+Arrow → next / previous track
-  //   (c) Plain Arrow (no Shift, seek bar not focused) → seek ±5 s
-  //
-  // We honour (a) only when _seekBarActive is true (set by clicking the
-  // squiggly bar). Otherwise we fall through to (b) or (c). This matches
-  // the Help docs: "→ / ← (when seek bar focused) Adjust volume ±5%"
-  // and "→ / ← (when seek bar focused, alt handler) Seek ±5 s" — the
-  // latter is interpreted as "when not focused, seek ±5s".
+  // ─── 16. ArrowLeft / ArrowRight → Seek ±5s (Shift → Prev/Next) ──
   if (e.code === "ArrowRight" || e.code === "ArrowLeft") {
     e.preventDefault();
     const sign = e.code === "ArrowRight" ? 1 : -1;
 
     if (e.shiftKey) {
-      // (b) Shift+Arrow → next / previous track
+      // Shift+Arrow → next / previous track
       if (sign > 0) playNext();
       else playPrevious();
       return;
     }
 
     if (_seekBarActive) {
-      // (a) Seek bar focused → adjust volume ±5%
+      // Seek bar focused → adjust volume ±5%
       state.volume = Math.max(0, Math.min(1, state.volume + sign * 0.05));
       audioEngine.setVolume(state.volume);
       updateVolumeUi();
-      // v1.1.0 — Persist volume change (debounced, respects volumePersistMode).
       _persistVolumeDebounced();
       return;
     }
 
-    // (c) Plain Arrow, no seek bar focused → seek ±5 s
+    // Plain Arrow → seek ±5 s
     const cur = audioEngine.getCurrentTime() || 0;
     const dur = audioEngine.getDuration();
     let target = cur + sign * 5;
@@ -6399,6 +6454,7 @@ async function _loadSettings() {
     state.customQueues = Array.isArray(state.settings.customQueues)
       ? state.settings.customQueues
       : [];
+    state.showRemainingTime = !!state.settings.showRemainingTime;
     _applyVolumeBarMode(state.settings.volumeBarMode || "hover");
     _applyNavMode(state.settings.navMode || "hover");
     _applyFont(state.settings.font || "outfit");
@@ -10676,7 +10732,7 @@ function renderHelp() {
           </div>
           <div class="help-item">
             <div class="help-item-title">Seek and Volume</div>
-            <div class="help-item-body">Click anywhere on the squiggly progress bar to seek to that position. Hover over the volume icon to reveal the volume slider, or set it to always visible in Settings. Use keyboard shortcuts: <strong>Space</strong> to play/pause, <strong>N</strong> for next track, <strong>P</strong> for previous track, and <strong>Arrow keys</strong> to scroll the library.</div>
+            <div class="help-item-body">Click anywhere on the squiggly progress bar to seek to that position. Hover over the volume icon to reveal the volume slider, or set it to always visible in Settings. Use keyboard shortcuts: <strong>Space</strong> to play/pause, <strong>N</strong>/<strong>P</strong> for next/previous, <strong>&uarr;</strong>/<strong>&darr;</strong> for volume up/down, and <strong>&larr;</strong>/<strong>&rarr;</strong> to seek.</div>
           </div>
           <div class="help-item">
             <div class="help-item-title">Crossfade and Gapless Playback</div>
@@ -10748,10 +10804,20 @@ function renderHelp() {
             <div class="help-shortcut"><kbd>Space</kbd><span>Play / Pause</span></div>
             <div class="help-shortcut"><kbd>N</kbd><span>Next Track</span></div>
             <div class="help-shortcut"><kbd>P</kbd><span>Previous Track</span></div>
-            <div class="help-shortcut"><kbd>&uarr;</kbd><kbd>&darr;</kbd><span>Scroll Library</span></div>
-            <div class="help-shortcut"><kbd>Ctrl+F</kbd><span>Focus Search</span></div>
-            <div class="help-shortcut"><kbd>Esc</kbd><span>Close Overlay / Dialog</span></div>
+            <div class="help-shortcut"><kbd>&uarr;</kbd> / <kbd>&darr;</kbd><span>Volume Up / Down</span></div>
+            <div class="help-shortcut"><kbd>&larr;</kbd> / <kbd>&rarr;</kbd><span>Seek &plusmn;5s (Shift: Track)</span></div>
             <div class="help-shortcut"><kbd>M</kbd><span>Mute / Unmute</span></div>
+            <div class="help-shortcut"><kbd>S</kbd><span>Toggle Shuffle</span></div>
+            <div class="help-shortcut"><kbd>1</kbd> / <kbd>R</kbd><span>Repeat One</span></div>
+            <div class="help-shortcut"><kbd>0</kbd> / <kbd>O</kbd><span>Repeat All</span></div>
+            <div class="help-shortcut"><kbd>L</kbd><span>Like / Favorite Track</span></div>
+            <div class="help-shortcut"><kbd>T</kbd><span>Open Tag Editor</span></div>
+            <div class="help-shortcut"><kbd>Ctrl+P</kbd><span>Add to Playlist</span></div>
+            <div class="help-shortcut"><kbd>Ctrl+L</kbd><span>Switch to Light Mode</span></div>
+            <div class="help-shortcut"><kbd>Ctrl+D</kbd><span>Switch to Dark Mode</span></div>
+            <div class="help-shortcut"><kbd>Ctrl+F</kbd> / <kbd>/</kbd><span>Focus Search</span></div>
+            <div class="help-shortcut"><kbd>Esc</kbd><span>Close Overlay / Dialog</span></div>
+            <div class="help-shortcut"><kbd>F11</kbd><span>Close Overlay</span></div>
           </div>
         </div>
 
@@ -13580,6 +13646,53 @@ function _updateRepeatButton() {
   }
 }
 
+function _toggleShuffle() {
+  state.shuffleEnabled = !state.shuffleEnabled;
+  $("shuffle-btn")?.classList.toggle("active", state.shuffleEnabled);
+  $("ov-shuffle-btn")?.classList.toggle("active", state.shuffleEnabled);
+  if (state.shuffleEnabled && state.queue.length > 1) {
+    const currentTrack = state.queue[state.queueIndex];
+    const beforeCurrent = state.queue.slice(0, state.queueIndex);
+    const afterCurrent = state.queue.slice(state.queueIndex + 1);
+    const rest = [...beforeCurrent, ...afterCurrent].sort(
+      () => Math.random() - 0.5,
+    );
+    state.queue = [currentTrack, ...rest];
+    state.queueIndex = 0;
+  }
+  saveSetting("shuffle", state.shuffleEnabled);
+}
+
+function _cycleRepeatMode() {
+  const modes = ["off", "all", "one"];
+  const idx = (modes.indexOf(state.repeatMode) + 1) % modes.length;
+  _applyRepeatMode(modes[idx]);
+}
+
+function _setRepeatMode(mode) {
+  _applyRepeatMode(state.repeatMode === mode ? "off" : mode);
+}
+
+function _applyRepeatMode(mode) {
+  state.repeatMode = mode;
+  if (state.repeatMode === "all" && state.currentTrack) {
+    const sorted = state.filteredTracks.length
+      ? state.filteredTracks
+      : state.tracks;
+    const currentIdx = sorted.findIndex(
+      (t) => t.id === state.currentTrack.id,
+    );
+    if (currentIdx >= 0) {
+      const after = sorted.slice(currentIdx);
+      const before = sorted.slice(0, currentIdx);
+      state.queue = [...after, ...before];
+      state.queueIndex = 0;
+    }
+  }
+  _updateRepeatButton();
+  saveSetting("repeatMode", state.repeatMode);
+}
+
 function _updatePlayPauseIcon(playing) {
   document.body.classList.toggle("is-playing", playing);
   const pauseIcon =
@@ -13642,48 +13755,11 @@ function _wireNowPlaying() {
   $("prev-btn").addEventListener("click", () => playPrevious());
   $("next-btn").addEventListener("click", () => playNext());
 
-  // Shuffle toggle — when enabling shuffle, reshuffle the upcoming queue.
-  // The currently playing song stays at position 0; the rest are randomized.
-  $("shuffle-btn").addEventListener("click", () => {
-    state.shuffleEnabled = !state.shuffleEnabled;
-    $("shuffle-btn").classList.toggle("active", state.shuffleEnabled);
-    if (state.shuffleEnabled && state.queue.length > 1) {
-      // Keep the current track at position 0, shuffle the rest
-      const currentTrack = state.queue[state.queueIndex];
-      const beforeCurrent = state.queue.slice(0, state.queueIndex);
-      const afterCurrent = state.queue.slice(state.queueIndex + 1);
-      const rest = [...beforeCurrent, ...afterCurrent].sort(
-        () => Math.random() - 0.5,
-      );
-      state.queue = [currentTrack, ...rest];
-      state.queueIndex = 0;
-    }
-  });
+  // Shuffle toggle
+  $("shuffle-btn").addEventListener("click", () => _toggleShuffle());
 
-  // Repeat toggle: off → all (sequential) → one → off
-  $("repeat-btn").addEventListener("click", () => {
-    const modes = ["off", "all", "one"];
-    const idx = (modes.indexOf(state.repeatMode) + 1) % modes.length;
-    state.repeatMode = modes[idx];
-    // When enabling "all": rebuild queue sequentially from current track
-    // following the current library sort order
-    if (state.repeatMode === "all" && state.currentTrack) {
-      const sorted = state.filteredTracks.length
-        ? state.filteredTracks
-        : state.tracks;
-      const currentIdx = sorted.findIndex(
-        (t) => t.id === state.currentTrack.id,
-      );
-      if (currentIdx >= 0) {
-        const after = sorted.slice(currentIdx);
-        const before = sorted.slice(0, currentIdx);
-        state.queue = [...after, ...before];
-        state.queueIndex = 0;
-      }
-    }
-    _updateRepeatButton();
-    saveSetting("repeatMode", state.repeatMode);
-  });
+  // Repeat toggle: off → all → one → off
+  $("repeat-btn").addEventListener("click", () => _cycleRepeatMode());
 
   // Heart/Like
   $("heart-btn").addEventListener("click", toggleFavorite);
@@ -13691,6 +13767,9 @@ function _wireNowPlaying() {
   // Progress bar seeking
   const npCanvas = $("squiggly-canvas");
   wireSeekCanvas(npCanvas, squigglyNP);
+
+  // Duration toggle: total time ↔ remaining time
+  $("np-time-total")?.addEventListener("click", toggleRemainingTime);
 
   // np-left click → open overlay
   $("np-left").addEventListener("click", openOverlay);
@@ -13877,43 +13956,11 @@ function _wireOverlay() {
   $("ov-prev-btn").addEventListener("click", () => playPrevious());
   $("ov-next-btn").addEventListener("click", () => playNext());
 
-  $("ov-shuffle-btn").addEventListener("click", () => {
-    state.shuffleEnabled = !state.shuffleEnabled;
-    $("shuffle-btn").classList.toggle("active", state.shuffleEnabled);
-    $("ov-shuffle-btn").classList.toggle("active", state.shuffleEnabled);
-    if (state.shuffleEnabled && state.queue.length > 1) {
-      const currentTrack = state.queue[state.queueIndex];
-      const beforeCurrent = state.queue.slice(0, state.queueIndex);
-      const afterCurrent = state.queue.slice(state.queueIndex + 1);
-      const rest = [...beforeCurrent, ...afterCurrent].sort(
-        () => Math.random() - 0.5,
-      );
-      state.queue = [currentTrack, ...rest];
-      state.queueIndex = 0;
-    }
-  });
+  // Shuffle toggle
+  $("ov-shuffle-btn").addEventListener("click", () => _toggleShuffle());
 
-  $("ov-repeat-btn").addEventListener("click", () => {
-    const modes = ["off", "all", "one"];
-    const idx = (modes.indexOf(state.repeatMode) + 1) % modes.length;
-    state.repeatMode = modes[idx];
-    if (state.repeatMode === "all" && state.currentTrack) {
-      const sorted = state.filteredTracks.length
-        ? state.filteredTracks
-        : state.tracks;
-      const currentIdx = sorted.findIndex(
-        (t) => t.id === state.currentTrack.id,
-      );
-      if (currentIdx >= 0) {
-        const after = sorted.slice(currentIdx);
-        const before = sorted.slice(0, currentIdx);
-        state.queue = [...after, ...before];
-        state.queueIndex = 0;
-      }
-    }
-    _updateRepeatButton();
-    saveSetting("repeatMode", state.repeatMode);
-  });
+  // Repeat toggle: off → all → one → off
+  $("ov-repeat-btn").addEventListener("click", () => _cycleRepeatMode());
 
   $("ov-heart-btn").addEventListener("click", toggleFavorite);
 
@@ -13926,6 +13973,9 @@ function _wireOverlay() {
 
   // Overlay pencil → open lyrics editor
   $("ov-lyrics-edit-btn")?.addEventListener("click", () => openLyricsEditor());
+
+  // Duration toggle: total time ↔ remaining time
+  $("ov-time-total")?.addEventListener("click", toggleRemainingTime);
 }
 
 function openOverlay() {
@@ -14289,16 +14339,47 @@ function updateVolumeUi() {
   }
 }
 
+let _lastProgressCur = 0;
+let _lastProgressDur = 0;
+
 function updateProgressText(cur, dur) {
+  if (typeof cur === "number" && isFinite(cur)) _lastProgressCur = cur;
+  if (typeof dur === "number" && isFinite(dur)) _lastProgressDur = dur;
+
+  const validCur = isFinite(_lastProgressCur) ? Math.max(0, _lastProgressCur) : 0;
+  const validDur =
+    isFinite(_lastProgressDur) && _lastProgressDur > 0 ? _lastProgressDur : 0;
+
+  const curFormatted = formatTime(validCur);
+  const totalFormatted = state.showRemainingTime
+    ? `-${formatTime(Math.max(0, validDur - validCur))}`
+    : formatTime(validDur);
+
   const npCur = $("np-time-current");
   const npTotal = $("np-time-total");
-  if (npCur) npCur.textContent = formatTime(cur);
-  if (npTotal) npTotal.textContent = formatTime(dur);
+  if (npCur) npCur.textContent = curFormatted;
+  if (npTotal) {
+    npTotal.textContent = totalFormatted;
+    npTotal.title = state.showRemainingTime
+      ? "Remaining time (click to show total)"
+      : "Total duration (click to show remaining)";
+  }
 
   const ovCur = $("ov-time-current");
   const ovTotal = $("ov-time-total");
-  if (ovCur) ovCur.textContent = formatTime(cur);
-  if (ovTotal) ovTotal.textContent = formatTime(dur);
+  if (ovCur) ovCur.textContent = curFormatted;
+  if (ovTotal) {
+    ovTotal.textContent = totalFormatted;
+    ovTotal.title = state.showRemainingTime
+      ? "Remaining time (click to show total)"
+      : "Total duration (click to show remaining)";
+  }
+}
+
+function toggleRemainingTime() {
+  state.showRemainingTime = !state.showRemainingTime;
+  saveSetting("showRemainingTime", state.showRemainingTime);
+  updateProgressText(_lastProgressCur, _lastProgressDur);
 }
 
 function startSmoothProgress(cur, dur) {

@@ -1416,6 +1416,218 @@ input[type="range"] {
   border-bottom: 1px solid #e6e8e3 !important;
 }
 
+/* ── Lyrics Editor in Light Mode ──────────────────────────────────── */
+[data-theme="light"] .lyrics-editor-header {
+  border-bottom: 1px solid #e6e8e3 !important;
+}
+
+[data-theme="light"] .lyrics-editor-title {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .lyrics-editor-track-name {
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .lyrics-editor-close {
+  background: #f0f2ee !important;
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .lyrics-editor-close:hover {
+  background: #e4e8e1 !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .lyrics-editor-tabs {
+  border-bottom: 1px solid #e6e8e3 !important;
+}
+
+[data-theme="light"] .le-tab {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .le-tab:hover {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .le-tab.active {
+  color: #1a1c19 !important;
+  border-bottom-color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .le-input {
+  background: #f4f6f2 !important;
+  border: 1px solid #d8dcd3 !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .le-input:focus {
+  border-color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .le-input::placeholder {
+  color: #8b8f85 !important;
+}
+
+[data-theme="light"] .le-search-btn {
+  background: var(--green, #1ed760) !important;
+  color: #ffffff !important;
+}
+
+[data-theme="light"] .le-search-btn:hover {
+  background: var(--green-hover, #1fdf64) !important;
+}
+
+[data-theme="light"] .le-search-status {
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .le-result-card {
+  background: #f7f8f5 !important;
+  border: 1px solid #e4e6e1 !important;
+}
+
+[data-theme="light"] .le-result-card:hover {
+  background: #eef1ec !important;
+  opacity: 1 !important;
+}
+
+[data-theme="light"] .le-result-card.selected {
+  border-color: var(--green, #1ed760) !important;
+  background: color-mix(in srgb, var(--green, #1ed760) 8%, #ffffff) !important;
+  opacity: 1 !important;
+}
+
+[data-theme="light"] .le-result-title {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .le-result-artist {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .le-badge {
+  background: #e2e5df !important;
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .le-badge-synced {
+  background: color-mix(in srgb, var(--green, #1ed760) 15%, transparent) !important;
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .le-badge-inst {
+  background: #e2e5df !important;
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .le-badge-dur {
+  background: #e2e5df !important;
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .le-badge-dur-match {
+  background: color-mix(in srgb, var(--green, #1ed760) 15%, transparent) !important;
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .le-result-use-btn {
+  background: #ffffff !important;
+  border: 1px solid #d8dcd3 !important;
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .le-result-use-btn:hover {
+  border-color: var(--green, #1ed760) !important;
+  color: var(--green, #1ed760) !important;
+  background: color-mix(in srgb, var(--green, #1ed760) 8%, #ffffff) !important;
+  opacity: 1 !important;
+}
+
+[data-theme="light"] .le-result-card.selected .le-result-use-btn {
+  border-color: var(--green, #1ed760) !important;
+  color: #ffffff !important;
+  background: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .le-search-results::-webkit-scrollbar-thumb,
+[data-theme="light"] .le-textarea::-webkit-scrollbar-thumb {
+  background: #cdd1c8 !important;
+}
+
+[data-theme="light"] .le-search-results::-webkit-scrollbar-thumb:hover,
+[data-theme="light"] .le-textarea::-webkit-scrollbar-thumb:hover {
+  background: #b5baa0 !important;
+}
+
+[data-theme="light"] .le-paste-hint {
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .le-paste-hint code {
+  background: #e8eae4 !important;
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .le-textarea {
+  background: #f7f8f5 !important;
+  border-top: 1px solid #e6e8e3 !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .le-textarea::placeholder {
+  color: #8b8f85 !important;
+}
+
+[data-theme="light"] .le-file-drop {
+  border-color: #d8dcd3 !important;
+  background: #f7f8f5 !important;
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .le-file-drop:hover,
+[data-theme="light"] .le-file-drop.dragover {
+  border-color: var(--green, #1ed760) !important;
+  background: color-mix(in srgb, var(--green, #1ed760) 6%, #f7f8f5) !important;
+  color: #1a1c19 !important;
+  opacity: 1 !important;
+}
+
+[data-theme="light"] .le-file-name {
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .lyrics-editor-footer {
+  background: #f4f6f2 !important;
+  border-top: 1px solid #e6e8e3 !important;
+}
+
+[data-theme="light"] .le-save-status {
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .le-btn-primary {
+  background: var(--green, #1ed760) !important;
+  color: #ffffff !important;
+}
+
+[data-theme="light"] .le-btn-primary:hover {
+  opacity: 0.9 !important;
+}
+
+[data-theme="light"] .le-btn-secondary {
+  background: #ffffff !important;
+  border: 1px solid #d8dcd3 !important;
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .le-btn-secondary:hover {
+  border-color: #ff4d6d !important;
+  color: #ff4d6d !important;
+  background: #fff5f6 !important;
+}
+
 /* Global text selection — use accent green instead of native blue */
 ::selection {
   background: color-mix(in srgb, var(--green, #1ed760) 40%, transparent);
@@ -3725,11 +3937,19 @@ body.is-playing .ov-play svg,
 .np-time {
   font-size: 10.5px;
   color: var(--text-muted);
-  min-width: 28px;
+  min-width: 36px;
+  font-variant-numeric: tabular-nums;
 }
 
 .np-time.right {
   text-align: right;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s ease;
+}
+
+.np-time.right:hover {
+  color: var(--text-primary);
 }
 
 .squiggly-canvas {
@@ -5660,12 +5880,20 @@ body.is-playing .ov-play svg,
 .ov-time {
   font-size: 10.5px;
   color: rgba(255, 255, 255, 0.35);
-  min-width: 28px;
+  min-width: 36px;
   background-color: transparent;
+  font-variant-numeric: tabular-nums;
 }
 
 .ov-time.right {
   text-align: right;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s ease;
+}
+
+.ov-time.right:hover {
+  color: var(--text-primary);
 }
 
 .track-skeleton-row {
@@ -8784,6 +9012,7 @@ body.expanded-sidebar .sidebar-search {
   padding: 4px 0;
   transition: border-color 0.15s ease;
 }
+
 
 .cqb-name-input:focus {
   border-bottom-color: var(--green);
