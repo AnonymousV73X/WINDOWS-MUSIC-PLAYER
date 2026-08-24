@@ -1,7 +1,6 @@
 <!-- markdownlint-disable MD033 MD041 -->
 
 <div align="center">
-
 # NovaTune
 
 ### A premium Windows music player with Spotify-dark aesthetics.
@@ -25,9 +24,9 @@
 
 ---
 
-## Why I Built NovaTune — An Honest Story
+## Why I Built NovaTune
 
-I never set out to write a music player. I just wanted to listen to music on my laptop the way I do on my phone.
+I never really set out to code up a music player. I just wanted to listen to music on my laptop the way I do on my phone.
 
 On Android, an app called **[Oto Music](https://play.google.com/store/apps/details?id=com.piyush.music)** quietly became the gold standard. Built largely by **one person** — Piyush Mamidwar — it crossed **2 million downloads** and held a steady **4.6-star rating** for years. It was *Material You to the core*: accent colors that flowed from your wallpaper, a beautiful full-screen lyrics view, gapless playback, a built-in tag editor, a folder blacklist so your ringtones never polluted your library, and synced lyrics pulled from **four different sources**. It was free. It was ad-free. It was feature-complete. It proved that a local music player could be beautiful and powerful at the same time. ([Android Police called it "the only one I kept."](https://www.androidpolice.com/i-tested-dozens-of-music-players-and-this-is-the-only-one-i-kept))
 
@@ -288,7 +287,7 @@ This deserves its own section because it's the soul of NovaTune's UI.
 
 The squiggly progress bar is a direct port of the AOSP (Android Open Source Project) `SquigglyProgress` animation. The wave:
 
-- **Animates only while playing** — it freezes when paused, like a held breath.
+- **Animates only while playing** — it freezes when paused, like a held breath haha...
 - **Runs on an `OffscreenCanvas` driven by a dedicated Web Worker** (created from a Blob URL) so animation never blocks the main thread.
 - **Falls back gracefully** — if `OffscreenCanvas` is unavailable or CSP blocks the Worker, it drops to a main-thread `requestAnimationFrame` loop.
 - **Has an SVG sine-wave overlay** as a secondary implementation inside the bottom now-playing bar (`PlayerControls._injectWaveSvg`), with cosine/sine path tiles.
@@ -947,7 +946,7 @@ NovaTune stands on the shoulders of giants:
 
 ## License
 
-MIT License — see [LICENSE](./LICENSE) for the full text.
+ License — see [LICENSE](./LICENSE) for the full text.
 
 © 2026 NovaTune. All rights reserved.
 
