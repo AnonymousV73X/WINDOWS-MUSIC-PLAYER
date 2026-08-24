@@ -10669,38 +10669,34 @@ function renderHelp() {
 
       <div class="help-sections">
         <div class="section-panel" id="help-updates-section">
-          <div class="section-panel-title">What's New in v1.1.5</div>
+          <div class="section-panel-title">What's New in v1.1.6</div>
 
           <div class="help-item">
-            <div class="help-item-title">☀️ Light Theme Support</div>
+            <div class="help-item-title">⌨️ Expanded Keyboard Shortcuts</div>
             <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
-                <li><strong>Full Light Mode:</strong> Seamlessly switch between Dark and Light mode from <strong>Settings &rarr; Theme Mode</strong>. The entire interface adapts with clean, bright surfaces, soft neutral contrasts, and crisp legible typography.</li>
-                <li><strong>Super Glassmorphic Hero Banner:</strong> The Home screen hero card features a frosted glass gradient with specular highlights, fine borders, and clean typography.</li>
-                <li><strong>Adaptive Toggles &amp; Buttons:</strong> Active buttons, settings toggles (Font, Scrubber Head, Card Sorting), and Equalizer preset pills adapt with harmonious contrast across both light and dark themes.</li>
-                <li><strong>Light-Mode Tooltips:</strong> Tooltips and hover bubbles automatically adapt to light mode with bright cards and crisp dark text.</li>
+                <li><strong>New Power Shortcuts:</strong> Control your player instantly from anywhere: <strong>Ctrl+P</strong> to add the current track to a playlist, <strong>T</strong> to open the Tag Editor, <strong>Ctrl+L</strong> for Light Mode, <strong>Ctrl+D</strong> for Dark Mode, <strong>L</strong> to Like/Favorite, <strong>S</strong> to toggle Shuffle, <strong>1</strong> or <strong>R</strong> for Repeat One, <strong>0</strong> or <strong>O</strong> for Repeat All, and <strong>&uarr;</strong>/<strong>&darr;</strong> for Volume Up/Down (&plusmn;5%).</li>
+                <li><strong>Input-Field Protection:</strong> All single-key shortcuts are automatically guarded so they never interfere while typing in search boxes, the lyrics editor, or tag fields.</li>
               </ul>
             </div>
           </div>
 
           <div class="help-item">
-            <div class="help-item-title">🖥️ UI Scaling for High-Resolution Displays (1440p / 4K)</div>
+            <div class="help-item-title">⏱️ Remaining Time Countdown</div>
             <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
-                <li><strong>Customizable UI Scale:</strong> Adjust interface size anywhere from <strong>80% up to 150%</strong> in <strong>Settings &rarr; Interface &amp; Appearance &rarr; UI Scaling</strong>. Perfect for 1440p, 4K, or large desktop monitors where default UI elements feel too small.</li>
-                <li><strong>Zero Viewport Scrollbars:</strong> Zooming and scaling above 100% maintains a clean, native desktop application viewport with no scrollbars.</li>
-                <li><strong>Persisted Automatically:</strong> Your chosen scale is saved and restored instantly on every application launch.</li>
+                <li><strong>Duration Toggle:</strong> Click or tap the right-hand duration display in the bottom now-playing bar or fullscreen overlay to toggle between total track duration (e.g. <code>3:45</code>) and remaining time countdown (e.g. <code>-1:02</code>).</li>
+                <li><strong>Auto-Persisted:</strong> Your preferred time display mode is saved and remembered across all tracks and app restarts.</li>
               </ul>
             </div>
           </div>
 
           <div class="help-item">
-            <div class="help-item-title">🎛️ Equalizer &amp; Slider Refinements</div>
+            <div class="help-item-title">🎨 Light Mode for Edit Lyrics &amp; High-Contrast Buttons</div>
             <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
-                <li><strong>Refined Slider Tracks:</strong> Horizontal sliders (UI Scale, Safe Volume, Volume Boost, EQ Boost) and equalizer bands feature thinner, sleeker tracks and perfectly centered 12px thumbs.</li>
-                <li><strong>Squiggly Progress Bar:</strong> 2.3px progress track with smoothed, non-clipped rounded end caps and theme-adaptive unfilled track coloring.</li>
-                <li><strong>Optical Alignment:</strong> Centered play icons and refined button padding throughout now-playing controls and titlebar logos.</li>
+                <li><strong>Light Mode Edit Lyrics:</strong> The Edit Lyrics dialog now perfectly adheres to Light Mode with clean card backgrounds, high-contrast search results, badges, and smooth inputs.</li>
+                <li><strong>Crisp Button Typography:</strong> All Help and Updates action buttons now feature high-contrast dark text on green in Dark Mode.</li>
               </ul>
             </div>
           </div>
@@ -10858,7 +10854,7 @@ function renderHelp() {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.832-1.438A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2z"/></svg>
               WhatsApp Support
             </a>
-            <button class="help-contact-btn" id="help-check-update-btn" style="background:#2a2a2a;border:1px solid #383838;cursor:default;">
+            <button class="help-contact-btn" id="help-check-update-btn" style="cursor:default;">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
               Check for Updates
             </button>
@@ -10867,7 +10863,7 @@ function renderHelp() {
       </div>
 
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
-        NovaTune v1.1.5 &bull; Made by SIR ALEX for music lovers
+        NovaTune v1.1.6 &bull; Made by SIR ALEX for music lovers
       </div>
     </div>
   `);

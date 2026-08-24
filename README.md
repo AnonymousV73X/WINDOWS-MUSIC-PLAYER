@@ -8,7 +8,7 @@
 
 *Built for music lovers who were abandoned by every player Microsoft shipped.*
 
-[![Version](https://img.shields.io/badge/version-1.1.1-1ed760?style=flat-square)](./package.json)
+[![Version](https://img.shields.io/badge/version-1.1.6-1ed760?style=flat-square)](./package.json)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4?style=flat-square)]()
 [![Electron](https://img.shields.io/badge/Electron-28-47848F?style=flat-square)]()
 [![Made with love](https://img.shields.io/badge/made%20with-%E2%99%A5-ff4d6d?style=flat-square)]()
@@ -17,9 +17,9 @@
 
 ### Download
 
-[![Download the latest release](https://img.shields.io/badge/⬇%20Download-NovaTune%20Setup%20v1.1.1-1ed760?style=for-the-badge&logo=github&logoColor=white)](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases/latest)
+[![Download the latest release](https://img.shields.io/badge/⬇%20Download-NovaTune%20Setup%20v1.1.6-1ed760?style=for-the-badge&logo=github&logoColor=white)](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases/latest)
 
-> **Prefer a portable build?** Grab `NovaTune-Setup-1.1.1.exe` from the [Releases page](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases) — no installer, just double-click and play. Ensure You download the latest version it has some critical fixez ... oh b the way this will ook nice with a 14 incher and above i dont know how its gonna look like in smaller screens (i mean in the full screen aspect).
+> **Prefer a portable build?** Grab `NovaTune-Setup-1.1.6.exe` from the [Releases page](https://github.com/AnonymousV73X/WINDOWS-MUSIC-PLAYER/releases) — no installer, just double-click and play. Ensure You download the latest version it has some critical fixez ... oh b the way this will ook nice with a 14 incher and above i dont know how its gonna look like in smaller screens (i mean in the full screen aspect).
 
 </div>
 
@@ -56,7 +56,7 @@ It is **not** a streaming client. It is **not** a cloud anything. Point it at a 
 |                     |                                                     |
 | ------------------- | --------------------------------------------------- |
 | **App ID**          | `com.novatune.player`                               |
-| **Version**         | 1.1.1                                               |
+| **Version**         | 1.1.6                                               |
 | **License**         | MIT                                                 |
 | **Platform**        | Windows x64 (NSIS installer + portable build)       |
 | **Aesthetic**       | Spotify-dark, Material-You-aware accent system      |
@@ -639,12 +639,19 @@ The Settings panel is grouped into four cards:
 | `Space`                                          | Play / Pause                                                              |
 | `N`                                              | Next track                                                                |
 | `P`                                              | Previous track                                                            |
-| `↑` / `↓`                                      | Scroll library (200 px)                                                   |
-| `→` / `←` (when seek bar focused)              | Adjust volume ±5%                                                        |
-| `Shift+→` / `Shift+←` (when seek bar focused)  | Next / Previous track                                                     |
-| `→` / `←` (when seek bar focused, alt handler) | Seek ±5 s                                                                |
+| `↑` / `↓`                                      | Volume up / down (±5%)                                                   |
+| `→` / `←`                                      | Seek ±5 s (or with `Shift`: Next / Previous track)                        |
 | `M`                                              | Mute / Unmute                                                             |
+| `S`                                              | Toggle shuffle mode                                                       |
+| `1` / `R`                                        | Toggle repeat one track                                                   |
+| `0` / `O`                                        | Toggle repeat all tracks                                                  |
+| `L`                                              | Like / Favorite currently playing track                                   |
+| `T`                                              | Open Tag Editor for currently playing track                               |
+| `Ctrl+P` / `Cmd+P`                               | Add currently playing track to playlist                                   |
+| `Ctrl+L` / `Cmd+L`                               | Switch to Light Mode                                                      |
+| `Ctrl+D` / `Cmd+D`                               | Switch to Dark Mode                                                       |
 | `Ctrl+F` or `/`                                  | Focus search                                                              |
+| `PageUp` / `PageDown` (or `Shift+↑` / `Shift+↓`)| Scroll library view                                                       |
 | `Esc`                                            | Close overlay / dialog / clear search                                     |
 | `F11`                                            | Close Now Playing overlay                                                 |
 | `Enter`                                          | Confirm playlist rename / confirm dialog / search LRCLIB in lyrics editor |
@@ -946,7 +953,7 @@ MIT License — see [LICENSE](./LICENSE) for the full text.
 
 <div align="center">
 
-**NovaTune v1.1.1 • Made with love for music lovers**
+**NovaTune v1.1.6 • Made with love for music lovers**
 
 *If NovaTune brings you joy, star the repo and tell a friend.*
 
