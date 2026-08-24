@@ -170,6 +170,7 @@ const state = {
   volumeBoost: 1.0,
   recentlyPlayed: [],
   dynamicAccentColor: false,
+  showRemainingTime: false,
 };
 
 const audioEngine = AudioEngine.getInstance();
@@ -203,20 +204,254 @@ const _squigglyWorkerCode = `
   let dpr = 1, cssWidth = 100, cssHeight = 20;
   let progress = 0, playing = false, heightFraction = 0, _heightTarget = 0;
   let phaseOffset = 0, lastFrameTime = null, rafId = null;
-  let waveColor = "#1ed760", overlay = false;
+  let waveColor = "#1ed760", overlay = false, themeMode = "dark";
   let waveLength = 48, lineAmplitude = 3.5, phaseSpeed = 3.5;
   let strokeWidth = 2;
+  let thumbWidth = 10.6, thumbHeight = 6, thumbRadius = 4;
+  let thumbStyle = "circle";
   const transitionPeriods = 1.5, minWaveEndpoint = 0.2, matchedWaveEndpoint = 0.6, edgeTaperPx = 12;
 
   function _lerp(a, b, t) { return a + (b - a) * t; }
   function _lerpInv(a, b, v) { return b === a ? 0 : (v - a) / (b - a); }
   function _lerpInvSat(a, b, v) { return Math.max(0, Math.min(1, _lerpInv(a, b, v))); }
+  function _shade(hex, factor) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+    if (!m) return factor < 1 ? "#0a2e14" : "#ffffff";
+    const num = parseInt(m[1], 16);
+    const r = Math.max(0, Math.min(255, Math.round(((num >> 16) & 0xff) * factor)));
+    const g = Math.max(0, Math.min(255, Math.round(((num >> 8) & 0xff) * factor)));
+    const b = Math.max(0, Math.min(255, Math.round((num & 0xff) * factor)));
+    return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
+  }
 
   function _drawThumb(x, cy, r) {
     ctx.beginPath();
-    ctx.arc(x, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = overlay ? "#fff" : waveColor;
+    if (thumbStyle === "amoeba") {
+      ctx.roundRect(x - thumbWidth / 2, cy - thumbHeight / 2, thumbWidth, thumbHeight, thumbRadius);
+    } else {
+      const cr = overlay ? 3.5 : 4.5;
+      ctx.arc(x, cy, cr, 0, Math.PI * 2);
+    }
+    ctx.fillStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
     ctx.fill();
+  }
+
+  function _drawSegmentTrail(startX, endX, cy) {
+    const segLen = 7, gap = 1.4;
+    let i = 0;
+    for (let x = startX; x < endX; x += segLen) {
+      const w = Math.min(segLen - gap, endX - x);
+      if (w <= 0) break;
+      ctx.beginPath();
+      ctx.roundRect(x, cy - 3, w, 6, 2);
+      ctx.fillStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
+      ctx.globalAlpha = i % 2 === 0 ? 1 : (overlay && themeMode !== "light" ? 0.55 : 0.6);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      i++;
+    }
+  }
+
+  function _drawGameProgress(style) {
+    const W = cssWidth, cy = cssHeight / 2;
+    const leftInset = strokeWidth + 4, rightInset = strokeWidth + 4;
+    const trackW = Math.max(0, W - leftInset - rightInset);
+    const headR = overlay ? 5 : 5.5;
+    const totalProgressPx = Math.max(leftInset, Math.min(W - rightInset, W * progress));
+
+    if (style === "pacman") {
+      const pmBodyEnd = totalProgressPx - headR * 0.6;
+      if (pmBodyEnd > leftInset) _drawSegmentTrail(leftInset, pmBodyEnd, cy);
+      const dotSpacing = 9, dotR = overlay ? 1.6 : 1.4;
+      const dotColor = (overlay && themeMode !== "light") ? "rgba(255,255,255,0.5)" : (themeMode === "light" ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.35)");
+      const n = Math.floor(trackW / dotSpacing);
+      for (let i = 0; i <= n; i++) {
+        const dx = leftInset + i * dotSpacing;
+        if (dx < totalProgressPx + headR + 2) continue;
+        const isLast = i === n;
+        const r = isLast ? dotR * 2.2 * (0.85 + 0.15 * Math.sin(phaseOffset * 2)) : dotR;
+        ctx.beginPath();
+        ctx.arc(dx, cy, r, 0, Math.PI * 2);
+        ctx.fillStyle = isLast ? ((overlay && themeMode !== "light") ? "#fff" : waveColor) : dotColor;
+        ctx.fill();
+      }
+      const mouthMax = 0.78;
+      const mouthT = playing ? (Math.sin(phaseOffset * 6) * 0.5 + 0.5) : 0.35;
+      const mouth = 0.12 + mouthMax * mouthT;
+      ctx.beginPath();
+      ctx.moveTo(totalProgressPx, cy);
+      ctx.arc(totalProgressPx, cy, headR, mouth, Math.PI * 2 - mouth);
+      ctx.closePath();
+      ctx.fillStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(totalProgressPx - headR * 0.15, cy - headR * 0.55, headR * 0.13, 0, Math.PI * 2);
+      ctx.fillStyle = (overlay && themeMode !== "light") ? "#333" : _shade(waveColor, 0.25);
+      ctx.fill();
+      return;
+    }
+
+    if (style === "snake") {
+      const bodyEnd = totalProgressPx - headR * 0.7;
+      _drawSegmentTrail(leftInset, bodyEnd, cy);
+      const dotSpacing = 11, dotR = 1.3;
+      const n = Math.floor((W - rightInset - totalProgressPx) / dotSpacing);
+      for (let j = 1; j <= n; j++) {
+        const dx = totalProgressPx + headR + j * dotSpacing;
+        if (dx > W - rightInset) break;
+        const isLast = dx + dotSpacing > W - rightInset;
+        ctx.beginPath();
+        ctx.arc(dx, cy, isLast ? dotR * 2 : dotR, 0, Math.PI * 2);
+        ctx.fillStyle = isLast ? _shade(waveColor, 1.7) : ((overlay && themeMode !== "light") ? "rgba(255,255,255,0.4)" : (themeMode === "light" ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.35)"));
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.roundRect(totalProgressPx - headR, cy - headR * 0.85, headR * 1.9, headR * 1.7, headR * 0.6);
+      ctx.fillStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(totalProgressPx + headR * 0.5, cy - headR * 0.35, headR * 0.16, 0, Math.PI * 2);
+      ctx.arc(totalProgressPx + headR * 0.5, cy + headR * 0.15, headR * 0.16, 0, Math.PI * 2);
+      ctx.fillStyle = (overlay && themeMode !== "light") ? "#222" : _shade(waveColor, 0.25);
+      ctx.fill();
+      if (playing && Math.sin(phaseOffset * 5) > 0.6) {
+        ctx.beginPath();
+        ctx.moveTo(totalProgressPx + headR * 1.9, cy);
+        ctx.lineTo(totalProgressPx + headR * 2.6, cy - 1.6);
+        ctx.moveTo(totalProgressPx + headR * 1.9, cy);
+        ctx.lineTo(totalProgressPx + headR * 2.6, cy + 1.6);
+        ctx.strokeStyle = _shade(waveColor, 1.7);
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      return;
+    }
+
+    if (style === "ant") {
+      const bodyColor = (overlay && themeMode !== "light") ? "#fff" : waveColor;
+      const legColor = (overlay && themeMode !== "light") ? "rgba(255,255,255,0.85)" : _shade(waveColor, 0.55);
+      const eyeColor = (overlay && themeMode !== "light") ? "#333" : _shade(waveColor, 0.25);
+      const headCX = totalProgressPx, headCY = cy;
+      const hR = headR * 0.55;
+      const thoraxR = headR * 0.5;
+      const thoraxX = headCX - headR * 1.15;
+      const gasterRX = headR * 0.95, gasterRY = headR * 0.62;
+      const gasterX = headCX - headR * 2.55;
+
+      const trailEnd = gasterX - gasterRX * 0.7;
+      if (trailEnd > leftInset) _drawSegmentTrail(leftInset, trailEnd, cy);
+
+      ctx.beginPath();
+      ctx.ellipse(gasterX, cy, gasterRX, gasterRY, 0, 0, Math.PI * 2);
+      ctx.fillStyle = bodyColor;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(gasterX + gasterRX * 0.6, cy);
+      ctx.lineTo(thoraxX - thoraxR * 0.8, cy);
+      ctx.strokeStyle = bodyColor;
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+
+      const legLen = headR * 1.05;
+      const legBaseX = [thoraxX + thoraxR * 0.5, thoraxX - thoraxR * 0.1, thoraxX - thoraxR * 0.8];
+      const legBaseAngle = [0.55, 0.05, -0.55];
+      const legGait = [1, -1, 1];
+      const swing = playing ? Math.sin(phaseOffset * 6) : 0;
+      for (let li = 0; li < 3; li++) {
+        const hipX = legBaseX[li], hipY = cy + thoraxR * 0.35;
+        const angle = legBaseAngle[li] + legGait[li] * 0.4 * swing;
+        const kneeX = hipX + Math.sin(angle) * legLen * 0.55;
+        const kneeY = hipY + Math.cos(angle) * legLen * 0.55;
+        const footAngle = angle * 0.5;
+        const footX = kneeX + Math.sin(footAngle) * legLen * 0.5;
+        const footY = kneeY + Math.cos(footAngle) * legLen * 0.5;
+        ctx.beginPath();
+        ctx.moveTo(hipX, hipY);
+        ctx.lineTo(kneeX, kneeY);
+        ctx.lineTo(footX, footY);
+        ctx.strokeStyle = legColor;
+        ctx.lineWidth = 0.9;
+        ctx.lineCap = "round";
+        ctx.stroke();
+      }
+
+      ctx.beginPath();
+      ctx.arc(thoraxX, cy, thoraxR, 0, Math.PI * 2);
+      ctx.fillStyle = bodyColor;
+      ctx.fill();
+
+      const crumbX = W - rightInset - 3;
+      if (crumbX > headCX + hR * 1.5) {
+        ctx.beginPath();
+        ctx.roundRect(crumbX - 2.5, cy - 2.5, 5, 5, 1);
+        ctx.fillStyle = (overlay && themeMode !== "light") ? "rgba(255,255,255,0.55)" : _shade(waveColor, 1.6);
+        ctx.fill();
+      }
+
+      ctx.beginPath();
+      ctx.arc(headCX, headCY, hR, 0, Math.PI * 2);
+      ctx.fillStyle = bodyColor;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(headCX + hR * 0.5, headCY - hR * 0.6);
+      ctx.quadraticCurveTo(headCX + hR * 1.6, headCY - hR * 1.5, headCX + hR * 2.1, headCY - hR * 1.1);
+      ctx.moveTo(headCX + hR * 0.5, headCY + hR * 0.1);
+      ctx.quadraticCurveTo(headCX + hR * 1.6, headCY - hR * 0.7, headCX + hR * 2.1, headCY - hR * 0.2);
+      ctx.strokeStyle = bodyColor;
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(headCX + hR * 0.2, headCY - hR * 0.25, hR * 0.32, 0, Math.PI * 2);
+      ctx.fillStyle = eyeColor;
+      ctx.fill();
+      return;
+    }
+
+    if (style === "firefly") {
+      const glowR = headR * (0.75 + 0.25 * Math.sin(phaseOffset * 4));
+      const dotSpacing = 8, dotR = 1.3;
+      const headGap = headR * 2.2;
+      const bodyEnd = totalProgressPx - headGap;
+      const span = Math.max(1, bodyEnd - leftInset);
+      for (let x = bodyEnd; x > leftInset; x -= dotSpacing) {
+        const distT = (bodyEnd - x) / span;
+        ctx.beginPath();
+        ctx.arc(x, cy, dotR, 0, Math.PI * 2);
+        ctx.globalAlpha = Math.max(0.08, 1 - distT) * ((overlay && themeMode !== "light") ? 0.7 : 0.55);
+        ctx.fillStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      const aheadStart = totalProgressPx + headGap;
+      const rightEdge = W - rightInset;
+      if (aheadStart < rightEdge) {
+        for (let x = aheadStart; x < rightEdge; x += dotSpacing) {
+          ctx.beginPath();
+          ctx.arc(x, cy, dotR * 0.8, 0, Math.PI * 2);
+          ctx.globalAlpha = (overlay && themeMode !== "light") ? 0.28 : 0.22;
+          ctx.fillStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+      }
+      ctx.save();
+      ctx.shadowColor = (overlay && themeMode !== "light") ? "#fff" : waveColor;
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.arc(totalProgressPx, cy, glowR, 0, Math.PI * 2);
+      ctx.fillStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
+      ctx.fill();
+      ctx.restore();
+      ctx.beginPath();
+      ctx.arc(totalProgressPx - glowR * 0.3, cy - glowR * 0.2, glowR * 0.18, 0, Math.PI * 2);
+      ctx.arc(totalProgressPx + glowR * 0.3, cy - glowR * 0.2, glowR * 0.18, 0, Math.PI * 2);
+      ctx.fillStyle = (overlay && themeMode !== "light") ? "#333" : _shade(waveColor, 0.25);
+      ctx.fill();
+      return;
+    }
   }
 
   function _draw() {
@@ -225,6 +460,12 @@ const _squigglyWorkerCode = `
     ctx.save();
     ctx.scale(dpr, dpr);
 
+    if (thumbStyle === "pacman" || thumbStyle === "snake" || thumbStyle === "ant" || thumbStyle === "firefly") {
+      _drawGameProgress(thumbStyle);
+      ctx.restore();
+      return;
+    }
+
     const W = cssWidth, cy = cssHeight / 2;
     const thumbR = overlay ? 3 : 3.5;
     const leftInset = strokeWidth + 4, rightInset = strokeWidth + 4;
@@ -232,19 +473,36 @@ const _squigglyWorkerCode = `
     const waveEndPx = Math.max(0, totalProgressPx - thumbR - 1);
     const waveProgressPx = W * (progress > matchedWaveEndpoint ? progress : _lerp(minWaveEndpoint, matchedWaveEndpoint, _lerpInv(0, matchedWaveEndpoint, progress)));
 
-    const greyStart = progress <= 0 ? leftInset : Math.min(totalProgressPx + thumbR + 1, W);
-    if (greyStart < W) {
-      ctx.beginPath(); ctx.moveTo(greyStart, cy); ctx.lineTo(W, cy);
-      ctx.strokeStyle = overlay ? "rgba(255,255,255,0.13)" : "rgba(255,255,255,0.1)";
-      ctx.lineWidth = strokeWidth * 0.8; ctx.lineCap = "round"; ctx.stroke();
+    const greyEnd = W - rightInset;
+    const greyStart = progress <= 0 ? leftInset : Math.min(totalProgressPx + thumbR + 1, greyEnd);
+    if (greyStart < greyEnd) {
+      ctx.beginPath(); ctx.moveTo(greyStart, cy); ctx.lineTo(greyEnd, cy);
+      ctx.strokeStyle = (overlay && themeMode !== "light")
+        ? "rgba(255,255,255,0.18)"
+        : (themeMode === "light" ? "rgba(0,0,0,0.22)" : "rgba(255,255,255,0.18)");
+      ctx.lineWidth = 2.3; ctx.lineCap = "round"; ctx.stroke();
     }
     if (progress > 0 && totalProgressPx > leftInset + thumbR * 2) {
       ctx.beginPath(); ctx.arc(leftInset, cy, strokeWidth / 2, 0, Math.PI * 2);
-      ctx.fillStyle = overlay ? "rgba(255,255,255,0.3)" : waveColor; ctx.fill();
+      ctx.fillStyle = (overlay && themeMode !== "light") ? "rgba(255,255,255,0.4)" : waveColor; ctx.fill();
     }
     if (waveEndPx < 1) {
       if (progress > 0) _drawThumb(totalProgressPx, cy, thumbR);
       ctx.restore(); return;
+    }
+
+    if (thumbStyle === "boring" || thumbStyle === "simple") {
+      ctx.beginPath();
+      ctx.moveTo(leftInset, cy);
+      ctx.lineTo(waveEndPx, cy);
+      ctx.strokeStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
+      ctx.lineWidth = strokeWidth;
+      ctx.lineCap = "round";
+      ctx.stroke();
+
+      _drawThumb(totalProgressPx, cy, thumbR);
+      ctx.restore();
+      return;
     }
 
     const amp = lineAmplitude, hf = heightFraction, tp = transitionPeriods, edgeTaper = edgeTaperPx;
@@ -270,7 +528,7 @@ const _squigglyWorkerCode = `
       const envelope = computeAmp(waveEndPx);
       ctx.lineTo(waveEndPx, cy + Math.sin(k * waveEndPx + phase) * envelope);
     }
-    ctx.strokeStyle = overlay ? "#fff" : waveColor;
+    ctx.strokeStyle = (overlay && themeMode !== "light") ? "#fff" : waveColor;
     ctx.lineWidth = strokeWidth; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.stroke();
     ctx.restore();
 
@@ -301,7 +559,12 @@ const _squigglyWorkerCode = `
         lineAmplitude = msg.lineAmplitude;
         phaseSpeed = msg.phaseSpeed;
         strokeWidth = msg.strokeWidth;
+        thumbWidth = msg.thumbWidth ?? thumbWidth;
+        thumbHeight = msg.thumbHeight ?? thumbHeight;
+        thumbRadius = msg.thumbRadius ?? thumbRadius;
+        thumbStyle = msg.thumbStyle || "circle";
         waveColor = msg.waveColor;
+        themeMode = msg.themeMode || "dark";
         lastFrameTime = performance.now();
         rafId = requestAnimationFrame(_raf);
         break;
@@ -319,6 +582,14 @@ const _squigglyWorkerCode = `
         break;
       case "setWaveColor":
         waveColor = msg.waveColor;
+        break;
+      case "setThemeMode":
+        themeMode = msg.themeMode || "dark";
+        _draw();
+        break;
+      case "setThumbStyle":
+        thumbStyle = msg.thumbStyle || "circle";
+        _draw();
         break;
       case "destroy":
         if (rafId) cancelAnimationFrame(rafId);
@@ -338,12 +609,25 @@ class SquigglyProgress {
     this._heightTarget = 0;
     this._useWorker = false;
     this.worker = null;
+    this.themeMode =
+      document.documentElement.getAttribute("data-theme") === "light"
+        ? "light"
+        : "dark";
 
     // Common config
     this.waveLength = opts.waveLength ?? 48;
     this.lineAmplitude = opts.lineAmplitude ?? 3.5;
     this.phaseSpeed = opts.phaseSpeed ?? 3.5;
     this.strokeWidth = opts.strokeWidth ?? 2;
+    this.thumbWidth = opts.thumbWidth ?? 10.6;
+    this.thumbHeight = opts.thumbHeight ?? 6;
+    this.thumbRadius = opts.thumbRadius ?? 4;
+    this.thumbStyle =
+      opts.thumbStyle ||
+      (typeof state !== "undefined" &&
+        state.settings &&
+        state.settings.squigglyThumbStyle) ||
+      "circle";
 
     // Resolve wave color eagerly so we can pass it to the Worker
     this.waveColor =
@@ -352,25 +636,19 @@ class SquigglyProgress {
         .trim() || "#1ed760";
 
     // ── Try OffscreenCanvas + Worker path ──
-    // IMPORTANT: Create the Worker FIRST, then transfer the canvas.
-    // If the Worker constructor throws (e.g. CSP blocks blob: URLs),
-    // the canvas must remain untouched so the main-thread fallback works.
     if (
       typeof HTMLCanvasElement !== "undefined" &&
       typeof HTMLCanvasElement.prototype.transferControlToOffscreen ===
         "function"
     ) {
       try {
-        // Step 1: Create Worker from blob — this can throw due to CSP
         const blob = new Blob([_squigglyWorkerCode], {
           type: "application/javascript",
         });
         const blobUrl = URL.createObjectURL(blob);
         this.worker = new Worker(blobUrl);
-        URL.revokeObjectURL(blobUrl); // clean up — Worker already loaded
+        URL.revokeObjectURL(blobUrl);
 
-        // Step 2: Only NOW transfer the canvas to OffscreenCanvas.
-        // This is irreversible, so we only do it after the Worker is confirmed.
         const offscreen = canvas.transferControlToOffscreen();
         this.worker.postMessage(
           {
@@ -381,7 +659,12 @@ class SquigglyProgress {
             lineAmplitude: this.lineAmplitude,
             phaseSpeed: this.phaseSpeed,
             strokeWidth: this.strokeWidth,
+            thumbWidth: this.thumbWidth,
+            thumbHeight: this.thumbHeight,
+            thumbRadius: this.thumbRadius,
+            thumbStyle: this.thumbStyle,
             waveColor: this.waveColor,
+            themeMode: this.themeMode,
           },
           [offscreen],
         );
@@ -510,6 +793,17 @@ class SquigglyProgress {
     ctx.save();
     ctx.scale(dpr, dpr);
 
+    if (
+      this.thumbStyle === "pacman" ||
+      this.thumbStyle === "snake" ||
+      this.thumbStyle === "ant" ||
+      this.thumbStyle === "firefly"
+    ) {
+      this._drawGameProgress(ctx, this.thumbStyle);
+      ctx.restore();
+      return;
+    }
+
     const W = cssWidth;
     const cy = cssHeight / 2;
     const progress = this.progress;
@@ -532,16 +826,21 @@ class SquigglyProgress {
             this._lerpInv(0, this.matchedWaveEndpoint, progress),
           ));
 
+    const greyEnd = W - rightInset;
     const greyStart =
-      progress <= 0 ? leftInset : Math.min(totalProgressPx + thumbR + 1, W);
-    if (greyStart < W) {
+      progress <= 0
+        ? leftInset
+        : Math.min(totalProgressPx + thumbR + 1, greyEnd);
+    if (greyStart < greyEnd) {
       ctx.beginPath();
       ctx.moveTo(greyStart, cy);
-      ctx.lineTo(W, cy);
-      ctx.strokeStyle = this.overlay
-        ? "rgba(255,255,255,0.13)"
-        : "rgba(255,255,255,0.1)";
-      ctx.lineWidth = this.strokeWidth * 0.8;
+      ctx.lineTo(greyEnd, cy);
+      ctx.strokeStyle = (this.overlay && this.themeMode !== "light")
+        ? "rgba(255,255,255,0.18)"
+        : (this.themeMode === "light"
+          ? "rgba(0,0,0,0.22)"
+          : "rgba(255,255,255,0.18)");
+      ctx.lineWidth = 2.3;
       ctx.lineCap = "round";
       ctx.stroke();
     }
@@ -549,12 +848,26 @@ class SquigglyProgress {
     if (progress > 0 && totalProgressPx > leftInset + thumbR * 2) {
       ctx.beginPath();
       ctx.arc(leftInset, cy, this.strokeWidth / 2, 0, Math.PI * 2);
-      ctx.fillStyle = this.overlay ? "rgba(255,255,255,0.3)" : this.waveColor;
+      ctx.fillStyle = (this.overlay && this.themeMode !== "light") ? "rgba(255,255,255,0.4)" : this.waveColor;
       ctx.fill();
     }
 
     if (waveEndPx < 1) {
       if (progress > 0) this._drawThumb(ctx, totalProgressPx, cy, thumbR);
+      ctx.restore();
+      return;
+    }
+
+    if (this.thumbStyle === "boring" || this.thumbStyle === "simple") {
+      ctx.beginPath();
+      ctx.moveTo(leftInset, cy);
+      ctx.lineTo(waveEndPx, cy);
+      ctx.strokeStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
+      ctx.lineWidth = this.strokeWidth;
+      ctx.lineCap = "round";
+      ctx.stroke();
+
+      this._drawThumb(ctx, totalProgressPx, cy, thumbR);
       ctx.restore();
       return;
     }
@@ -598,7 +911,7 @@ class SquigglyProgress {
       const envelope = computeAmp(waveEndPx);
       ctx.lineTo(waveEndPx, cy + Math.sin(k * waveEndPx + phase) * envelope);
     }
-    ctx.strokeStyle = this.overlay ? "#fff" : this.waveColor;
+    ctx.strokeStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
     ctx.lineWidth = this.strokeWidth;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -609,10 +922,360 @@ class SquigglyProgress {
     ctx.restore();
   }
 
+  setThumbStyle(style) {
+    this.thumbStyle = style || "circle";
+    if (this._useWorker && this.worker) {
+      this.worker.postMessage({
+        type: "setThumbStyle",
+        thumbStyle: this.thumbStyle,
+      });
+      return;
+    }
+    this._draw();
+  }
+
+  setThemeMode(mode) {
+    this.themeMode = mode || "dark";
+    if (this._useWorker && this.worker) {
+      this.worker.postMessage({
+        type: "setThemeMode",
+        themeMode: this.themeMode,
+      });
+      return;
+    }
+    this._draw();
+  }
+
+  _shade(hex, factor) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+    if (!m) return factor < 1 ? "#0a2e14" : "#ffffff";
+    const num = parseInt(m[1], 16);
+    const r = Math.max(
+      0,
+      Math.min(255, Math.round(((num >> 16) & 0xff) * factor)),
+    );
+    const g = Math.max(
+      0,
+      Math.min(255, Math.round(((num >> 8) & 0xff) * factor)),
+    );
+    const b = Math.max(0, Math.min(255, Math.round((num & 0xff) * factor)));
+    return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
+  }
+
+  _drawSegmentTrail(ctx, startX, endX, cy) {
+    const overlay = this.overlay,
+      waveColor = this.waveColor;
+    const segLen = 7,
+      gap = 1.4;
+    let i = 0;
+    for (let x = startX; x < endX; x += segLen) {
+      const w = Math.min(segLen - gap, endX - x);
+      if (w <= 0) break;
+      ctx.beginPath();
+      ctx.roundRect(x, cy - 3, w, 6, 2);
+      ctx.fillStyle = overlay ? "#fff" : waveColor;
+      ctx.globalAlpha = i % 2 === 0 ? 1 : overlay ? 0.55 : 0.6;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      i++;
+    }
+  }
+
+  _drawGameProgress(ctx, style) {
+    const W = this.cssWidth,
+      cy = this.cssHeight / 2;
+    const overlay = this.overlay,
+      progress = this.progress,
+      phaseOffset = this.phaseOffset,
+      playing = this.playing;
+    const strokeWidth = this.strokeWidth,
+      waveColor = this.waveColor;
+    const leftInset = this.strokeWidth + 4,
+      rightInset = this.strokeWidth + 4;
+    const trackW = Math.max(0, W - leftInset - rightInset);
+    const headR = overlay ? 5 : 5.5;
+    const totalProgressPx = Math.max(
+      leftInset,
+      Math.min(W - rightInset, W * progress),
+    );
+
+    if (style === "pacman") {
+      const pmBodyEnd = totalProgressPx - headR * 0.6;
+      if (pmBodyEnd > leftInset)
+        this._drawSegmentTrail(ctx, leftInset, pmBodyEnd, cy);
+      const dotSpacing = 9,
+        dotR = overlay ? 1.6 : 1.4;
+      const dotColor = overlay
+        ? "rgba(255,255,255,0.5)"
+        : "rgba(255,255,255,0.35)";
+      const n = Math.floor(trackW / dotSpacing);
+      for (let i = 0; i <= n; i++) {
+        const dx = leftInset + i * dotSpacing;
+        if (dx < totalProgressPx + headR + 2) continue;
+        const isLast = i === n;
+        const r = isLast
+          ? dotR * 2.2 * (0.85 + 0.15 * Math.sin(phaseOffset * 2))
+          : dotR;
+        ctx.beginPath();
+        ctx.arc(dx, cy, r, 0, Math.PI * 2);
+        ctx.fillStyle = isLast ? (overlay ? "#fff" : waveColor) : dotColor;
+        ctx.fill();
+      }
+      const mouthMax = 0.78;
+      const mouthT = playing ? Math.sin(phaseOffset * 6) * 0.5 + 0.5 : 0.35;
+      const mouth = 0.12 + mouthMax * mouthT;
+      ctx.beginPath();
+      ctx.moveTo(totalProgressPx, cy);
+      ctx.arc(totalProgressPx, cy, headR, mouth, Math.PI * 2 - mouth);
+      ctx.closePath();
+      ctx.fillStyle = overlay ? "#fff" : waveColor;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(
+        totalProgressPx - headR * 0.15,
+        cy - headR * 0.55,
+        headR * 0.13,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fillStyle = overlay ? "#333" : this._shade(waveColor, 0.25);
+      ctx.fill();
+      return;
+    }
+
+    if (style === "snake") {
+      const bodyEnd = totalProgressPx - headR * 0.7;
+      this._drawSegmentTrail(ctx, leftInset, bodyEnd, cy);
+      const dotSpacing = 11,
+        dotR = 1.3;
+      const n = Math.floor((W - rightInset - totalProgressPx) / dotSpacing);
+      for (let j = 1; j <= n; j++) {
+        const dx = totalProgressPx + headR + j * dotSpacing;
+        if (dx > W - rightInset) break;
+        const isLast = dx + dotSpacing > W - rightInset;
+        ctx.beginPath();
+        ctx.arc(dx, cy, isLast ? dotR * 2 : dotR, 0, Math.PI * 2);
+        ctx.fillStyle = isLast
+          ? this._shade(waveColor, 1.7)
+          : overlay
+            ? "rgba(255,255,255,0.4)"
+            : "rgba(255,255,255,0.35)";
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.roundRect(
+        totalProgressPx - headR,
+        cy - headR * 0.85,
+        headR * 1.9,
+        headR * 1.7,
+        headR * 0.6,
+      );
+      ctx.fillStyle = overlay ? "#fff" : waveColor;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(
+        totalProgressPx + headR * 0.5,
+        cy - headR * 0.35,
+        headR * 0.16,
+        0,
+        Math.PI * 2,
+      );
+      ctx.arc(
+        totalProgressPx + headR * 0.5,
+        cy + headR * 0.15,
+        headR * 0.16,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fillStyle = overlay ? "#222" : this._shade(waveColor, 0.25);
+      ctx.fill();
+      if (playing && Math.sin(phaseOffset * 5) > 0.6) {
+        ctx.beginPath();
+        ctx.moveTo(totalProgressPx + headR * 1.9, cy);
+        ctx.lineTo(totalProgressPx + headR * 2.6, cy - 1.6);
+        ctx.moveTo(totalProgressPx + headR * 1.9, cy);
+        ctx.lineTo(totalProgressPx + headR * 2.6, cy + 1.6);
+        ctx.strokeStyle = this._shade(waveColor, 1.7);
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      return;
+    }
+
+    if (style === "ant") {
+      const bodyColor = overlay ? "#fff" : waveColor;
+      const legColor = overlay
+        ? "rgba(255,255,255,0.85)"
+        : this._shade(waveColor, 0.55);
+      const eyeColor = overlay ? "#333" : this._shade(waveColor, 0.25);
+      const headCX = totalProgressPx,
+        headCY = cy;
+      const hR = headR * 0.55;
+      const thoraxR = headR * 0.5;
+      const thoraxX = headCX - headR * 1.15;
+      const gasterRX = headR * 0.95,
+        gasterRY = headR * 0.62;
+      const gasterX = headCX - headR * 2.55;
+
+      const trailEnd = gasterX - gasterRX * 0.7;
+      if (trailEnd > leftInset)
+        this._drawSegmentTrail(ctx, leftInset, trailEnd, cy);
+
+      ctx.beginPath();
+      ctx.ellipse(gasterX, cy, gasterRX, gasterRY, 0, 0, Math.PI * 2);
+      ctx.fillStyle = bodyColor;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(gasterX + gasterRX * 0.6, cy);
+      ctx.lineTo(thoraxX - thoraxR * 0.8, cy);
+      ctx.strokeStyle = bodyColor;
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+
+      const legLen = headR * 1.05;
+      const legBaseX = [
+        thoraxX + thoraxR * 0.5,
+        thoraxX - thoraxR * 0.1,
+        thoraxX - thoraxR * 0.8,
+      ];
+      const legBaseAngle = [0.55, 0.05, -0.55];
+      const legGait = [1, -1, 1];
+      const swing = playing ? Math.sin(phaseOffset * 6) : 0;
+      for (let li = 0; li < 3; li++) {
+        const hipX = legBaseX[li],
+          hipY = cy + thoraxR * 0.35;
+        const angle = legBaseAngle[li] + legGait[li] * 0.4 * swing;
+        const kneeX = hipX + Math.sin(angle) * legLen * 0.55;
+        const kneeY = hipY + Math.cos(angle) * legLen * 0.55;
+        const footAngle = angle * 0.5;
+        const footX = kneeX + Math.sin(footAngle) * legLen * 0.5;
+        const footY = kneeY + Math.cos(footAngle) * legLen * 0.5;
+        ctx.beginPath();
+        ctx.moveTo(hipX, hipY);
+        ctx.lineTo(kneeX, kneeY);
+        ctx.lineTo(footX, footY);
+        ctx.strokeStyle = legColor;
+        ctx.lineWidth = 0.9;
+        ctx.lineCap = "round";
+        ctx.stroke();
+      }
+
+      ctx.beginPath();
+      ctx.arc(thoraxX, cy, thoraxR, 0, Math.PI * 2);
+      ctx.fillStyle = bodyColor;
+      ctx.fill();
+
+      const crumbX = W - rightInset - 3;
+      if (crumbX > headCX + hR * 1.5) {
+        ctx.beginPath();
+        ctx.roundRect(crumbX - 2.5, cy - 2.5, 5, 5, 1);
+        ctx.fillStyle = overlay
+          ? "rgba(255,255,255,0.55)"
+          : this._shade(waveColor, 1.6);
+        ctx.fill();
+      }
+
+      ctx.beginPath();
+      ctx.arc(headCX, headCY, hR, 0, Math.PI * 2);
+      ctx.fillStyle = bodyColor;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(headCX + hR * 0.5, headCY - hR * 0.6);
+      ctx.quadraticCurveTo(
+        headCX + hR * 1.6,
+        headCY - hR * 1.5,
+        headCX + hR * 2.1,
+        headCY - hR * 1.1,
+      );
+      ctx.moveTo(headCX + hR * 0.5, headCY + hR * 0.1);
+      ctx.quadraticCurveTo(
+        headCX + hR * 1.6,
+        headCY - hR * 0.7,
+        headCX + hR * 2.1,
+        headCY - hR * 0.2,
+      );
+      ctx.strokeStyle = bodyColor;
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(headCX + hR * 0.2, headCY - hR * 0.25, hR * 0.32, 0, Math.PI * 2);
+      ctx.fillStyle = eyeColor;
+      ctx.fill();
+      return;
+    }
+
+    if (style === "firefly") {
+      const glowR = headR * (0.75 + 0.25 * Math.sin(phaseOffset * 4));
+      const dotSpacing = 8,
+        dotR = 1.3;
+      const headGap = headR * 2.2;
+      const bodyEnd = totalProgressPx - headGap;
+      const span = Math.max(1, bodyEnd - leftInset);
+      for (let x = bodyEnd; x > leftInset; x -= dotSpacing) {
+        const distT = (bodyEnd - x) / span;
+        ctx.beginPath();
+        ctx.arc(x, cy, dotR, 0, Math.PI * 2);
+        ctx.globalAlpha = Math.max(0.08, 1 - distT) * (overlay ? 0.7 : 0.55);
+        ctx.fillStyle = overlay ? "#fff" : waveColor;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      const aheadStart = totalProgressPx + headGap;
+      const rightEdge = W - rightInset;
+      if (aheadStart < rightEdge) {
+        for (let x = aheadStart; x < rightEdge; x += dotSpacing) {
+          ctx.beginPath();
+          ctx.arc(x, cy, dotR * 0.8, 0, Math.PI * 2);
+          ctx.globalAlpha = overlay ? 0.28 : 0.22;
+          ctx.fillStyle = overlay ? "#fff" : waveColor;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+      }
+      ctx.save();
+      ctx.shadowColor = overlay ? "#fff" : waveColor;
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.arc(totalProgressPx, cy, glowR, 0, Math.PI * 2);
+      ctx.fillStyle = overlay ? "#fff" : waveColor;
+      ctx.fill();
+      ctx.restore();
+      ctx.beginPath();
+      ctx.arc(
+        totalProgressPx - glowR * 0.3,
+        cy - glowR * 0.2,
+        glowR * 0.18,
+        0,
+        Math.PI * 2,
+      );
+      ctx.arc(
+        totalProgressPx + glowR * 0.3,
+        cy - glowR * 0.2,
+        glowR * 0.18,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fillStyle = overlay ? "#333" : this._shade(waveColor, 0.25);
+      ctx.fill();
+      return;
+    }
+  }
+
   _drawThumb(ctx, x, cy, r) {
     ctx.beginPath();
-    ctx.arc(x, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = this.overlay ? "#fff" : this.waveColor;
+    if (this.thumbStyle === "amoeba") {
+      const w = this.thumbWidth,
+        h = this.thumbHeight,
+        rad = this.thumbRadius;
+      ctx.roundRect(x - w / 2, cy - h / 2, w, h, rad);
+    } else {
+      const cr = this.overlay ? 3.5 : 4.5;
+      ctx.arc(x, cy, cr, 0, Math.PI * 2);
+    }
+    ctx.fillStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
     ctx.fill();
   }
 
@@ -736,6 +1399,12 @@ const _artGradientColors = [
 ];
 
 function _getDominantColorForTrack(track) {
+  // In light mode, always use a neutral light placeholder instead of dark gradient
+  // colors — the cover-img-container background is set inline and would otherwise
+  // produce a black wait screen that clashes with the light UI.
+  if (document.documentElement.getAttribute("data-theme") === "light") {
+    return "#e9ebe6";
+  }
   if (!track) return "#1a1a1a";
   if (_dominantColorCache.has(track.id))
     return _dominantColorCache.get(track.id);
@@ -848,16 +1517,18 @@ async function _preloadPlaylistCovers() {
   try {
     const playlists = state.playlists || [];
     if (playlists.length === 0) return;
-    
+
     const libById = new Map(state.tracks.map((t) => [t.id, t]));
     for (const playlist of playlists) {
       const tracks = (playlist.tracks || [])
         .map((id) => libById.get(id))
         .filter(Boolean);
-        
+
       if (tracks.length >= 5) {
         // Warm the in-memory hash cache for this session
-        const currentHash = _computePlaylistContentHash(tracks.map((t) => t.id));
+        const currentHash = _computePlaylistContentHash(
+          tracks.map((t) => t.id),
+        );
         _playlistHashCache.set(playlist.id, currentHash);
 
         // AVOID DB/FILE OPS DURING STARTUP:
@@ -1184,6 +1855,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     // Re-apply nav mode so floating card shows/hides correctly on resize
     _applyNavMode(state.settings.navMode || "hover");
+
+    // If the panel was previously dragged, it carries inline left/top px
+    // values that don't track the viewport — reclamp so it can't end up
+    // partially or fully off-screen after a resize.
+    if (lyricsPanel.style.left || lyricsPanel.style.top) {
+      const pw = lyricsPanel.offsetWidth,
+        ph = lyricsPanel.offsetHeight;
+      const curLeft = parseFloat(lyricsPanel.style.left) || 0;
+      const curTop = parseFloat(lyricsPanel.style.top) || 0;
+      const maxLeft = Math.max(0, window.innerWidth - pw);
+      const maxTop = Math.max(0, window.innerHeight - ph);
+      lyricsPanel.style.left = Math.min(Math.max(0, curLeft), maxLeft) + "px";
+      lyricsPanel.style.top = Math.min(Math.max(0, curTop), maxTop) + "px";
+    }
   });
 
   // Draggable floating lyrics panel
@@ -1589,51 +2274,68 @@ function _sampleArtColor(trackId, src, cb) {
     return;
   }
 
+  const isLight = document.documentElement.dataset.theme === "light";
+
   _Vibrant
     .from(source)
     .quality(1) // quality=1: no downsampling, most accurate
     .getPalette()
     .then((palette) => {
-      // Priority: DarkVibrant > DarkMuted > Vibrant darkened > fallback
-      const swatch =
-        palette.DarkVibrant ||
-        palette.DarkMuted ||
-        palette.Vibrant ||
-        palette.Muted;
-      if (!swatch) {
-        _resolve("rgb(18,18,18)");
-        return;
-      }
-      let [r, g, b] = swatch.rgb;
-      // If we landed on Vibrant/Muted (not already dark), force luminance dark
-      if (!palette.DarkVibrant && !palette.DarkMuted) {
-        // Convert to HSL, clamp L to 0.15
-        r /= 255;
-        g /= 255;
-        b /= 255;
-        const max = Math.max(r, g, b),
-          min = Math.min(r, g, b);
-        const l = (max + min) / 2;
-        const delta = max - min;
-        const s = delta === 0 ? 0 : delta / (1 - Math.abs(2 * l - 1));
-        let h = 0;
-        if (delta > 0) {
-          if (max === r) h = ((g - b) / delta + 6) % 6;
-          else if (max === g) h = (b - r) / delta + 2;
-          else h = (r - g) / delta + 4;
-          h *= 60;
+      if (isLight) {
+        const swatch =
+          palette.LightVibrant ||
+          palette.LightMuted ||
+          palette.Vibrant ||
+          palette.Muted;
+        if (!swatch) {
+          _resolve("rgb(245,246,243)");
+          return;
         }
-        _resolve(`hsl(${Math.round(h)},${Math.round(s * 100)}%,15%)`);
-      } else {
+        const [r, g, b] = swatch.rgb;
         _resolve(`rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`);
+      } else {
+        // Priority: DarkVibrant > DarkMuted > Vibrant darkened > fallback
+        const swatch =
+          palette.DarkVibrant ||
+          palette.DarkMuted ||
+          palette.Vibrant ||
+          palette.Muted;
+        if (!swatch) {
+          _resolve("rgb(18,18,18)");
+          return;
+        }
+        let [r, g, b] = swatch.rgb;
+        // If we landed on Vibrant/Muted (not already dark), force luminance dark
+        if (!palette.DarkVibrant && !palette.DarkMuted) {
+          // Convert to HSL, clamp L to 0.15
+          r /= 255;
+          g /= 255;
+          b /= 255;
+          const max = Math.max(r, g, b),
+            min = Math.min(r, g, b);
+          const l = (max + min) / 2;
+          const delta = max - min;
+          const s = delta === 0 ? 0 : delta / (1 - Math.abs(2 * l - 1));
+          let h = 0;
+          if (delta > 0) {
+            if (max === r) h = ((g - b) / delta + 6) % 6;
+            else if (max === g) h = (b - r) / delta + 2;
+            else h = (r - g) / delta + 4;
+            h *= 60;
+          }
+          _resolve(`hsl(${Math.round(h)},${Math.round(s * 100)}%,15%)`);
+        } else {
+          _resolve(`rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`);
+        }
       }
     })
-    .catch(() => _resolve("rgb(18,18,18)"));
+    .catch(() => _resolve(isLight ? "rgb(245,246,243)" : "rgb(18,18,18)"));
 }
 
 function _setNpBg(track) {
   const el = $("np-overlay-bg");
   if (!el) return;
+  const isLight = document.documentElement.dataset.theme === "light";
   if (track.coverArt || track._hasCoverArt) {
     const artSrc = track.coverArt
       ? _getCoverArtDisplayUrl(track.coverArt)
@@ -1647,7 +2349,7 @@ function _setNpBg(track) {
       }
     });
   } else {
-    el.style.background = "rgb(18,18,18)";
+    el.style.background = isLight ? "rgb(245,246,243)" : "rgb(18,18,18)";
     if (state.dynamicAccentColor) _applyAccentColor("#1ed760");
   }
 }
@@ -1796,10 +2498,202 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+/**
+ * Advanced parser that extracts artist and cleaned title from a track title
+ * when the stored metadata artist is "Unknown Artist".
+ *
+ * Handles:
+ *  1. Repeated artist block (e.g. "Joé DwèT Filé & Burna Boy Joé DwèT Filé & Burna Boy 4 Kampe II (Official)")
+ *  2. Dash separator ("Artist - Song Title")
+ *  3. Feature syntax ("Artist ft. Artist2 Song")
+ *  4. Ampersand / Cross syntax ("Artist & Artist2 Song")
+ */
+function _parseUnknownArtistTitle(title) {
+  if (!title || typeof title !== "string") return null;
+  const raw = title.trim();
+  if (!raw || raw.toLowerCase() === "unknown") return null;
+
+  // Clean trailing noise like (Official Video), (Lyrics), [HD], etc.
+  const cleanNoise = (s) =>
+    s
+      .replace(
+        /\s*[\(\[\{]\s*(official|audio|video|lyrics|hd|4k|remaster|remix|mv|visualizer|clip|music video|full song|unreleased)[^\)\]\}]*[\)\]\}]/gi,
+        "",
+      )
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const working = cleanNoise(raw);
+
+  // ── Case A: Repeated Prefix Detection ─────────────────────────────────
+  // YouTube rips often repeat the artist block twice: "A & B A & B Song Title"
+  const words = working.split(/\s+/);
+  if (words.length >= 4) {
+    const maxLen = Math.floor(words.length / 2);
+    for (let len = 2; len <= maxLen; len++) {
+      const group1 = words.slice(0, len).join(" ");
+      const group2 = words.slice(len, len * 2).join(" ");
+      if (group1.toLowerCase() === group2.toLowerCase() && group1.length >= 3) {
+        const remaining = words
+          .slice(len * 2)
+          .join(" ")
+          .trim();
+        return {
+          artist: group1,
+          title: remaining || working,
+        };
+      }
+    }
+  }
+
+  // ── Case B: "Artist - Title" (space-dash-space) ────────────────────────
+  const dashMatch = working.match(/^(.+?)\s+[-–—]\s+(.+)$/);
+  if (dashMatch) {
+    const candidateArtist = cleanNoise(dashMatch[1]).trim();
+    const candidateTitle = cleanNoise(dashMatch[2]).trim();
+    if (candidateArtist && candidateTitle && candidateArtist.length <= 60) {
+      return {
+        artist: candidateArtist,
+        title: candidateTitle,
+      };
+    }
+  }
+
+  // ── Case C: "Artist ft./feat. Artist2 Song" ───────────────────────────
+  const ftMatch = working.match(
+    /^(.+?)\s+(?:ft\.?|feat\.?|featuring)\s+(.+?)(?:\s+[-–—]|\s+|$)/i,
+  );
+  if (ftMatch) {
+    const a1 = cleanNoise(ftMatch[1]);
+    const a2 = cleanNoise(ftMatch[2]);
+    if (a1 && a2 && a1.length <= 50 && a2.length <= 50) {
+      const remaining = working.slice(ftMatch[0].length).trim();
+      return {
+        artist: `${a1}, ${a2}`,
+        title: remaining || working,
+      };
+    }
+  }
+
+  // ── Case D: Ampersand in prefix ("Artist1 & Artist2 Song Title") ──────
+  if (working.includes("&") || working.includes("×")) {
+    const ampMatch = working.match(
+      /^((?:[A-ZÀ-ÖØ-öø-ÿ\u00C0-\u024F][^\s]*(?:\s+[A-ZÀ-ÖØ-öø-ÿ\u00C0-\u024F][^\s]*)*)(?:\s*[&×]\s*(?:[A-ZÀ-ÖØ-öø-ÿ\u00C0-\u024F][^\s]*(?:\s+[A-ZÀ-ÖØ-öø-ÿ\u00C0-\u024F][^\s]*)*))+)\s/,
+    );
+    if (ampMatch && ampMatch[1]) {
+      const candidateArtist = cleanNoise(ampMatch[1]);
+      const remainingTitle = working.slice(ampMatch[0].length).trim();
+      if (candidateArtist && remainingTitle && candidateArtist.length <= 60) {
+        return {
+          artist: candidateArtist,
+          title: remainingTitle,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
 function getArtistText(track) {
-  return Array.isArray(track?.artist)
+  const rawArtist = Array.isArray(track?.artist)
     ? track.artist.join(", ")
-    : track?.artist || "Unknown Artist";
+    : track?.artist || "";
+
+  const isUnknown =
+    !rawArtist ||
+    rawArtist.trim().toLowerCase() === "unknown artist" ||
+    rawArtist.trim() === "";
+
+  if (!isUnknown) return rawArtist;
+
+  const parsed = _parseUnknownArtistTitle(track?.title);
+  return parsed?.artist || "Unknown Artist";
+}
+
+let _isResolvingUnknownArtists = false;
+
+/**
+ * Ultra-efficient, non-blocking background task that scans the library for
+ * tracks with "Unknown Artist", resolves real artist & title via parser,
+ * updates memory state and persists updates to SQLite / JSON manifest in small idle batches.
+ */
+async function _bgResolveUnknownArtists() {
+  if (_isResolvingUnknownArtists) return;
+  if (!state.tracks || state.tracks.length === 0) return;
+  _isResolvingUnknownArtists = true;
+
+  const unknownTracks = state.tracks.filter((t) => {
+    const a = Array.isArray(t.artist) ? t.artist.join(", ") : t.artist || "";
+    return !a || a.trim().toLowerCase() === "unknown artist";
+  });
+
+  if (unknownTracks.length === 0) {
+    _isResolvingUnknownArtists = false;
+    return;
+  }
+
+  console.log(
+    `[UnknownArtistWorker] Scanning ${unknownTracks.length} tracks with Unknown Artist...`,
+  );
+
+  const updatesToPersist = [];
+  let updatedCount = 0;
+  let batchIndex = 0;
+
+  function processBatch() {
+    const batchSize = 15;
+    const end = Math.min(batchIndex + batchSize, unknownTracks.length);
+
+    for (let i = batchIndex; i < end; i++) {
+      const track = unknownTracks[i];
+      const parsed = _parseUnknownArtistTitle(track.title);
+      if (parsed && parsed.artist) {
+        track.artist = parsed.artist;
+        if (parsed.title && parsed.title !== track.title) {
+          track.title = parsed.title;
+        }
+        updatesToPersist.push({
+          id: track.id,
+          artist: track.artist,
+          title: track.title,
+        });
+        updatedCount++;
+      }
+    }
+
+    batchIndex = end;
+
+    if (batchIndex < unknownTracks.length) {
+      if ("requestIdleCallback" in window) {
+        requestIdleCallback(() => processBatch());
+      } else {
+        setTimeout(processBatch, 40);
+      }
+    } else {
+      _isResolvingUnknownArtists = false;
+      if (updatedCount > 0) {
+        console.log(
+          `[UnknownArtistWorker] Resolved artist info for ${updatedCount} tracks! Persisting...`,
+        );
+        window.novaAPI
+          .invoke("library:update-tracks", updatesToPersist)
+          .catch(() => {});
+        invalidateSectionCache();
+        buildSearchIndex();
+        if (state.activeNavSection === "home") {
+          renderHome();
+        } else if (
+          state.activeNavSection === "library" ||
+          virtualList.mode === "library"
+        ) {
+          renderTracks(state.filteredTracks, "library");
+        }
+      }
+    }
+  }
+
+  setTimeout(processBatch, 200);
 }
 
 function normalizeSearchText(value) {
@@ -2044,6 +2938,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       _wireTabs();
       _wireSort();
       _wireAddFolder();
+      _initSidebarTooltipPortal();
       _wireShufflePlay();
       _wireScanProgress();
       _wireVolume();
@@ -2269,6 +3164,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     playPrevious();
   });
 
+  // Sent by main process on 'show' (and potentially 'restore') to get the
+  // authoritative playing state from the renderer and sync the taskbar
+  // thumbnail toolbar icon immediately — fixes the race where the thumbar
+  // shows the play icon even when a song is already playing on first show.
+  window.novaAPI.on("player:request-thumbar-sync", () => {
+    const isPlaying =
+      state.isPlaying ||
+      (audioEngine && audioEngine.audio && !audioEngine.audio.paused);
+    _smtcStatus(isPlaying ? "playing" : "paused");
+  });
+
   // Check for file opened on startup
   window.novaAPI
     .invoke("app:get-startup-file")
@@ -2328,17 +3234,60 @@ document.addEventListener("keydown", (e) => {
   }
 
   // ─── 2. F11 closes the Now Playing overlay (always active when open) ──
-  // The Help docs say "F11 → Close Now Playing overlay". The scaffold
-  // NowPlayingOverlay.js wired this but the live app never did. The
-  // standard F11 (fullscreen) behaviour is also suppressed here while
-  // the overlay is open, so the user's intent (close the overlay) wins.
   if (e.key === "F11" && state.overlayOpen) {
     e.preventDefault();
     closeOverlay();
     return;
   }
 
-  // ─── 3. Ctrl+F / Cmd+F / "/" focus search ─────────────────────
+  // ─── 3. Global modifier shortcuts (Ctrl / Cmd) ────────────────
+  // Ctrl+F / Cmd+F → Focus search
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+    e.preventDefault();
+    if (state.overlayOpen) closeOverlay();
+    if (window.innerWidth <= 640 && !state.sidebarOpen) toggleSidebar(true);
+    const searchInput = $("search-input");
+    if (searchInput) {
+      searchInput.focus();
+      searchInput.select();
+    }
+    return;
+  }
+
+  // Ctrl+P / Cmd+P → Add current track to playlist
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
+    e.preventDefault();
+    if (state.currentTrack) {
+      const anchor = state.overlayOpen
+        ? ($("ov-add-btn") || $("ov-more-btn") || $("ov-title"))
+        : ($("np-menu-btn") || $("np-title") || document.body);
+      if (anchor) openPlaylistMenu(anchor, state.currentTrack);
+    }
+    return;
+  }
+
+  // Ctrl+L / Cmd+L → Light mode
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "l") {
+    e.preventDefault();
+    _applyThemeMode("light");
+    saveSetting("theme", "light");
+    $$(".theme-mode-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.theme === "light");
+    });
+    return;
+  }
+
+  // Ctrl+D / Cmd+D → Dark mode
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
+    e.preventDefault();
+    _applyThemeMode("dark");
+    saveSetting("theme", "dark");
+    $$(".theme-mode-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.theme === "dark");
+    });
+    return;
+  }
+
   // Skipped while typing in any editable field — "/" in particular would
   // otherwise hijack quick-search inputs and the lyrics editor.
   const tag = e.target.tagName;
@@ -2349,18 +3298,7 @@ document.addEventListener("keydown", (e) => {
     e.target.isContentEditable;
 
   if (!isEditable) {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
-      e.preventDefault();
-      const searchInput = $("search-input");
-      if (searchInput) {
-        searchInput.focus();
-        searchInput.select();
-      }
-      return;
-    }
     // "/" focuses search (Google / YouTube / Gmail convention).
-    // Shift+"/" produces "?" — let that fall through so it doesn't steal
-    // the keystroke from any future help-overlay shortcut.
     if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
       const searchInput = $("search-input");
@@ -2374,14 +3312,7 @@ document.addEventListener("keydown", (e) => {
 
   // ─── 4. Editable-field guard ──────────────────────────────────
   // Everything below this point is suppressed while the user is typing
-  // in an input, textarea, select, or contenteditable element. The
-  // individual dialog / lyrics-editor Enter+Esc handlers (registered on
-  // the document by those components) still fire because they were added
-  // AFTER this listener in document order — actually they were added
-  // before, but they call e.stopPropagation() implicitly by being
-  // registered on document with the same priority. To be safe, dialogs
-  // and the lyrics editor handle their own Enter/Esc via per-input
-  // listeners that fire before this global handler.
+  // in an input, textarea, select, or contenteditable element.
   if (isEditable) return;
 
   // ─── 5. Escape: close overlay / dialog / clear search ────────
@@ -2393,16 +3324,11 @@ document.addEventListener("keydown", (e) => {
       return;
     }
     const openDialog = document.querySelector(".app-dialog");
-    if (openDialog) {
-      // The dialog's own keydown handler (registered in showAppDialog)
-      // will catch this and resolve(null). Don't double-handle.
-      return;
-    }
+    if (openDialog) return;
+
     const lyricsEditor = $("lyrics-editor");
-    if (lyricsEditor && lyricsEditor.classList.contains("open")) {
-      // Lyrics editor has its own close path
-      return;
-    }
+    if (lyricsEditor && lyricsEditor.classList.contains("open")) return;
+
     // Otherwise: clear the search box if it has content
     const searchInput = $("search-input");
     if (searchInput && searchInput.value) {
@@ -2412,8 +3338,6 @@ document.addEventListener("keydown", (e) => {
       searchInput.blur();
       return;
     }
-    // Last resort: blur whatever has focus so the next keypress doesn't
-    // accidentally trigger a button's space-bar click.
     if (document.activeElement && document.activeElement !== document.body) {
       document.activeElement.blur();
     }
@@ -2440,8 +3364,6 @@ document.addEventListener("keydown", (e) => {
   }
 
   // ─── 8. M → mute / unmute ────────────────────────────────────
-  // Mirrors the click handler on #vol-btn in _wireVolume (line 8109):
-  // if volume > 0, store it as _prevVolume and mute; if muted, restore.
   if (e.code === "KeyM" && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault();
     if (state.volume > 0) {
@@ -2452,58 +3374,99 @@ document.addEventListener("keydown", (e) => {
     }
     audioEngine.setVolume(state.volume);
     updateVolumeUi();
-    // v1.1.0 — Persist volume change (debounced, respects volumePersistMode).
     _persistVolumeDebounced();
     return;
   }
 
-  // ─── 9. ArrowUp / ArrowDown → scroll library 200 px ──────────
-  if (e.code === "ArrowUp" && !e.shiftKey) {
+  // ─── 9. T → open Tag Editor for currently playing track ──────
+  if (e.code === "KeyT" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    if (state.currentTrack) _openTagEditor(state.currentTrack);
+    return;
+  }
+
+  // ─── 10. L → Like / Favorite currently playing track ─────────
+  if (e.code === "KeyL" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    toggleFavorite();
+    return;
+  }
+
+  // ─── 11. S → Toggle Shuffle ──────────────────────────────────
+  if (e.code === "KeyS" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    _toggleShuffle();
+    return;
+  }
+
+  // ─── 12. 1 or R → Repeat One (toggle) ─────────────────────────
+  if ((e.key === "1" || e.code === "KeyR") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    _setRepeatMode("one");
+    return;
+  }
+
+  // ─── 13. 0 or O → Repeat All (toggle) ─────────────────────────
+  if ((e.key === "0" || e.code === "KeyO") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    _setRepeatMode("all");
+    return;
+  }
+
+  // ─── 14. ArrowUp / ArrowDown → Volume Up / Down ──────────────
+  if (e.code === "ArrowUp" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    e.preventDefault();
+    state.volume = Math.max(0, Math.min(1, state.volume + 0.05));
+    audioEngine.setVolume(state.volume);
+    updateVolumeUi();
+    _persistVolumeDebounced();
+    return;
+  }
+  if (e.code === "ArrowDown" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    e.preventDefault();
+    state.volume = Math.max(0, Math.min(1, state.volume - 0.05));
+    audioEngine.setVolume(state.volume);
+    updateVolumeUi();
+    _persistVolumeDebounced();
+    return;
+  }
+
+  // ─── 15. PageUp / PageDown / Shift+ArrowUp/Down → Scroll library ─
+  if (e.code === "PageUp" || (e.code === "ArrowUp" && e.shiftKey)) {
     e.preventDefault();
     const area = $("track-area");
     if (area) area.scrollTop -= 200;
     return;
   }
-  if (e.code === "ArrowDown" && !e.shiftKey) {
+  if (e.code === "PageDown" || (e.code === "ArrowDown" && e.shiftKey)) {
     e.preventDefault();
     const area = $("track-area");
     if (area) area.scrollTop += 200;
     return;
   }
 
-  // ─── 10 & 11. ArrowLeft / ArrowRight ─────────────────────────
-  // Help docs specify three behaviours for horizontal arrows:
-  //   (a) When seek bar is focused AND no Shift → adjust volume ±5%
-  //   (b) Shift+Arrow → next / previous track
-  //   (c) Plain Arrow (no Shift, seek bar not focused) → seek ±5 s
-  //
-  // We honour (a) only when _seekBarActive is true (set by clicking the
-  // squiggly bar). Otherwise we fall through to (b) or (c). This matches
-  // the Help docs: "→ / ← (when seek bar focused) Adjust volume ±5%"
-  // and "→ / ← (when seek bar focused, alt handler) Seek ±5 s" — the
-  // latter is interpreted as "when not focused, seek ±5s".
+  // ─── 16. ArrowLeft / ArrowRight → Seek ±5s (Shift → Prev/Next) ──
   if (e.code === "ArrowRight" || e.code === "ArrowLeft") {
     e.preventDefault();
     const sign = e.code === "ArrowRight" ? 1 : -1;
 
     if (e.shiftKey) {
-      // (b) Shift+Arrow → next / previous track
+      // Shift+Arrow → next / previous track
       if (sign > 0) playNext();
       else playPrevious();
       return;
     }
 
     if (_seekBarActive) {
-      // (a) Seek bar focused → adjust volume ±5%
+      // Seek bar focused → adjust volume ±5%
       state.volume = Math.max(0, Math.min(1, state.volume + sign * 0.05));
       audioEngine.setVolume(state.volume);
       updateVolumeUi();
-      // v1.1.0 — Persist volume change (debounced, respects volumePersistMode).
       _persistVolumeDebounced();
       return;
     }
 
-    // (c) Plain Arrow, no seek bar focused → seek ±5 s
+    // Plain Arrow → seek ±5 s
     const cur = audioEngine.getCurrentTime() || 0;
     const dur = audioEngine.getDuration();
     let target = cur + sign * 5;
@@ -2593,6 +3556,28 @@ function _wireSidebar() {
     lyricsEdit.addEventListener("click", () => openLyricsEditor());
   }
 
+  // Task 7: Active Lyrics ±1s timing adjustment buttons
+  // Task 7: clock icon toggles the ±1s sync controls (no longer always visible)
+  const lyricsSyncToggle = $("lyrics-sync-toggle-btn");
+  if (lyricsSyncToggle) {
+    lyricsSyncToggle.addEventListener("click", () => {
+      if (!_lyricsIsSynced) return; // no synced lyrics — nothing to adjust
+      _lyricsSyncControlsOpen = !_lyricsSyncControlsOpen;
+      _updateLyricsSyncControlsVisibility();
+    });
+  }
+
+  const lyricsOffsetDec = $("lyrics-offset-dec");
+  if (lyricsOffsetDec) {
+    lyricsOffsetDec.addEventListener("click", () =>
+      _applyLyricsOffsetDelta(-1),
+    );
+  }
+  const lyricsOffsetInc = $("lyrics-offset-inc");
+  if (lyricsOffsetInc) {
+    lyricsOffsetInc.addEventListener("click", () => _applyLyricsOffsetDelta(1));
+  }
+
   $$(".nav-item[data-section]").forEach((item) => {
     item.addEventListener("click", () => {
       $$(".nav-item").forEach((n) => {
@@ -2622,6 +3607,22 @@ function toggleLyricsPanel() {
   if (!state.currentTrack) return;
   const lyricsPanel = $("lyrics-panel");
   if (!lyricsPanel) return;
+  // Task 4: Cool click animation on the Lyrics pill. Re-triggering a CSS
+  // animation requires forcing a reflow between removing and re-adding
+  // the class (otherwise a rapid second click is a no-op because the
+  // class never actually "changes"). We clean up via animationend so
+  // repeated rapid clicks don't stack listeners or leave a stuck class.
+  const lyricsToggleBtn = $("lyrics-toggle-btn");
+  if (lyricsToggleBtn) {
+    lyricsToggleBtn.classList.remove("lyrics-pill-pop");
+    void lyricsToggleBtn.offsetWidth; // force reflow
+    lyricsToggleBtn.classList.add("lyrics-pill-pop");
+    lyricsToggleBtn.addEventListener(
+      "animationend",
+      () => lyricsToggleBtn.classList.remove("lyrics-pill-pop"),
+      { once: true },
+    );
+  }
   if (lyricsPanel.classList.contains("closed")) {
     openLyricsPanel();
   } else {
@@ -2959,6 +3960,18 @@ function _wireSort() {
   });
 
   const items = menu.querySelectorAll(".dropdown-item");
+  // Sync UI dropdown label with restored state.sortKey
+  if (state.sortKey) {
+    const activeItem = Array.from(items).find(
+      (i) => i.dataset.value === state.sortKey,
+    );
+    if (activeItem) {
+      items.forEach((i) => i.classList.remove("active"));
+      activeItem.classList.add("active");
+      if (currentText) currentText.textContent = activeItem.textContent;
+    }
+  }
+
   items.forEach((item) => {
     item.addEventListener("click", () => {
       const val = item.dataset.value;
@@ -2969,7 +3982,7 @@ function _wireSort() {
         // Different item — set new sort key with default direction
         items.forEach((i) => i.classList.remove("active"));
         item.classList.add("active");
-        currentText.textContent = item.textContent;
+        if (currentText) currentText.textContent = item.textContent;
         state.sortKey = val;
         if (val === "dateAdded") {
           state.sortAsc = false; // Newest first
@@ -2978,6 +3991,8 @@ function _wireSort() {
         }
       }
 
+      saveSetting("sortKey", state.sortKey);
+      saveSetting("sortAsc", state.sortAsc);
       _sortTracks();
       renderTracks(state.filteredTracks, "library");
     });
@@ -3000,6 +4015,68 @@ function _sortTracks() {
 }
 
 // ─── Add Folder ───────────────────────────────────────────────────
+// Tooltips for anything inside #sidebar are rendered as real DOM nodes
+// appended to <body> (not CSS ::before pseudo-elements) so they can
+// visually overflow the sidebar's scrollable, overflow-clipped bounds
+// instead of being cut off at its edge. One shared portal node is
+// reused and repositioned on each hover.
+let _sidebarTooltipEl = null;
+function _initSidebarTooltipPortal() {
+  const sidebar = $("sidebar");
+  if (!sidebar) return;
+
+  function show(target) {
+    const text = target.getAttribute("data-tooltip");
+    if (!text) return;
+    if (!_sidebarTooltipEl) {
+      _sidebarTooltipEl = document.createElement("div");
+      _sidebarTooltipEl.className = "sidebar-tooltip-portal";
+      document.body.appendChild(_sidebarTooltipEl);
+    }
+    _sidebarTooltipEl.textContent = text;
+    const rect = target.getBoundingClientRect();
+    // Position above and horizontally centered on the target, then clamp
+    // so it can overflow the sidebar freely but still stays on-screen.
+    _sidebarTooltipEl.style.left = "0px";
+    _sidebarTooltipEl.style.top = "0px";
+    _sidebarTooltipEl.classList.add("visible");
+    // Measure after content/visibility is set so offsetWidth is accurate.
+    const tw = _sidebarTooltipEl.offsetWidth;
+    const th = _sidebarTooltipEl.offsetHeight;
+    let left = rect.left + rect.width / 2 - tw / 2;
+    left = Math.max(6, Math.min(left, window.innerWidth - tw - 6));
+    const top = rect.top - th - 10;
+    _sidebarTooltipEl.style.left = `${left}px`;
+    _sidebarTooltipEl.style.top = `${Math.max(6, top)}px`;
+  }
+
+  function hide() {
+    if (_sidebarTooltipEl) _sidebarTooltipEl.classList.remove("visible");
+  }
+
+  // Delegate so dynamically-added sidebar content (folder list, etc.)
+  // still gets tooltips without re-binding listeners.
+  sidebar.addEventListener(
+    "mouseover",
+    (e) => {
+      const target = e.target.closest("[data-tooltip]");
+      if (target && sidebar.contains(target)) show(target);
+    },
+    true,
+  );
+  sidebar.addEventListener(
+    "mouseout",
+    (e) => {
+      const target = e.target.closest("[data-tooltip]");
+      if (target && sidebar.contains(target)) hide();
+    },
+    true,
+  );
+  // Also hide on scroll so a stale tooltip doesn't float away from its
+  // (now-scrolled) target.
+  sidebar.addEventListener("scroll", hide);
+}
+
 function _wireAddFolder() {
   $("add-folder-nav").addEventListener("click", async () => {
     console.log("[Add Folder] Opening folder dialog...");
@@ -3108,6 +4185,80 @@ function _wireAddFolder() {
       console.log("[Refresh] Library updated (changes detected)");
     } else {
       console.log("[Refresh] No changes — skipped library reload");
+    }
+  });
+
+  // Task 2: Quick refresh — append-only, new songs + cover art only.
+  // Skips mtime-checking every existing file; only reads metadata for
+  // files that aren't in the library yet. Finishes in ~1s for the
+  // common case of zero or a few new songs.
+  $("sidebar-quick-refresh-btn")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const btn = e.currentTarget;
+    const scanFolders = Array.isArray(state.settings.scanFolders)
+      ? state.settings.scanFolders
+      : [];
+    if (scanFolders.length === 0) return;
+
+    btn.classList.add("spinning");
+    btn.dataset.tooltip = "Checking for new songs...";
+
+    let totalNew = 0;
+    const allNewTracks = [];
+    try {
+      for (const folderPath of scanFolders) {
+        const result = await window.novaAPI.invoke(
+          "library:quick-scan",
+          folderPath,
+        );
+        if (result && result.success) {
+          totalNew += result.newTracks || 0;
+          if (Array.isArray(result.addedTracks)) {
+            allNewTracks.push(...result.addedTracks);
+          }
+          console.log(
+            `[QuickRefresh] ${folderPath}: +${result.newTracks} new in ${result.elapsedMs}ms`,
+          );
+        } else {
+          console.warn("[QuickRefresh] Failed for", folderPath, result?.error);
+        }
+      }
+    } catch (err) {
+      console.error("[QuickRefresh] Error:", err);
+    } finally {
+      btn.classList.remove("spinning");
+      btn.dataset.tooltip = "Quick refresh (new songs only)";
+    }
+
+    if (totalNew > 0 && allNewTracks.length > 0) {
+      // Directly inject the new tracks into the live library — no secondary
+      // round-trip needed since quick-scan already returned the track objects.
+      await _applyIDBThumbs(allNewTracks);
+      state.tracks.push(...allNewTracks);
+      state.filteredTracks = [...state.tracks];
+      if (state.sortKey) _sortTracks(state.sortKey, state.sortAsc);
+      invalidateSectionCache();
+      buildSearchIndex();
+      // Re-render whichever section is currently visible
+      if (state.activeNavSection === "albums") {
+        _reRenderPanel("albums", renderAlbums);
+      } else if (state.activeNavSection === "artists") {
+        _reRenderPanel("artists", renderArtists);
+      } else if (state.activeNavSection === "playlists") {
+        _reRenderPanel("playlists", renderPlaylists);
+      } else {
+        renderTracks(state.filteredTracks, "library");
+      }
+      for (const track of allNewTracks) _scheduleThumbnailAtlasBuild(track);
+      _updateSidebarFolderInfo();
+      console.log(`[QuickRefresh] Added ${totalNew} new track(s) directly`);
+    } else if (totalNew > 0) {
+      // Fallback: new tracks count was returned but no objects — do full reload
+      await _partialLibraryUpdate();
+      _updateSidebarFolderInfo();
+      console.log(`[QuickRefresh] Added ${totalNew} new track(s) via fallback`);
+    } else {
+      console.log("[QuickRefresh] No new songs found");
     }
   });
 
@@ -4300,6 +5451,9 @@ function _scheduleBackgroundWork() {
   if (_bgQueueRunning) return;
   _bgQueueRunning = true;
 
+  // Non-blocking background worker to resolve tracks with Unknown Artist
+  _bgResolveUnknownArtists();
+
   setTimeout(() => {
     _runBackgroundQueue().catch((err) => {
       console.warn("[bg-queue] Queue failed:", err.message);
@@ -4971,6 +6125,12 @@ async function _partialLibraryUpdate() {
     invalidateSectionCache();
     if (virtualList.mode === "library" || virtualList.mode === "home") {
       renderTracks(state.filteredTracks, "library");
+    } else if (state.activeNavSection === "albums") {
+      _reRenderPanel("albums", renderAlbums);
+    } else if (state.activeNavSection === "artists") {
+      _reRenderPanel("artists", renderArtists);
+    } else if (state.activeNavSection === "playlists") {
+      _reRenderPanel("playlists", renderPlaylists);
     }
 
     // Rebuild search index
@@ -5288,9 +6448,26 @@ async function _loadSettings() {
     state.dynamicAccentColor = !!state.settings.dynamicAccentColor;
     if (!state.dynamicAccentColor && state.settings.accentColor)
       _applyAccentColor(state.settings.accentColor);
+    if (state.settings.sortKey) state.sortKey = state.settings.sortKey;
+    if (typeof state.settings.sortAsc === "boolean")
+      state.sortAsc = state.settings.sortAsc;
+    state.customQueues = Array.isArray(state.settings.customQueues)
+      ? state.settings.customQueues
+      : [];
+    state.showRemainingTime = !!state.settings.showRemainingTime;
     _applyVolumeBarMode(state.settings.volumeBarMode || "hover");
     _applyNavMode(state.settings.navMode || "hover");
     _applyFont(state.settings.font || "outfit");
+    _applyThemeMode(state.settings.theme || "dark");
+    _applyUiScale(state.settings.uiScale || "1");
+    // Apply squiggly thumb style (circle = default, amoeba = rounded rect)
+    _applySquigglyThumbStyle(state.settings.squigglyThumbStyle || "circle");
+    if (
+      state.settings.disableCustomQueue &&
+      (state.activeNavSection === "home" || !state.activeNavSection)
+    ) {
+      renderHome();
+    }
   } catch (err) {
     console.warn("Settings load failed:", err);
   }
@@ -5315,11 +6492,14 @@ function _updateQueueHeaderTitle() {
   }
 }
 
+// Persist just the current track's id — a few bytes, instant to write,
+// and doesn't grow with queue size. On relaunch the queue is rebuilt fresh
+// from the library's current sort order (see _restoreFullQueue), so next/
+// prev naturally walk the library exactly as it's sorted right now.
 function _persistQueue() {
   try {
     window.novaAPI.invoke("settings:set", "_queue", {
-      ids: state.queue.map((t) => t.id),
-      index: state.queueIndex,
+      id: state.currentTrack ? state.currentTrack.id : null,
       source: state.queueSource,
     });
   } catch (_) {}
@@ -5356,6 +6536,290 @@ function getSectionSurface() {
   return _activePanelTarget || $("track-list");
 }
 
+// ─── Custom Queue Builder ─────────────────────────────────────────────
+const NATO_NAMES = [
+  "ALPHA",
+  "BRAVO",
+  "CHARLIE",
+  "DELTA",
+  "ECHO",
+  "FOXTROT",
+  "GOLF",
+  "HOTEL",
+  "INDIA",
+  "JULIET",
+  "KILO",
+  "LIMA",
+  "MIKE",
+  "NOVEMBER",
+  "OSCAR",
+  "PAPA",
+  "QUEBEC",
+  "ROMEO",
+  "SIERRA",
+  "TANGO",
+  "UNIFORM",
+  "VICTOR",
+  "WHISKEY",
+  "X-RAY",
+  "YANKEE",
+  "ZULU",
+];
+
+function _getNextNatoName() {
+  const existingNames = new Set(
+    (state.customQueues || []).map((q) => (q.name || "").toUpperCase().trim()),
+  );
+  for (const name of NATO_NAMES) {
+    if (!existingNames.has(name)) return name;
+  }
+  let count = 2;
+  while (true) {
+    for (const name of NATO_NAMES) {
+      const candidate = `${name} ${count}`;
+      if (!existingNames.has(candidate)) return candidate;
+    }
+    count++;
+  }
+}
+
+function _playCustomQueue(queueObj) {
+  if (
+    !queueObj ||
+    !Array.isArray(queueObj.trackIds) ||
+    queueObj.trackIds.length === 0
+  )
+    return;
+  const trackMap = new Map(state.tracks.map((t) => [t.id, t]));
+  const queueTracks = queueObj.trackIds
+    .map((id) => trackMap.get(id))
+    .filter(Boolean);
+  if (queueTracks.length === 0) return;
+
+  state.queue = queueTracks;
+  state.queueIndex = 0;
+  state.queueSource = { type: "custom_queue", name: queueObj.name };
+  playTrack(state.queue[0]);
+}
+
+function _deleteCustomQueue(queueId) {
+  if (!queueId) return;
+  state.customQueues = (state.customQueues || []).filter(
+    (q) => q.id !== queueId,
+  );
+  saveSetting("customQueues", state.customQueues);
+  if (state.activeNavSection === "home") renderHome();
+}
+
+function _openCustomQueueModal(queueToEdit = null) {
+  const existingOverlay = document.querySelector(".cqb-modal-overlay");
+  if (existingOverlay) existingOverlay.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "cqb-modal-overlay";
+
+  const initialName = queueToEdit ? queueToEdit.name : _getNextNatoName();
+  const selectedTrackIds = new Set(queueToEdit ? queueToEdit.trackIds : []);
+
+  overlay.innerHTML = `
+    <div class="cqb-modal-card">
+      <div class="cqb-header">
+        <div class="cqb-title-wrap">
+          <div class="cqb-badge">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="4" x2="21" y2="4"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="15" x2="21" y2="15"/><line x1="14" y1="20" x2="18" y2="20"/></svg>
+            NATO CALLSIGN
+          </div>
+          <input type="text" id="cqb-name-input" class="cqb-name-input" value="${escapeHtml(initialName)}" placeholder="Queue Name (e.g. ALPHA)">
+        </div>
+        <button class="cqb-close-btn" id="cqb-close-btn" aria-label="Close">&times;</button>
+      </div>
+
+      <div class="cqb-subbar">
+        <div class="cqb-search-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="cqb-search-input" class="cqb-search-input" placeholder="Search tracks to select...">
+        </div>
+        <div class="cqb-quick-actions">
+          <button class="cqb-chip-btn" id="cqb-select-all">Select All</button>
+          <button class="cqb-chip-btn" id="cqb-deselect-all">Clear Selection</button>
+          <span class="cqb-counter" id="cqb-counter">0 selected</span>
+        </div>
+      </div>
+
+      <div class="cqb-track-container" id="cqb-track-container"></div>
+
+      <div class="cqb-footer">
+        <div class="cqb-footer-info" id="cqb-footer-info">0 tracks selected</div>
+        <div class="cqb-footer-btn-group">
+          <button class="cqb-btn cqb-btn-secondary" id="cqb-btn-play-now">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l12 8-12 8V4z"/></svg>
+            Play Now
+          </button>
+          <button class="cqb-btn cqb-btn-primary" id="cqb-btn-save">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Save Queue
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const container = overlay.querySelector("#cqb-track-container");
+  const counterEl = overlay.querySelector("#cqb-counter");
+  const footerInfoEl = overlay.querySelector("#cqb-footer-info");
+  const searchInput = overlay.querySelector("#cqb-search-input");
+  const nameInput = overlay.querySelector("#cqb-name-input");
+
+  let filterQuery = "";
+
+  function updateCounter() {
+    const count = selectedTrackIds.size;
+    counterEl.textContent = `${count} selected`;
+    footerInfoEl.textContent = `${count} ${count === 1 ? "track" : "tracks"} selected`;
+  }
+
+  function renderTrackRows() {
+    if (!container) return;
+    container.innerHTML = "";
+
+    const filtered = state.tracks.filter((t) => {
+      if (!filterQuery) return true;
+      const q = filterQuery.toLowerCase();
+      const title = (t.title || "").toLowerCase();
+      const artist = (getArtistText(t) || "").toLowerCase();
+      const album = (t.album || "").toLowerCase();
+      return title.includes(q) || artist.includes(q) || album.includes(q);
+    });
+
+    if (filtered.length === 0) {
+      container.innerHTML = `<div class="cqb-empty">No matching songs found in library.</div>`;
+      return;
+    }
+
+    filtered.forEach((track) => {
+      const isSelected = selectedTrackIds.has(track.id);
+      const row = document.createElement("div");
+      row.className = "cqb-track-row" + (isSelected ? " selected" : "");
+      row.dataset.trackId = track.id;
+
+      const artSrc = track.coverArt
+        ? _getCoverArtDisplayUrl(track.coverArt)
+        : track._hasCoverArt
+          ? `nova-media://art/${encodeURIComponent(track.id)}`
+          : null;
+
+      const thumbHtml = artSrc
+        ? `<img src="${artSrc}" alt="" class="cqb-thumb-img">`
+        : `<div class="art-placeholder art-${getArtIndex(track)}" style="width:36px;height:36px;font-size:12px;display:flex;align-items:center;justify-content:center;border-radius:4px;">🎵</div>`;
+
+      row.innerHTML = `
+        <div class="cqb-checkbox ${isSelected ? "checked" : ""}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        ${thumbHtml}
+        <div class="cqb-track-meta">
+          <div class="cqb-track-title">${escapeHtml(track.title || "Unknown Title")}</div>
+          <div class="cqb-track-artist">${escapeHtml(getArtistText(track))}</div>
+        </div>
+        <div class="cqb-track-duration">${formatTime(track.duration || 0)}</div>
+      `;
+
+      row.addEventListener("click", () => {
+        if (selectedTrackIds.has(track.id)) {
+          selectedTrackIds.delete(track.id);
+          row.classList.remove("selected");
+          row.querySelector(".cqb-checkbox").classList.remove("checked");
+        } else {
+          selectedTrackIds.add(track.id);
+          row.classList.add("selected");
+          row.querySelector(".cqb-checkbox").classList.add("checked");
+        }
+        updateCounter();
+      });
+
+      container.appendChild(row);
+    });
+  }
+
+  renderTrackRows();
+  updateCounter();
+
+  searchInput?.addEventListener("input", (e) => {
+    filterQuery = e.target.value.trim();
+    renderTrackRows();
+  });
+
+  overlay.querySelector("#cqb-select-all")?.addEventListener("click", () => {
+    const visibleTracks = state.tracks.filter((t) => {
+      if (!filterQuery) return true;
+      const q = filterQuery.toLowerCase();
+      return (
+        (t.title || "").toLowerCase().includes(q) ||
+        (getArtistText(t) || "").toLowerCase().includes(q)
+      );
+    });
+    visibleTracks.forEach((t) => selectedTrackIds.add(t.id));
+    renderTrackRows();
+    updateCounter();
+  });
+
+  overlay.querySelector("#cqb-deselect-all")?.addEventListener("click", () => {
+    selectedTrackIds.clear();
+    renderTrackRows();
+    updateCounter();
+  });
+
+  function closeSelf() {
+    overlay.classList.add("closing");
+    setTimeout(() => overlay.remove(), 200);
+  }
+
+  overlay.querySelector("#cqb-close-btn")?.addEventListener("click", closeSelf);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) closeSelf();
+  });
+
+  function saveCurrentQueue() {
+    const name = nameInput.value.trim() || initialName;
+    const queueObj = {
+      id: queueToEdit ? queueToEdit.id : "cq-" + Date.now(),
+      name: name,
+      trackIds: Array.from(selectedTrackIds),
+      updatedAt: Date.now(),
+    };
+
+    if (queueToEdit) {
+      const idx = (state.customQueues || []).findIndex(
+        (q) => q.id === queueToEdit.id,
+      );
+      if (idx >= 0) state.customQueues[idx] = queueObj;
+      else state.customQueues.push(queueObj);
+    } else {
+      state.customQueues = state.customQueues || [];
+      state.customQueues.push(queueObj);
+    }
+
+    saveSetting("customQueues", state.customQueues);
+    if (state.activeNavSection === "home") renderHome();
+    return queueObj;
+  }
+
+  overlay.querySelector("#cqb-btn-play-now")?.addEventListener("click", () => {
+    if (selectedTrackIds.size === 0) return;
+    const queueObj = saveCurrentQueue();
+    _playCustomQueue(queueObj);
+    closeSelf();
+  });
+
+  overlay.querySelector("#cqb-btn-save")?.addEventListener("click", () => {
+    if (selectedTrackIds.size === 0) return;
+    saveCurrentQueue();
+    closeSelf();
+  });
+}
+
 function renderHome() {
   // Recently Added: sort by dateAdded descending (most recent first)
   // Filter out tracks with missing title/artist to avoid "Unknown Song Unknown Artist"
@@ -5380,13 +6844,35 @@ function renderHome() {
       <div class="home-hero-content">
         <div class="section-kicker">NovaTune</div>
         <h2>Your music, ready fast.</h2>
-        <p>${_getTotalTrackCount()} songs in library • ${state.playlists.length} ${state.playlists.length === 1 ? "playlist" : "playlists"} • ${totalDuration}</p>
+        <p class="home-hero-stats"><span>${_getTotalTrackCount()} songs in library</span> &bull; <span>${state.playlists.length} ${state.playlists.length === 1 ? "playlist" : "playlists"}</span> &bull; <span style="white-space:nowrap;">${totalDuration}</span></p>
       </div>
-      <button style=" font-family: inherit;
-  font-weight: 600!important;
-  " class="section-primary-btn" id="home-shuffle-btn"><svg style="margin-bottom: -2px!important;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8" /><line x1="4" y1="20" x2="21" y2="3" /><polyline points="21 16 21 21 16 21" /><line x1="4" y1="4" x2="21" y2="21" /></svg> Shuffle<span class="home-shuffle-wide"> Library</span></button>
+      ${
+        state.settings.disableCustomQueue
+          ? `<button class="section-primary-btn" id="home-shuffle-btn" style="gap:8px;opacity:1;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3H21V8"/><path d="M4 20L21 3"/><path d="M21 16V21H16"/><path d="M15 15L21 21"/><path d="M4 4L9 9"/></svg>
+            Shuffle Library
+          </button>`
+          : `<button class="section-primary-btn cqb-home-btn" id="home-custom-queue-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="4" x2="21" y2="4"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="15" x2="21" y2="15"/><line x1="14" y1="20" x2="18" y2="20"/></svg>
+            Custom Queue
+          </button>`
+      }
     </div>
-    <div class="section-grid" >
+
+    ${
+      !state.settings.disableCustomQueue
+        ? `
+    <div class="section-panel" style="margin-bottom: 16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div class="section-panel-title" style="margin-bottom:2px; margin-left:5px;">Saved Custom Queues</div>
+        <button class="cqb-chip-btn" id="home-create-queue-btn">+ New Custom Queue</button>
+      </div>
+      <div class="home-cq-grid" id="home-custom-queues-list"></div>
+    </div>`
+        : ""
+    }
+
+    <div class="section-grid">
       <div class="section-panel home-played-panel" style="margin-bottom: 50px!important;">
         <div class="section-panel-title">Recently Added</div>
         <div class="mini-track-list" id="home-recent-list"></div>
@@ -5396,7 +6882,6 @@ function renderHome() {
         <div class="mini-track-list" id="home-played-list"></div>
       </div>
     </div>
-    
   `);
 
   const recentList = $("home-recent-list");
@@ -5431,9 +6916,68 @@ function renderHome() {
     }
   }
 
-  $("home-shuffle-btn")?.addEventListener("click", () =>
-    $("shuffle-play-btn").click(),
+  const customQueuesList = $("home-custom-queues-list");
+  if (customQueuesList) {
+    if (!state.customQueues || state.customQueues.length === 0) {
+      customQueuesList.innerHTML = `<div class="section-muted" style="padding:4px 10px;">No custom queues saved yet. Click "Custom Queue" to create your first custom queue!</div>`;
+    } else {
+      customQueuesList.innerHTML = "";
+      state.customQueues.forEach((cq) => {
+        const card = document.createElement("div");
+        card.className = "home-cq-card";
+        const trackCount = (cq.trackIds || []).length;
+        card.innerHTML = `
+          <div class="home-cq-badge">${escapeHtml(cq.name || "QUEUE")}</div>
+          <div class="home-cq-meta">
+            <div class="home-cq-name">${escapeHtml(cq.name || "Custom Queue")}</div>
+            <div class="home-cq-sub">${trackCount} ${trackCount === 1 ? "song" : "songs"}</div>
+          </div>
+          <div class="home-cq-actions">
+            <button class="home-cq-action-btn home-cq-play-btn" title="Play Queue"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l12 8-12 8V4z"/></svg></button>
+            <button class="home-cq-action-btn home-cq-edit-btn" title="Edit Queue"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
+            <button class="home-cq-action-btn home-cq-delete-btn" title="Delete Queue"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          </div>
+        `;
+
+        card
+          .querySelector(".home-cq-play-btn")
+          ?.addEventListener("click", (e) => {
+            e.stopPropagation();
+            _playCustomQueue(cq);
+          });
+        card
+          .querySelector(".home-cq-edit-btn")
+          ?.addEventListener("click", (e) => {
+            e.stopPropagation();
+            _openCustomQueueModal(cq);
+          });
+        card
+          .querySelector(".home-cq-delete-btn")
+          ?.addEventListener("click", (e) => {
+            e.stopPropagation();
+            _deleteCustomQueue(cq.id);
+          });
+
+        customQueuesList.appendChild(card);
+      });
+    }
+  }
+
+  $("home-custom-queue-btn")?.addEventListener("click", () =>
+    _openCustomQueueModal(),
   );
+  $("home-create-queue-btn")?.addEventListener("click", () =>
+    _openCustomQueueModal(),
+  );
+  // Fallback: Shuffle & Play shown when user opts out of Custom Queue in Settings
+  $("home-shuffle-btn")?.addEventListener("click", () => {
+    if (!state.tracks || state.tracks.length === 0) return;
+    const shuffled = [...state.tracks].sort(() => Math.random() - 0.5);
+    state.queue = shuffled;
+    state.queueIndex = 0;
+    state.shuffleEnabled = true;
+    playTrack(shuffled[0]);
+  });
   $("home-library-btn")?.addEventListener("click", () =>
     navigateFromSurface("library"),
   );
@@ -5646,6 +7190,43 @@ function _applyFont(font) {
   document.body.style.fontFamily = `var(--app-font)`;
 }
 
+function _applyThemeMode(theme) {
+  const mode = theme === "light" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", mode);
+  if (squigglyNP && typeof squigglyNP.setThemeMode === "function") {
+    squigglyNP.setThemeMode(mode);
+  }
+  if (squigglyOV && typeof squigglyOV.setThemeMode === "function") {
+    squigglyOV.setThemeMode(mode);
+  }
+}
+
+function _applyUiScale(scale) {
+  const n = parseFloat(scale);
+  const s = !isNaN(n) && n >= 0.7 && n <= 2.0 ? n.toFixed(2) : "1.00";
+  document.documentElement.style.setProperty("--ui-scale", s);
+  document.documentElement.style.overflow = "hidden";
+  document.body.style.zoom = s;
+  document.body.style.overflow = "hidden";
+}
+
+/**
+ * Apply the scrubber thumb style to both squiggly progress instances.
+ * "circle"   = perfect filled circle (default)
+ * "amoeba"   = rounded rectangle (pill-like)
+ * "snake"    = segmented snake body eating dots along the track
+ * "pacman"   = chomping Pac-Man eating pellets along the track
+ * "ant"      = segmented ant with legs, antennae, and a crumb waiting at the end
+ * "firefly"  = glowing pulsing head with a fading light-trail behind it
+ */
+function _applySquigglyThumbStyle(style) {
+  const s = ["amoeba", "snake", "pacman", "ant", "firefly"].includes(style)
+    ? style
+    : "circle";
+  if (squigglyNP) squigglyNP.setThumbStyle(s);
+  if (squigglyOV) squigglyOV.setThumbStyle(s);
+}
+
 function _setControlsVisible(visible) {
   const bar = $("now-playing");
   if (bar) bar.classList.toggle("hidden", !visible);
@@ -5686,16 +7267,36 @@ async function _loadRecentPlayed() {
     ? state.settings.recentlyPlayed
     : [];
   const byId = new Map(state.tracks.map((track) => [track.id, track]));
-  state.recentlyPlayed = ids.map((id) => byId.get(id)).filter(Boolean);
+
+  // BUGFIX (Task 5 — Recently Played not surviving restart for large
+  // libraries): _loadLibrary only hydrates state.tracks with the FIRST
+  // PAGE (500 tracks) at this point in startup; the rest load in the
+  // background. A recently-played track that isn't in that first page
+  // was silently `.filter(Boolean)`-ed out here, so on every restart the
+  // Recently Played list would lose any entry outside the first page —
+  // even though the ids themselves were correctly persisted to
+  // settings.json. Fetch the missing ones individually via the same
+  // library:get-by-id lookup already used to restore the last-played
+  // queue track below, instead of dropping them.
+  const resolved = await Promise.all(
+    ids.map(async (id) => {
+      const cached = byId.get(id);
+      if (cached) return cached;
+      try {
+        const res = await window.novaAPI.invoke("library:get-by-id", id);
+        if (res && res.success && res.track) return res.track;
+      } catch (err) {
+        console.warn("[RecentlyPlayed] Failed to resolve track", id, err);
+      }
+      return null;
+    }),
+  );
+  state.recentlyPlayed = resolved.filter(Boolean);
 
   const saved = state.settings._queue;
-  if (saved && Array.isArray(saved.ids) && saved.ids.length > 0) {
+  if (saved && saved.id) {
     state.queueSource = saved.source || null;
-    state.queueIndex = Math.max(
-      0,
-      Math.min(saved.index || 0, saved.ids.length - 1),
-    );
-    const trackIdToPlay = saved.ids[state.queueIndex];
+    const trackIdToPlay = saved.id;
     let trackToPlay = byId.get(trackIdToPlay);
 
     if (!trackToPlay) {
@@ -5867,9 +7468,7 @@ async function _loadRecentPlayed() {
           _setControlsVisible(true);
         });
     }
-    console.log(
-      `[queue] Restored track ID ${saved.ids[saved.index || 0]} for preload.`,
-    );
+    console.log(`[queue] Restored track ID ${saved.id} for preload.`);
   }
   return Promise.resolve();
 }
@@ -5879,20 +7478,25 @@ async function _loadRecentPlayed() {
  */
 function _restoreFullQueue() {
   const saved = state.settings._queue;
-  if (saved && Array.isArray(saved.ids) && saved.ids.length > 0) {
-    const byId = new Map(state.tracks.map((track) => [track.id, track]));
-    const restored = saved.ids.map((id) => byId.get(id)).filter(Boolean);
-    if (restored.length > 0) {
-      state.queue = restored;
-      state.queueIndex = Math.max(
-        0,
-        Math.min(saved.index || 0, restored.length - 1),
-      );
-      console.log(
-        `[queue] Fully restored ${restored.length} queue tracks, index ${state.queueIndex}.`,
-      );
-    }
+  if (!saved || !saved.id) return;
+  // Build the queue fresh from the library in its current sort order —
+  // next/prev then walk the library exactly as it's sorted right now,
+  // rather than replaying a stale snapshot from last session.
+  const source =
+    state.filteredTracks && state.filteredTracks.length
+      ? state.filteredTracks
+      : state.tracks;
+  const idx = source.findIndex((t) => t.id === saved.id);
+  if (idx === -1) return;
+  state.queue = source.slice();
+  state.queueIndex = idx;
+  // Keep currentTrack pointing at the same object instance now in the queue.
+  if (state.currentTrack && state.currentTrack.id === saved.id) {
+    state.currentTrack = state.queue[idx];
   }
+  console.log(
+    `[queue] Restored queue from library sort (${state.queue.length} tracks), index ${idx}.`,
+  );
 }
 
 function renderSettings() {
@@ -5957,6 +7561,10 @@ function renderSettings() {
           <span>Expanded sidebar <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(Experimental — show full sidebar on smaller screens)</span></span>
           <input type="checkbox" id="setting-expanded-sidebar">
         </label>
+        <label class="settings-row settings-row--divider">
+          <span>Disable Custom Queue (NATO) <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(Replaces Custom Queue button &amp; section on Home with Shuffle &amp; Play)</span></span>
+          <input type="checkbox" id="setting-disable-custom-queue">
+        </label>
         <div class="settings-row settings-row--wrap">
           <span>Volume bar</span>
           <div class="settings-btn-group">
@@ -5982,8 +7590,15 @@ function renderSettings() {
         <div class="settings-row settings-row--wrap"${(state.settings.volumePersistMode || "persist") === "safe" ? "" : ' style="opacity:0.55;"'}>
           <span>Safe volume level</span>
           <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:160px;max-width:280px;">
-            <input type="range" id="setting-safe-volume" min="0" max="100" step="1" value="${Math.round((typeof state.settings.safeVolume === "number" ? state.settings.safeVolume : 0.5) * 100)}" style="flex:1;accent-color:var(--green,#1ed760);cursor:default;">
+            <input type="range" id="setting-safe-volume" min="0" max="100" step="1" value="${Math.round((typeof state.settings.safeVolume === "number" ? state.settings.safeVolume : 0.5) * 100)}" style="flex:1;cursor:default;">
             <span id="setting-safe-volume-label" style="font-size:12px;color:var(--text-secondary);font-variant-numeric:tabular-nums;min-width:36px;text-align:right;">${Math.round((typeof state.settings.safeVolume === "number" ? state.settings.safeVolume : 0.5) * 100)}%</span>
+          </div>
+        </div>
+        <div class="settings-row settings-row--wrap">
+          <span>Volume Boost (up to 200%)</span>
+          <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:160px;max-width:280px;">
+            <input type="range" id="setting-volume-boost" min="100" max="200" step="1" value="${Math.round((typeof state.volumeBoost === "number" ? state.volumeBoost : 1.0) * 100)}" style="flex:1;cursor:default;">
+            <span id="setting-volume-boost-label" style="font-size:12px;color:var(--text-secondary);font-variant-numeric:tabular-nums;min-width:36px;text-align:right;">${Math.round((typeof state.volumeBoost === "number" ? state.volumeBoost : 1.0) * 100)}%</span>
           </div>
         </div>
       </div>
@@ -6013,12 +7628,31 @@ function renderSettings() {
             <span id="accent-hex" style="font-size:12px;color:var(--text-muted);font-variant-numeric:tabular-nums;">${currentAccent}</span>
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-            <button type="button" id="accent-dynamic-btn"
-              style="font-family:inherit;font-size:12px;padding:5px 14px;border-radius:6px;border:1px solid #383838;background:${state.dynamicAccentColor ? "var(--green)" : "#2a2a2a"};color:${state.dynamicAccentColor ? "#000" : "var(--text-secondary)"};cursor:default;transition:background 0.15s,color 0.15s,border-color 0.15s;display:flex;align-items:center;gap:6px;flex-shrink:0;">
+            <button type="button" id="accent-dynamic-btn" class="accent-dynamic-btn${state.dynamicAccentColor ? " active" : ""}"
+              style="font-family:inherit;font-size:12px;padding:5px 14px;border-radius:6px;border:1px solid var(--border);cursor:default;transition:background 0.15s,color 0.15s,border-color 0.15s;display:flex;align-items:center;gap:6px;flex-shrink:0;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
               Dynamic (from album art)
             </button>
             <span style="font-size:11px;color:var(--text-muted);">${state.dynamicAccentColor ? "Changes with each song" : ""}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row 2b: Theme Mode & Scaling -->
+      <div class="section-panel">
+        <div class="section-panel-title">Appearance &amp; Scaling</div>
+        <div class="settings-row settings-row--wrap">
+          <span>Theme mode</span>
+          <div class="settings-btn-group">
+            <button type="button" class="theme-mode-btn settings-toggle-btn${(state.settings.theme || "dark") === "dark" ? " active" : ""}" data-theme="dark">Dark (Default)</button>
+            <button type="button" class="theme-mode-btn settings-toggle-btn${(state.settings.theme || "dark") === "light" ? " active" : ""}" data-theme="light">Light</button>
+          </div>
+        </div>
+        <div class="settings-row settings-row--wrap">
+          <span>Interface scaling <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(for high-DPI / 1440p displays)</span></span>
+          <div style="display:flex;align-items:center;gap:12px;flex:1;min-width:180px;max-width:320px;">
+            <input type="range" id="setting-ui-scale" min="100" max="200" step="1" value="${Math.round(parseFloat(state.settings.uiScale || "1") * 100)}" style="flex:1;cursor:default;">
+            <span id="setting-ui-scale-label" style="font-size:13px;font-weight:600;color:var(--text-primary);font-variant-numeric:tabular-nums;min-width:42px;text-align:right;">${Math.round(parseFloat(state.settings.uiScale || "1") * 100)}%</span>
           </div>
         </div>
       </div>
@@ -6035,7 +7669,39 @@ function renderSettings() {
         </div>
       </div>
 
+      <!-- Row 3b: Scrubber Head -->
+      <div class="section-panel">
+        <div class="section-panel-title">Scrubber Head</div>
+        <div class="settings-row settings-row--wrap">
+          <span>Progress bar thumb style</span>
+          <div class="settings-btn-group settings-btn-group--full">
+            <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "circle" ? " active" : ""}" data-style="circle">
+              ● Squiggly
+            </button>
+            <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "boring" ? " active" : ""}" data-style="boring">
+              ━ Boring
+            </button>
+            <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "amoeba" ? " active" : ""}" data-style="amoeba">
+              🦠 Amoeba
+            </button>
+            <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "snake" ? " active" : ""}" data-style="snake">
+              🐍 Snake
+            </button>
+            <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "pacman" ? " active" : ""}" data-style="pacman">
+              ᗧ Pac-Man
+            </button>
+            <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "ant" ? " active" : ""}" data-style="ant">
+              🐜 Ant
+            </button>
+            <button type="button" class="thumbstyle-btn settings-toggle-btn${(state.settings.squigglyThumbStyle || "circle") === "firefly" ? " active" : ""}" data-style="firefly">
+              ✨ Firefly
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- v1.1.7 — Row 4: Card Sorting -->
+
       <div class="section-panel">
         <div class="section-panel-title">Card Sorting</div>
         <div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;">Sort albums, artists, and playlist cards by:</div>
@@ -6070,19 +7736,27 @@ function renderSettings() {
   const lyrics = $("setting-lyrics");
   const hardware = $("setting-hardware");
   const expandedSidebar = $("setting-expanded-sidebar");
+  const disableCustomQueue = $("setting-disable-custom-queue");
   if (shuffle) shuffle.checked = !!state.shuffleEnabled;
   if (lyrics) lyrics.checked = !!state.settings.showLyrics;
   if (hardware)
     hardware.checked = state.settings.hardwareAcceleration !== false;
   if (expandedSidebar)
     expandedSidebar.checked = !!state.settings.expandedSidebar;
+  if (disableCustomQueue)
+    disableCustomQueue.checked = !!state.settings.disableCustomQueue;
 
   shuffle?.addEventListener("change", async (e) => {
     state.shuffleEnabled = e.target.checked;
-    $("shuffle-btn").classList.toggle("active", state.shuffleEnabled);
+    if (!state.settings) state.settings = {};
+    state.settings.shuffle = e.target.checked;
+    const sBtn = $("shuffle-btn");
+    if (sBtn) sBtn.classList.toggle("active", state.shuffleEnabled);
     await saveSetting("shuffle", state.shuffleEnabled);
   });
   lyrics?.addEventListener("change", async (e) => {
+    if (!state.settings) state.settings = {};
+    state.settings.showLyrics = e.target.checked;
     await saveSetting("showLyrics", e.target.checked);
     if (e.target.checked && state.currentTrack) openLyricsPanel();
     if (!e.target.checked) closeLyricsPanel();
@@ -6097,6 +7771,22 @@ function renderSettings() {
       document.body.classList.add("expanded-sidebar");
     } else {
       document.body.classList.remove("expanded-sidebar");
+    }
+  });
+  // Custom Queue opt-out: swap home hero button between CQ and Shuffle Library
+  disableCustomQueue?.addEventListener("change", async (e) => {
+    state.settings.disableCustomQueue = e.target.checked;
+    await saveSetting("disableCustomQueue", e.target.checked);
+    // Home is an offscreen cached panel (_PANEL_SECTIONS) — calling
+    // renderHome() directly here writes into the #track-list fallback
+    // (since _activePanelTarget isn't pointed at the Home panel from this
+    // handler), leaving the real cached Home panel untouched and stale, so
+    // _showCached("home", ...) later skips re-rendering it. Mark it dirty
+    // and re-render it in place instead, mirroring the pattern used after
+    // playback updates Home's "Recently Played" list.
+    _panelDirty["home"] = true;
+    if (state.activeNavSection === "home") {
+      _reRenderPanel("home", renderHome);
     }
   });
 
@@ -6142,11 +7832,23 @@ function renderSettings() {
     });
   });
 
+  const _updateRangePct = (input) => {
+    if (!input) return;
+    const min = parseFloat(input.min) || 0;
+    const max = parseFloat(input.max) || 100;
+    const val = parseFloat(input.value) || 0;
+    const pct = Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100));
+    input.style.setProperty("--range-pct", pct + "%");
+    input.style.setProperty("--range-frac", (pct / 100).toFixed(4));
+  };
+
   // v1.1.0 — Safe volume slider
   const safeVolSlider = $("setting-safe-volume");
   const safeVolLabel = $("setting-safe-volume-label");
   if (safeVolSlider) {
+    _updateRangePct(safeVolSlider);
     safeVolSlider.addEventListener("input", (e) => {
+      _updateRangePct(e.target);
       const pct = parseInt(e.target.value, 10) || 0;
       const vol = pct / 100;
       if (safeVolLabel) safeVolLabel.textContent = pct + "%";
@@ -6172,6 +7874,54 @@ function renderSettings() {
     });
   });
 
+  document.querySelectorAll(".theme-mode-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const theme = btn.dataset.theme;
+      document.querySelectorAll(".theme-mode-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.theme === theme);
+      });
+      state.settings.theme = theme;
+      _applyThemeMode(theme);
+      saveSetting("theme", theme);
+    });
+  });
+
+  const uiScaleSlider = $("setting-ui-scale");
+  const uiScaleLabel = $("setting-ui-scale-label");
+  if (uiScaleSlider) {
+    _updateRangePct(uiScaleSlider);
+    uiScaleSlider.addEventListener("input", (e) => {
+      _updateRangePct(e.target);
+      const pct = parseInt(e.target.value, 10);
+      const scale = (pct / 100).toFixed(2);
+      if (uiScaleLabel) uiScaleLabel.textContent = pct + "%";
+      state.settings.uiScale = scale;
+      _applyUiScale(scale);
+    });
+    uiScaleSlider.addEventListener("change", (e) => {
+      const pct = parseInt(e.target.value, 10);
+      const scale = (pct / 100).toFixed(2);
+      saveSetting("uiScale", scale);
+    });
+  }
+
+  // Volume boost setting slider (synced with AudioEngine & Equalizer)
+  const volBoostSlider = $("setting-volume-boost");
+  const volBoostLabel = $("setting-volume-boost-label");
+  if (volBoostSlider) {
+    _updateRangePct(volBoostSlider);
+    volBoostSlider.addEventListener("input", (e) => {
+      _updateRangePct(e.target);
+      const pct = Number(e.target.value);
+      state.volumeBoost = pct / 100;
+      if (volBoostLabel) volBoostLabel.textContent = `${pct}%`;
+      audioEngine.setBoost(state.volumeBoost);
+    });
+    volBoostSlider.addEventListener("change", () => {
+      saveSetting("volumeBoost", state.volumeBoost);
+    });
+  }
+
   document.querySelectorAll(".font-pick-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const font = btn.dataset.font;
@@ -6180,6 +7930,19 @@ function renderSettings() {
       });
       _applyFont(font);
       saveSetting("font", font);
+    });
+  });
+
+  // Scrubber head thumb style buttons
+  document.querySelectorAll(".thumbstyle-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const style = btn.dataset.style;
+      document.querySelectorAll(".thumbstyle-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.style === style);
+      });
+      state.settings.squigglyThumbStyle = style;
+      _applySquigglyThumbStyle(style);
+      saveSetting("squigglyThumbStyle", style);
     });
   });
 
@@ -6305,6 +8068,10 @@ function renderSettings() {
   const hexLabel = $("accent-hex");
 
   function setAccent(hex, updatePicker = true) {
+    if (state.dynamicAccentColor) {
+      state.dynamicAccentColor = false;
+      saveSetting("dynamicAccentColor", false);
+    }
     _applyAccentColor(hex);
     if (hexLabel) hexLabel.textContent = hex;
     if (updatePicker && customPicker) customPicker.value = hex;
@@ -6313,6 +8080,7 @@ function renderSettings() {
       sw.style.borderColor = match ? "#fff" : "transparent";
       sw.classList.toggle("active", match);
     });
+    dynamicBtn?.classList.remove("active");
     saveSetting("accentColor", hex);
   }
 
@@ -6321,12 +8089,10 @@ function renderSettings() {
   });
 
   customPicker?.addEventListener("input", (e) => {
-    if (state.dynamicAccentColor) return;
     setAccent(e.target.value, false);
     if (hexLabel) hexLabel.textContent = e.target.value;
   });
   customPicker?.addEventListener("change", (e) => {
-    if (state.dynamicAccentColor) return;
     setAccent(e.target.value);
   });
 
@@ -6451,12 +8217,14 @@ function renderEqualizer() {
   });
 
   document.querySelectorAll(".eq-band input").forEach((input) => {
+    _updateEqBandPct(input);
     input.addEventListener("input", (e) => {
       const idx = Number(e.target.dataset.band);
       const value = Number(e.target.value);
       state.equalizer[idx] = value;
       const gain = $(`eq-gain-${idx}`);
       if (gain) gain.textContent = `${value} dB`;
+      _updateEqBandPct(e.target);
       ensureEQEngine();
       if (eqEngine) eqEngine.setBandGain(idx, value);
     });
@@ -6475,7 +8243,10 @@ function renderEqualizer() {
   const boostValue = $("eq-boost-value");
   if (boostSlider) {
     const _updateBoostTrack = (pct) => {
-      boostSlider.style.setProperty("--pct", ((pct - 100) / 100) * 100);
+      const fillPct = Math.max(0, Math.min(100, pct - 100));
+      boostSlider.style.setProperty("--pct", fillPct);
+      boostSlider.style.setProperty("--range-pct", fillPct + "%");
+      boostSlider.style.setProperty("--range-frac", (fillPct / 100).toFixed(4));
     };
     _updateBoostTrack(Math.round(state.volumeBoost * 100));
     boostSlider.addEventListener("input", (e) => {
@@ -6504,6 +8275,16 @@ function renderEqualizer() {
 
   // Mark the pill that matches the current state on load
   _setActiveEQPill(_detectActivePreset());
+}
+
+function _updateEqBandPct(input) {
+  if (!input) return;
+  const min = parseFloat(input.min) || -12;
+  const max = parseFloat(input.max) || 12;
+  const val = parseFloat(input.value) || 0;
+  const pct = Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100));
+  input.style.setProperty("--range-pct", pct + "%");
+  input.style.setProperty("--range-frac", (pct / 100).toFixed(4));
 }
 
 function _setActiveEQPill(key) {
@@ -6552,6 +8333,7 @@ function applyEQPreset(values) {
     input.value = state.equalizer[idx];
     const gain = $(`eq-gain-${idx}`);
     if (gain) gain.textContent = `${state.equalizer[idx]} dB`;
+    _updateEqBandPct(input);
   });
   saveSetting("equalizer", state.equalizer);
 }
@@ -7165,7 +8947,7 @@ function showAppDialog({
         <div class="app-dialog-title">${escapeHtml(title || "NovaTune")}</div>
         ${message ? `<div class="app-dialog-message">${escapeHtml(message)}</div>` : ""}
         ${detailsHtml}
-        ${input ? '<input class="app-dialog-input" type="text" maxlength="100" autocomplete="off">' : ""}
+        ${input ? '<input class="app-dialog-input" type="text" maxlength="100" autocomplete="off" spellcheck="false">' : ""}
         <div class="app-dialog-actions">
           ${cancelText != null ? `<button type="button" class="app-dialog-btn secondary" data-action="cancel">${escapeHtml(cancelText)}</button>` : ""}
           <button type="button" class="app-dialog-btn primary${danger ? " danger" : ""}" data-action="confirm">${escapeHtml(confirmText)}</button>
@@ -7297,7 +9079,6 @@ function openActionsMenu(anchor, track) {
 
       document.body.appendChild(sub);
 
-      
       // Position sub-menu to the right of the actions menu
       const menuRect = menu.getBoundingClientRect();
       sub.style.visibility = "hidden";
@@ -7590,9 +9371,17 @@ function _wirePlaylistMenu() {
     e.stopPropagation();
     openPlaylistMenu(e.currentTarget, state.currentTrack);
   });
+  $("np-tag-btn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (state.currentTrack) _openTagEditor(state.currentTrack);
+  });
   $("ov-add-btn")?.addEventListener("click", (e) => {
     e.stopPropagation();
     openPlaylistMenu(e.currentTarget, state.currentTrack);
+  });
+  $("ov-tag-btn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (state.currentTrack) _openTagEditor(state.currentTrack);
   });
   // Overlay "More options" 3-dot button
   $("ov-more-btn")?.addEventListener("click", (e) => {
@@ -7857,8 +9646,13 @@ function extractArtistsFromTrack(track) {
   const splitAndAdd = (text) => {
     if (!text || text === "Unknown Artist") return;
     const parts = text
-      .split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*|&\s*|\band\b/i)
-      .map((a) => a.trim())
+      .split(/,\s*|;\s*|feat\.?\s*|ft\.?\s*|featuring\s*|&\s*|\band\b/i)
+      .map((a) =>
+        a
+          .trim()
+          .replace(/^[()[\]{}.,;:"\-_]+|[()[\]{}.,;:"\-_]+$/g, "")
+          .trim(),
+      )
       .filter(Boolean);
     for (const p of parts) {
       if (p.toLowerCase() !== "unknown artist" && _looksLikeArtist(p)) {
@@ -7877,7 +9671,8 @@ function extractArtistsFromTrack(track) {
 
   // 3. Track title — only extract featured artists in parentheses/brackets
   if (track.title) {
-    const titleFeatRegex = /[\(\[](?:feat\.?|ft\.?|with|featuring)\s+([^\]\)]+)[\)\]]/gi;
+    const titleFeatRegex =
+      /[\(\[](?:feat\.?|ft\.?|with|featuring)\s+([^\]\)]+)[\)\]]/gi;
     let match;
     while ((match = titleFeatRegex.exec(track.title)) !== null) {
       splitAndAdd(match[1]);
@@ -7891,7 +9686,8 @@ function extractArtistsFromTrack(track) {
 
   // 4. Album name — only extract featured artists in parentheses/brackets
   if (track.album) {
-    const albumFeatRegex = /[\(\[](?:feat\.?|ft\.?|with|featuring)\s+([^\]\)]+)[\)\]]/gi;
+    const albumFeatRegex =
+      /[\(\[](?:feat\.?|ft\.?|with|featuring)\s+([^\]\)]+)[\)\]]/gi;
     let match;
     while ((match = albumFeatRegex.exec(track.album)) !== null) {
       splitAndAdd(match[1]);
@@ -8556,6 +10352,7 @@ function _attachEagerThumb(img, artPath, size, trackId) {
     _fallbackFired = false; // allow reveal
     img.style.opacity = "1";
     _fadePlaceholder(img);
+
     // Hide any art-placeholder that _showFinalFallback may have injected
     const container = img.closest(".cover-img-container");
     if (container) {
@@ -8864,13 +10661,48 @@ function renderHelp() {
         <div class="help-contact-text">
           <strong>Need direct help?</strong> Chat with me on WhatsApp
         </div>
-        <a href="https://wa.me/254741091123" target="_blank" class="help-contact-btn" id="help-whatsapp-btn" style="color:black;">
+        <a href="https://wa.me/254741091123" target="_blank" class="help-contact-btn" id="help-whatsapp-btn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.832-1.438A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2z"/></svg>
           Chat Now
         </a>
       </div>
 
       <div class="help-sections">
+        <div class="section-panel" id="help-updates-section">
+          <div class="section-panel-title">What's New in v1.1.6</div>
+
+          <div class="help-item">
+            <div class="help-item-title">⌨️ Expanded Keyboard Shortcuts</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>New Power Shortcuts:</strong> Control your player instantly from anywhere: <strong>Ctrl+P</strong> to add the current track to a playlist, <strong>T</strong> to open the Tag Editor, <strong>Ctrl+L</strong> for Light Mode, <strong>Ctrl+D</strong> for Dark Mode, <strong>L</strong> to Like/Favorite, <strong>S</strong> to toggle Shuffle, <strong>1</strong> or <strong>R</strong> for Repeat One, <strong>0</strong> or <strong>O</strong> for Repeat All, and <strong>&uarr;</strong>/<strong>&darr;</strong> for Volume Up/Down (&plusmn;5%).</li>
+                <li><strong>Input-Field Protection:</strong> All single-key shortcuts are automatically guarded so they never interfere while typing in search boxes, the lyrics editor, or tag fields.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="help-item">
+            <div class="help-item-title">⏱️ Remaining Time Countdown</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>Duration Toggle:</strong> Click or tap the right-hand duration display in the bottom now-playing bar or fullscreen overlay to toggle between total track duration (e.g. <code>3:45</code>) and remaining time countdown (e.g. <code>-1:02</code>).</li>
+                <li><strong>Auto-Persisted:</strong> Your preferred time display mode is saved and remembered across all tracks and app restarts.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="help-item">
+            <div class="help-item-title">🎨 Light Mode for Edit Lyrics &amp; High-Contrast Buttons</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>Light Mode Edit Lyrics:</strong> The Edit Lyrics dialog now perfectly adheres to Light Mode with clean card backgrounds, high-contrast search results, badges, and smooth inputs.</li>
+                <li><strong>Crisp Button Typography:</strong> All Help and Updates action buttons now feature high-contrast dark text on green in Dark Mode.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+
         <div class="section-panel">
           <div class="section-panel-title">Getting Started</div>
           <div class="help-item">
@@ -8887,6 +10719,7 @@ function renderHelp() {
           </div>
         </div>
 
+        
         <div class="section-panel">
           <div class="section-panel-title">Playback Controls</div>
           <div class="help-item">
@@ -8895,7 +10728,7 @@ function renderHelp() {
           </div>
           <div class="help-item">
             <div class="help-item-title">Seek and Volume</div>
-            <div class="help-item-body">Click anywhere on the squiggly progress bar to seek to that position. Hover over the volume icon to reveal the volume slider, or set it to always visible in Settings. Use keyboard shortcuts: <strong>Space</strong> to play/pause, <strong>N</strong> for next track, <strong>P</strong> for previous track, and <strong>Arrow keys</strong> to scroll the library.</div>
+            <div class="help-item-body">Click anywhere on the squiggly progress bar to seek to that position. Hover over the volume icon to reveal the volume slider, or set it to always visible in Settings. Use keyboard shortcuts: <strong>Space</strong> to play/pause, <strong>N</strong>/<strong>P</strong> for next/previous, <strong>&uarr;</strong>/<strong>&darr;</strong> for volume up/down, and <strong>&larr;</strong>/<strong>&rarr;</strong> to seek.</div>
           </div>
           <div class="help-item">
             <div class="help-item-title">Crossfade and Gapless Playback</div>
@@ -8945,10 +10778,12 @@ function renderHelp() {
             <div class="help-item-title">Accent Color and Themes</div>
             <div class="help-item-body">Personalize NovaTune with preset accent colors or choose any custom color. Enable <strong>Dynamic Accent</strong> to have the accent color automatically change based on the album art of the currently playing track. The entire UI adapts instantly, including the squiggly progress bar, buttons, and highlights.</div>
           </div>
+
           <div class="help-item">
             <div class="help-item-title">Side Menu Mode</div>
             <div class="help-item-body">On compact screens, choose between <strong>"On Hover"</strong> (swipe from the left edge to reveal the navigation) or <strong>"Always Visible"</strong> (the icon strip stays on screen at all times). This setting only affects the view when the full sidebar is hidden due to screen width.</div>
           </div>
+
           <div class="help-item">
             <div class="help-item-title">Volume Bar Mode</div>
             <div class="help-item-body">Choose whether the volume slider appears only when you hover over the volume icon, or stays always visible for quick adjustments.</div>
@@ -8965,18 +10800,47 @@ function renderHelp() {
             <div class="help-shortcut"><kbd>Space</kbd><span>Play / Pause</span></div>
             <div class="help-shortcut"><kbd>N</kbd><span>Next Track</span></div>
             <div class="help-shortcut"><kbd>P</kbd><span>Previous Track</span></div>
-            <div class="help-shortcut"><kbd>&uarr;</kbd><kbd>&darr;</kbd><span>Scroll Library</span></div>
-            <div class="help-shortcut"><kbd>Ctrl+F</kbd><span>Focus Search</span></div>
-            <div class="help-shortcut"><kbd>Esc</kbd><span>Close Overlay / Dialog</span></div>
+            <div class="help-shortcut"><kbd>&uarr;</kbd> / <kbd>&darr;</kbd><span>Volume Up / Down</span></div>
+            <div class="help-shortcut"><kbd>&larr;</kbd> / <kbd>&rarr;</kbd><span>Seek &plusmn;5s (Shift: Track)</span></div>
             <div class="help-shortcut"><kbd>M</kbd><span>Mute / Unmute</span></div>
+            <div class="help-shortcut"><kbd>S</kbd><span>Toggle Shuffle</span></div>
+            <div class="help-shortcut"><kbd>1</kbd> / <kbd>R</kbd><span>Repeat One</span></div>
+            <div class="help-shortcut"><kbd>0</kbd> / <kbd>O</kbd><span>Repeat All</span></div>
+            <div class="help-shortcut"><kbd>L</kbd><span>Like / Favorite Track</span></div>
+            <div class="help-shortcut"><kbd>T</kbd><span>Open Tag Editor</span></div>
+            <div class="help-shortcut"><kbd>Ctrl+P</kbd><span>Add to Playlist</span></div>
+            <div class="help-shortcut"><kbd>Ctrl+L</kbd><span>Switch to Light Mode</span></div>
+            <div class="help-shortcut"><kbd>Ctrl+D</kbd><span>Switch to Dark Mode</span></div>
+            <div class="help-shortcut"><kbd>Ctrl+F</kbd> / <kbd>/</kbd><span>Focus Search</span></div>
+            <div class="help-shortcut"><kbd>Esc</kbd><span>Close Overlay / Dialog</span></div>
+            <div class="help-shortcut"><kbd>F11</kbd><span>Close Overlay</span></div>
           </div>
         </div>
 
         <div class="section-panel">
           <div class="section-panel-title">Supported Formats</div>
-          <div class="help-item">
+          <div class="help-item" style="gap:6px;">
             <div class="help-item-body">NovaTune supports the following audio formats: <strong>MP3</strong> (.mp3), <strong>FLAC</strong> (.flac), <strong>WAV</strong> (.wav), <strong>OGG Vorbis</strong> (.ogg), <strong>M4A/AAC</strong> (.m4a, .aac), and <strong>WMA</strong> (.wma). Cover art is automatically extracted from file tags and displayed. If no embedded art is found, NovaTune searches for cover images (cover.jpg, folder.jpg, etc.) in the same directory.</div>
+
+            
+        </div>
+
+        <div class="section-panel">
+          <div class="section-panel-title">Music Download</div>
+
+          
+            <div class="help-item-body" style="padding-top:6px!important;">
+            Click the button below to download HQ Music from Spotify, Apple Music, Deezer, YT Music etc.</div>
+
+            <a href="https://t.me/MusicsHuntersbot" target="_blank" class="help-contact-btn" style="text-decoration:none; margin-top:10px!important;">
+              
+              Download HQ Music
+            </a>
           </div>
+
+          
+
+        
         </div>
 
         <div class="section-panel">
@@ -8986,11 +10850,11 @@ function renderHelp() {
             <div class="help-item-body">If you have questions, feedback, feature requests, or run into any issues, the fastest way to reach us is via WhatsApp. Tap the button below to start a conversation directly. We typically respond within a few hours during business hours (East Africa Time). For bug reports, please include your NovaTune version and steps to reproduce the issue.</div>
           </div>
           <div style="display:flex;gap:10px;margin-top:12px;">
-            <a href="https://wa.me/254741091123" target="_blank" class="help-contact-btn" style="text-decoration:none; color:black; ">
+            <a href="https://wa.me/254741091123" target="_blank" class="help-contact-btn" style="text-decoration:none;">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.832-1.438A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2z"/></svg>
               WhatsApp Support
             </a>
-            <button class="help-contact-btn" id="help-check-update-btn" style="background:#2a2a2a;border:1px solid #383838;cursor:default;">
+            <button class="help-contact-btn" id="help-check-update-btn" style="cursor:default;">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
               Check for Updates
             </button>
@@ -8999,7 +10863,7 @@ function renderHelp() {
       </div>
 
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
-        NovaTune v1.1.1 &bull; Made with love for music lovers
+        NovaTune v1.1.6 &bull; Made by SIR ALEX for music lovers
       </div>
     </div>
   `);
@@ -9175,13 +11039,17 @@ function renderAlbumDetail(albumKey) {
   surface
     .querySelector(".playlist-back-btn")
     .addEventListener("click", () => _reRenderPanel("albums", renderAlbums));
-  const albumSource = { type: 'album', name: album.album };
+  const albumSource = { type: "album", name: album.album };
   surface
     .querySelector('[data-action="sequential"]')
-    .addEventListener("click", () => playPlaylistTracks(album.tracks, false, albumSource));
+    .addEventListener("click", () =>
+      playPlaylistTracks(album.tracks, false, albumSource),
+    );
   surface
     .querySelector('[data-action="shuffle"]')
-    .addEventListener("click", () => playPlaylistTracks(album.tracks, true, albumSource));
+    .addEventListener("click", () =>
+      playPlaylistTracks(album.tracks, true, albumSource),
+    );
   const list = surface.querySelector(".playlist-detail-list");
   $("content-subtitle").textContent =
     `${album.tracks.length} song${album.tracks.length === 1 ? "" : "s"}`;
@@ -9189,7 +11057,9 @@ function renderAlbumDetail(albumKey) {
   const frag = document.createDocumentFragment();
   album.tracks
     .slice(0, CHUNK)
-    .forEach((track) => frag.appendChild(_createTrackRow(track, album.tracks, albumSource)));
+    .forEach((track) =>
+      frag.appendChild(_createTrackRow(track, album.tracks, albumSource)),
+    );
   list.appendChild(frag);
   if (album.tracks.length > CHUNK) {
     let idx = CHUNK;
@@ -9202,7 +11072,9 @@ function renderAlbumDetail(albumKey) {
       ) {
         const end = Math.min(idx + CHUNK, album.tracks.length);
         for (; idx < end; idx++)
-          cf.appendChild(_createTrackRow(album.tracks[idx], album.tracks, albumSource));
+          cf.appendChild(
+            _createTrackRow(album.tracks[idx], album.tracks, albumSource),
+          );
       }
       list.appendChild(cf);
       if (idx < album.tracks.length)
@@ -9417,7 +11289,7 @@ function _openArtistImageEditor(artistName) {
         </div>
         <div class="aie-panel" id="aie-panel-url">
           <div class="aie-url-row">
-            <input type="text" class="aie-url-input" id="aie-url-input" placeholder="https://example.com/artist.jpg">
+            <input type="text" class="aie-url-input" id="aie-url-input" placeholder="https://example.com/artist.jpg" spellcheck="false">
             <button class="aie-url-preview-btn" id="aie-url-preview-btn">Preview</button>
           </div>
           <div class="aie-preview-row" id="aie-url-preview-row" style="display:none;">
@@ -9870,13 +11742,17 @@ function renderArtistDetail(artistKey) {
   surface
     .querySelector(".playlist-back-btn")
     .addEventListener("click", () => _reRenderPanel("artists", renderArtists));
-  const artistSource = { type: 'artist', name: artist.artist };
+  const artistSource = { type: "artist", name: artist.artist };
   surface
     .querySelector('[data-action="sequential"]')
-    .addEventListener("click", () => playPlaylistTracks(artist.tracks, false, artistSource));
+    .addEventListener("click", () =>
+      playPlaylistTracks(artist.tracks, false, artistSource),
+    );
   surface
     .querySelector('[data-action="shuffle"]')
-    .addEventListener("click", () => playPlaylistTracks(artist.tracks, true, artistSource));
+    .addEventListener("click", () =>
+      playPlaylistTracks(artist.tracks, true, artistSource),
+    );
   const list = surface.querySelector(".playlist-detail-list");
   $("content-subtitle").textContent =
     `${artist.tracks.length} song${artist.tracks.length === 1 ? "" : "s"}`;
@@ -9899,7 +11775,9 @@ function renderArtistDetail(artistKey) {
       ) {
         const end = Math.min(idx + CHUNK, artist.tracks.length);
         for (; idx < end; idx++)
-          cf.appendChild(_createTrackRow(artist.tracks[idx], artist.tracks, artistSource));
+          cf.appendChild(
+            _createTrackRow(artist.tracks[idx], artist.tracks, artistSource),
+          );
       }
       list.appendChild(cf);
       if (idx < artist.tracks.length)
@@ -10432,10 +12310,20 @@ function renderPlaylistDetail(playlistId) {
     );
   container
     .querySelector('[data-action="sequential"]')
-    .addEventListener("click", () => playPlaylistTracks(tracks, false, { type: 'playlist', name: playlist.name }));
+    .addEventListener("click", () =>
+      playPlaylistTracks(tracks, false, {
+        type: "playlist",
+        name: playlist.name,
+      }),
+    );
   container
     .querySelector('[data-action="shuffle"]')
-    .addEventListener("click", () => playPlaylistTracks(tracks, true, { type: 'playlist', name: playlist.name }));
+    .addEventListener("click", () =>
+      playPlaylistTracks(tracks, true, {
+        type: "playlist",
+        name: playlist.name,
+      }),
+    );
   container
     .querySelector('[data-action="export"]')
     ?.addEventListener("click", () => exportPlaylistById(playlistId));
@@ -10509,7 +12397,7 @@ function renderPlaylistDetail(playlistId) {
     row.addEventListener("click", () => {
       prefetchLyrics(track); // start lyrics race before audio init
       state.shuffleEnabled = false;
-      state.queueSource = { type: 'playlist', name: playlist.name };
+      state.queueSource = { type: "playlist", name: playlist.name };
       // BUGFIX: Previously the queue was built as `[track, ...remaining]`
       // where `remaining = tracks.filter(t => t.id !== track.id)`. This put
       // the clicked song first but then resumed from song #1 of the
@@ -10993,6 +12881,7 @@ function _populateSlot(row, track, idx) {
     }
   } else {
     artHtml = `<div class="art-placeholder art-${artIdx}">${isActive ? "" : "🎵"}</div>`;
+    _ensureThumbInAtlas(track);
   }
 
   const eqHtml = isActive
@@ -11554,35 +13443,152 @@ function togglePlayPause(forceState) {
   }
 }
 
+function _fastShuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    const temp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = temp;
+  }
+  return arr;
+}
+
+function _getSortedLibraryTracks() {
+  if (state.filteredTracks && state.filteredTracks.length > 0) {
+    return state.filteredTracks;
+  }
+  if (!state.tracks || state.tracks.length === 0) return [];
+  const tracks = state.tracks.slice();
+  const key = state.sortKey || "dateAdded";
+  const asc = state.sortAsc !== undefined ? state.sortAsc : false;
+  tracks.sort((a, b) => {
+    let va = a[key];
+    let vb = b[key];
+    if (va === undefined || va === null) va = "";
+    if (vb === undefined || vb === null) vb = "";
+    if (typeof va === "string") va = va.toLowerCase();
+    if (typeof vb === "string") vb = vb.toLowerCase();
+    if (va < vb) return asc ? -1 : 1;
+    if (va > vb) return asc ? 1 : -1;
+    return 0;
+  });
+  return tracks;
+}
+
 async function playNext() {
-  if (state.queue.length === 0) return;
-  // ALWAYS follow the queue order — the queue is the authoritative source.
-  // When shuffle is on, the queue was already shuffled when the user enabled it.
-  // When the user manually shuffles, the queue is reshuffled.
-  state.queueIndex++;
-  if (state.queueIndex >= state.queue.length) {
-    if (state.repeatMode === "all") {
+  // If queue is empty, populate from library and play
+  if (!state.queue || state.queue.length === 0) {
+    const libTracks = _getSortedLibraryTracks();
+    if (libTracks.length > 0) {
+      state.queue = state.shuffleEnabled
+        ? _fastShuffle(libTracks.slice())
+        : libTracks.slice();
       state.queueIndex = 0;
+      await playTrack(state.queue[0]);
+    }
+    return;
+  }
+
+  state.queueIndex++;
+
+  // When loop ends or queue was 1 song:
+  if (state.queueIndex >= state.queue.length) {
+    const libTracks = _getSortedLibraryTracks();
+
+    if (state.shuffleEnabled) {
+      // Shuffle is ON: Recreate a fresh randomized queue from the library in O(N) time
+      if (libTracks.length > 0) {
+        const curId = state.currentTrack ? state.currentTrack.id : null;
+        const pool = [];
+        for (let i = 0; i < libTracks.length; i++) {
+          if (libTracks[i].id !== curId) pool.push(libTracks[i]);
+        }
+        state.queue = pool.length > 0 ? _fastShuffle(pool) : _fastShuffle(libTracks.slice());
+        state.queueIndex = 0;
+        state.queueSource = null;
+      } else {
+        state.queueIndex = 0;
+      }
+    } else if (state.repeatMode === "all") {
+      // Repeat All is ON:
+      if (state.queue.length > 1) {
+        // Multi-song queue: loop back to beginning
+        state.queueIndex = 0;
+      } else {
+        // Single-song queue: look up next song in library using active user sort logic
+        if (libTracks.length > 1 && state.currentTrack) {
+          const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
+          const nextIdx = curIdx >= 0 ? (curIdx + 1) % libTracks.length : 0;
+          const after = libTracks.slice(nextIdx);
+          const before = libTracks.slice(0, nextIdx);
+          state.queue = [...after, ...before];
+          state.queueIndex = 0;
+          state.queueSource = null;
+        } else {
+          state.queueIndex = 0;
+        }
+      }
     } else {
-      state.queueIndex = state.queue.length - 1;
-      audioEngine.pause();
-      return;
+      // Repeat is OFF & Shuffle is OFF:
+      if (state.queue.length === 1 && state.currentTrack && libTracks.length > 1) {
+        // Queue was 1 song: continue with user's library sort order
+        const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
+        if (curIdx >= 0 && curIdx + 1 < libTracks.length) {
+          const after = libTracks.slice(curIdx + 1);
+          const before = libTracks.slice(0, curIdx + 1);
+          state.queue = [...after, ...before];
+          state.queueIndex = 0;
+          state.queueSource = null;
+        } else {
+          state.queueIndex = state.queue.length - 1;
+          audioEngine.pause();
+          return;
+        }
+      } else {
+        state.queueIndex = state.queue.length - 1;
+        audioEngine.pause();
+        return;
+      }
     }
   }
-  await playTrack(state.queue[state.queueIndex]);
+
+  if (state.queue && state.queue[state.queueIndex]) {
+    await playTrack(state.queue[state.queueIndex]);
+  }
 }
 
 async function playPrevious() {
-  if (state.queue.length === 0) return;
+  if (!state.queue || state.queue.length === 0) return;
   if (audioEngine.getCurrentTime() > 3) {
     audioEngine.seek(0);
     return;
   }
   state.queueIndex--;
   if (state.queueIndex < 0) {
-    state.queueIndex = state.repeatMode === "all" ? state.queue.length - 1 : 0;
+    if (state.repeatMode === "all") {
+      if (state.queue.length > 1) {
+        state.queueIndex = state.queue.length - 1;
+      } else {
+        const libTracks = _getSortedLibraryTracks();
+        if (libTracks.length > 1 && state.currentTrack) {
+          const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
+          const prevIdx = curIdx > 0 ? curIdx - 1 : libTracks.length - 1;
+          const after = libTracks.slice(prevIdx);
+          const before = libTracks.slice(0, prevIdx);
+          state.queue = [...after, ...before];
+          state.queueIndex = 0;
+          state.queueSource = null;
+        } else {
+          state.queueIndex = 0;
+        }
+      }
+    } else {
+      state.queueIndex = 0;
+    }
   }
-  await playTrack(state.queue[state.queueIndex]);
+  if (state.queue && state.queue[state.queueIndex]) {
+    await playTrack(state.queue[state.queueIndex]);
+  }
 }
 
 function _handleTrackEnd() {
@@ -11634,6 +13640,53 @@ function _updateRepeatButton() {
     const ovSvg = ovBtn.querySelector("svg");
     if (ovSvg) ovSvg.innerHTML = svgContent;
   }
+}
+
+function _toggleShuffle() {
+  state.shuffleEnabled = !state.shuffleEnabled;
+  $("shuffle-btn")?.classList.toggle("active", state.shuffleEnabled);
+  $("ov-shuffle-btn")?.classList.toggle("active", state.shuffleEnabled);
+  if (state.shuffleEnabled && state.queue.length > 1) {
+    const currentTrack = state.queue[state.queueIndex];
+    const beforeCurrent = state.queue.slice(0, state.queueIndex);
+    const afterCurrent = state.queue.slice(state.queueIndex + 1);
+    const rest = [...beforeCurrent, ...afterCurrent].sort(
+      () => Math.random() - 0.5,
+    );
+    state.queue = [currentTrack, ...rest];
+    state.queueIndex = 0;
+  }
+  saveSetting("shuffle", state.shuffleEnabled);
+}
+
+function _cycleRepeatMode() {
+  const modes = ["off", "all", "one"];
+  const idx = (modes.indexOf(state.repeatMode) + 1) % modes.length;
+  _applyRepeatMode(modes[idx]);
+}
+
+function _setRepeatMode(mode) {
+  _applyRepeatMode(state.repeatMode === mode ? "off" : mode);
+}
+
+function _applyRepeatMode(mode) {
+  state.repeatMode = mode;
+  if (state.repeatMode === "all" && state.currentTrack) {
+    const sorted = state.filteredTracks.length
+      ? state.filteredTracks
+      : state.tracks;
+    const currentIdx = sorted.findIndex(
+      (t) => t.id === state.currentTrack.id,
+    );
+    if (currentIdx >= 0) {
+      const after = sorted.slice(currentIdx);
+      const before = sorted.slice(0, currentIdx);
+      state.queue = [...after, ...before];
+      state.queueIndex = 0;
+    }
+  }
+  _updateRepeatButton();
+  saveSetting("repeatMode", state.repeatMode);
 }
 
 function _updatePlayPauseIcon(playing) {
@@ -11698,48 +13751,11 @@ function _wireNowPlaying() {
   $("prev-btn").addEventListener("click", () => playPrevious());
   $("next-btn").addEventListener("click", () => playNext());
 
-  // Shuffle toggle — when enabling shuffle, reshuffle the upcoming queue.
-  // The currently playing song stays at position 0; the rest are randomized.
-  $("shuffle-btn").addEventListener("click", () => {
-    state.shuffleEnabled = !state.shuffleEnabled;
-    $("shuffle-btn").classList.toggle("active", state.shuffleEnabled);
-    if (state.shuffleEnabled && state.queue.length > 1) {
-      // Keep the current track at position 0, shuffle the rest
-      const currentTrack = state.queue[state.queueIndex];
-      const beforeCurrent = state.queue.slice(0, state.queueIndex);
-      const afterCurrent = state.queue.slice(state.queueIndex + 1);
-      const rest = [...beforeCurrent, ...afterCurrent].sort(
-        () => Math.random() - 0.5,
-      );
-      state.queue = [currentTrack, ...rest];
-      state.queueIndex = 0;
-    }
-  });
+  // Shuffle toggle
+  $("shuffle-btn").addEventListener("click", () => _toggleShuffle());
 
-  // Repeat toggle: off → all (sequential) → one → off
-  $("repeat-btn").addEventListener("click", () => {
-    const modes = ["off", "all", "one"];
-    const idx = (modes.indexOf(state.repeatMode) + 1) % modes.length;
-    state.repeatMode = modes[idx];
-    // When enabling "all": rebuild queue sequentially from current track
-    // following the current library sort order
-    if (state.repeatMode === "all" && state.currentTrack) {
-      const sorted = state.filteredTracks.length
-        ? state.filteredTracks
-        : state.tracks;
-      const currentIdx = sorted.findIndex(
-        (t) => t.id === state.currentTrack.id,
-      );
-      if (currentIdx >= 0) {
-        const after = sorted.slice(currentIdx);
-        const before = sorted.slice(0, currentIdx);
-        state.queue = [...after, ...before];
-        state.queueIndex = 0;
-      }
-    }
-    _updateRepeatButton();
-    saveSetting("repeatMode", state.repeatMode);
-  });
+  // Repeat toggle: off → all → one → off
+  $("repeat-btn").addEventListener("click", () => _cycleRepeatMode());
 
   // Heart/Like
   $("heart-btn").addEventListener("click", toggleFavorite);
@@ -11747,6 +13763,9 @@ function _wireNowPlaying() {
   // Progress bar seeking
   const npCanvas = $("squiggly-canvas");
   wireSeekCanvas(npCanvas, squigglyNP);
+
+  // Duration toggle: total time ↔ remaining time
+  $("np-time-total")?.addEventListener("click", toggleRemainingTime);
 
   // np-left click → open overlay
   $("np-left").addEventListener("click", openOverlay);
@@ -11933,43 +13952,11 @@ function _wireOverlay() {
   $("ov-prev-btn").addEventListener("click", () => playPrevious());
   $("ov-next-btn").addEventListener("click", () => playNext());
 
-  $("ov-shuffle-btn").addEventListener("click", () => {
-    state.shuffleEnabled = !state.shuffleEnabled;
-    $("shuffle-btn").classList.toggle("active", state.shuffleEnabled);
-    $("ov-shuffle-btn").classList.toggle("active", state.shuffleEnabled);
-    if (state.shuffleEnabled && state.queue.length > 1) {
-      const currentTrack = state.queue[state.queueIndex];
-      const beforeCurrent = state.queue.slice(0, state.queueIndex);
-      const afterCurrent = state.queue.slice(state.queueIndex + 1);
-      const rest = [...beforeCurrent, ...afterCurrent].sort(
-        () => Math.random() - 0.5,
-      );
-      state.queue = [currentTrack, ...rest];
-      state.queueIndex = 0;
-    }
-  });
+  // Shuffle toggle
+  $("ov-shuffle-btn").addEventListener("click", () => _toggleShuffle());
 
-  $("ov-repeat-btn").addEventListener("click", () => {
-    const modes = ["off", "all", "one"];
-    const idx = (modes.indexOf(state.repeatMode) + 1) % modes.length;
-    state.repeatMode = modes[idx];
-    if (state.repeatMode === "all" && state.currentTrack) {
-      const sorted = state.filteredTracks.length
-        ? state.filteredTracks
-        : state.tracks;
-      const currentIdx = sorted.findIndex(
-        (t) => t.id === state.currentTrack.id,
-      );
-      if (currentIdx >= 0) {
-        const after = sorted.slice(currentIdx);
-        const before = sorted.slice(0, currentIdx);
-        state.queue = [...after, ...before];
-        state.queueIndex = 0;
-      }
-    }
-    _updateRepeatButton();
-    saveSetting("repeatMode", state.repeatMode);
-  });
+  // Repeat toggle: off → all → one → off
+  $("ov-repeat-btn").addEventListener("click", () => _cycleRepeatMode());
 
   $("ov-heart-btn").addEventListener("click", toggleFavorite);
 
@@ -11982,6 +13969,9 @@ function _wireOverlay() {
 
   // Overlay pencil → open lyrics editor
   $("ov-lyrics-edit-btn")?.addEventListener("click", () => openLyricsEditor());
+
+  // Duration toggle: total time ↔ remaining time
+  $("ov-time-total")?.addEventListener("click", toggleRemainingTime);
 }
 
 function openOverlay() {
@@ -12006,8 +13996,59 @@ function closeOverlay() {
 // and shows non-intrusive toast notifications or dialogs.
 let _updateDownloaded = false;
 
+// ── Silent background update check ────────────────────────────────
+// Runs once, 45 seconds after startup. Non-intrusive: only shows a
+// toast if a newer version exists AND either this version was never
+// shown before OR it's been more than 24 h since the last check.
+// The user is never nagged about a version they've already seen today.
+async function _silentUpdateCheck() {
+  if (!window.novaAPI) return;
+  try {
+    const IDB_KEY_LAST_CHECKED = "update::last-checked";
+    const IDB_KEY_LAST_NOTIFIED = "update::last-notified-version";
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+    // Don't re-check within the same 24-hour window
+    const lastChecked = await _idbGet(IDB_KEY_LAST_CHECKED);
+    if (lastChecked && Date.now() - lastChecked < ONE_DAY_MS) return;
+
+    const result = await window.novaAPI.invoke("app:check-update");
+    _idbSet(IDB_KEY_LAST_CHECKED, Date.now());
+
+    if (!result || !result.success || !result.hasUpdate) return;
+
+    // Don't re-show a toast for a version the user already saw
+    const lastNotified = await _idbGet(IDB_KEY_LAST_NOTIFIED);
+    if (lastNotified === result.latestVersion) return;
+
+    // Save that we've notified about this version
+    _idbSet(IDB_KEY_LAST_NOTIFIED, result.latestVersion);
+
+    _showUpdateToast(
+      `NovaTune ${result.latestVersion} is available`,
+      `You're on ${result.currentVersion} — click to update`,
+      () => {
+        const navItems = document.querySelectorAll(".nav-item");
+        if (navItems) navItems.forEach((n) => n.classList.remove("active"));
+        state.activeNavSection = "help";
+        if (typeof _navigateTo === "function") _navigateTo("help");
+        setTimeout(() => {
+          const area = document.getElementById("track-area");
+          if (area) area.scrollTop = area.scrollHeight;
+        }, 150);
+      },
+    );
+  } catch (_) {
+    // Fail silently — background check should never surface errors
+  }
+}
+
 function _wireAutoUpdater() {
   if (!window.novaAPI) return;
+
+  // Fire the silent check 45 s after startup — late enough that the app
+  // is fully loaded and the user has settled in, early enough to be useful.
+  setTimeout(_silentUpdateCheck, 45_000);
 
   // When autoUpdater finds an update on launch, downloading starts automatically
   window.novaAPI.on("update:available", async (info) => {
@@ -12294,16 +14335,47 @@ function updateVolumeUi() {
   }
 }
 
+let _lastProgressCur = 0;
+let _lastProgressDur = 0;
+
 function updateProgressText(cur, dur) {
+  if (typeof cur === "number" && isFinite(cur)) _lastProgressCur = cur;
+  if (typeof dur === "number" && isFinite(dur)) _lastProgressDur = dur;
+
+  const validCur = isFinite(_lastProgressCur) ? Math.max(0, _lastProgressCur) : 0;
+  const validDur =
+    isFinite(_lastProgressDur) && _lastProgressDur > 0 ? _lastProgressDur : 0;
+
+  const curFormatted = formatTime(validCur);
+  const totalFormatted = state.showRemainingTime
+    ? `-${formatTime(Math.max(0, validDur - validCur))}`
+    : formatTime(validDur);
+
   const npCur = $("np-time-current");
   const npTotal = $("np-time-total");
-  if (npCur) npCur.textContent = formatTime(cur);
-  if (npTotal) npTotal.textContent = formatTime(dur);
+  if (npCur) npCur.textContent = curFormatted;
+  if (npTotal) {
+    npTotal.textContent = totalFormatted;
+    npTotal.title = state.showRemainingTime
+      ? "Remaining time (click to show total)"
+      : "Total duration (click to show remaining)";
+  }
 
   const ovCur = $("ov-time-current");
   const ovTotal = $("ov-time-total");
-  if (ovCur) ovCur.textContent = formatTime(cur);
-  if (ovTotal) ovTotal.textContent = formatTime(dur);
+  if (ovCur) ovCur.textContent = curFormatted;
+  if (ovTotal) {
+    ovTotal.textContent = totalFormatted;
+    ovTotal.title = state.showRemainingTime
+      ? "Remaining time (click to show total)"
+      : "Total duration (click to show remaining)";
+  }
+}
+
+function toggleRemainingTime() {
+  state.showRemainingTime = !state.showRemainingTime;
+  saveSetting("showRemainingTime", state.showRemainingTime);
+  updateProgressText(_lastProgressCur, _lastProgressDur);
 }
 
 function startSmoothProgress(cur, dur) {
@@ -12403,12 +14475,16 @@ function _setupAudioEvents() {
     startSmoothProgress(cur, dur);
   });
 
-  audioEngine.on("ended", () => _handleTrackEnd());
+  audioEngine.on("ended", () => {
+    _smtcStatus("paused");
+    _handleTrackEnd();
+  });
   audioEngine.on("play", () => {
     state.isPlaying = true;
     _updatePlayPauseIcon(true);
     if (squigglyNP) squigglyNP.setPlaying(true);
     if (squigglyOV) squigglyOV.setPlaying(true);
+    _smtcStatus("playing");
   });
   audioEngine.on("pause", () => {
     state.isPlaying = false;
@@ -12419,6 +14495,7 @@ function _setupAudioEvents() {
     _updatePlayPauseIcon(false);
     if (squigglyNP) squigglyNP.setPlaying(false);
     if (squigglyOV) squigglyOV.setPlaying(false);
+    _smtcStatus("paused");
   });
   audioEngine.on("error", (data) => {
     console.error("Playback error:", data.error, "(code", data.code + ")");
@@ -12758,6 +14835,31 @@ let lyricsData = [];
 let syncedLyrics = null;
 let lastActiveIdx = -1;
 let lyricsTrackId = null;
+// Task 7: Active Lyrics ±1s timing adjustment. Session-scoped (like most
+// desktop players' manual sync nudge) — resets to 0 on every new track
+// since a per-track offset is a property of that specific sync data's
+// quality/version, not something that should silently carry over and
+// mis-sync the next song.
+let lyricsOffsetSec = 0;
+
+function _applyLyricsOffsetDelta(deltaSec) {
+  lyricsOffsetSec = Math.round((lyricsOffsetSec + deltaSec) * 10) / 10;
+  const valueEl = $("lyrics-offset-value");
+  if (valueEl) {
+    const sign = lyricsOffsetSec > 0 ? "+" : "";
+    valueEl.textContent = `${sign}${lyricsOffsetSec.toFixed(1)}s`;
+  }
+  // Force an immediate re-highlight at the new effective time instead of
+  // waiting for the next timeupdate tick, so the nudge feels instant.
+  lastActiveIdx = -2; // sentinel guaranteed to differ from any real index
+  _updateLyricsHighlight(audioEngine.getCurrentTime());
+}
+
+function _resetLyricsOffset() {
+  lyricsOffsetSec = 0;
+  const valueEl = $("lyrics-offset-value");
+  if (valueEl) valueEl.textContent = "0.0s";
+}
 
 // ─── Lyrics Prefetch ──────────────────────────────────────────────
 // When the user clicks a track, we fire the LRCLIB fetch immediately,
@@ -12806,8 +14908,8 @@ async function _fetchLyrics(track) {
   lyricsBody.innerHTML =
     '<div class="lyric-line" style="margin-top:30px;">Loading ...</div>';
   lastActiveIdx = -1; // Reset active lyric index
-
-  // ── 1. In-memory cache (instant — from previous play or manual save) ──
+  _resetLyricsOffset();
+  _lyricsSyncControlsOpen = false;
   const cachedPlain = track.plainLyrics || "";
   const cachedSynced = track.syncedLyrics || "";
   if (cachedPlain || cachedSynced) {
@@ -13115,6 +15217,29 @@ function _updateSyncedBadge(synced) {
   if (lBody) lBody.classList.toggle("unsynced-scroll", !isSynced);
   const ovScroll = $("ov-lyrics-scroll");
   if (ovScroll) ovScroll.classList.toggle("unsynced-scroll", !isSynced);
+
+  // Task 7 (revised): the ±1s nudge only makes sense for time-synced
+  // lyrics, and should only be VISIBLE when the user opens it via the
+  // clock icon in the header — not shown permanently. _lyricsIsSynced
+  // gates whether the clock button is usable; _updateLyricsSyncControlsVisibility
+  // decides actual visibility (synced AND user has it open).
+  _lyricsIsSynced = isSynced;
+  if (!isSynced) _lyricsSyncControlsOpen = false; // auto-close if track has no sync data
+  _updateLyricsSyncControlsVisibility();
+}
+
+let _lyricsIsSynced = false;
+let _lyricsSyncControlsOpen = false;
+
+function _updateLyricsSyncControlsVisibility() {
+  const syncControls = $("lyrics-sync-controls");
+  const toggleBtn = $("lyrics-sync-toggle-btn");
+  const shouldShow = _lyricsIsSynced && _lyricsSyncControlsOpen;
+  if (syncControls) syncControls.style.display = shouldShow ? "flex" : "none";
+  if (toggleBtn) {
+    toggleBtn.classList.toggle("active", shouldShow);
+    toggleBtn.classList.toggle("disabled", !_lyricsIsSynced);
+  }
 }
 
 // ── Manual-scroll detection for lyrics containers ──────────────────
@@ -13301,9 +15426,14 @@ function _updateLyricsHighlight(currentTime) {
     return;
   }
 
+  // Task 7: apply the user's manual ±1s sync nudge. Positive offset means
+  // "lyrics were appearing too early" → treat playback as further along
+  // than it is, so later lines light up sooner relative to the audio.
+  const adjustedTime = currentTime + lyricsOffsetSec;
+
   let activeIdx = -1;
   for (let i = syncedLyrics.length - 1; i >= 0; i--) {
-    if (currentTime >= syncedLyrics[i].time) {
+    if (adjustedTime >= syncedLyrics[i].time) {
       activeIdx = i;
       break;
     }
@@ -13524,7 +15654,7 @@ function _createFloatingNavCard() {
     <button class="fn-btn" id="fn-search-btn" data-label="Search" aria-label="Search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
     </button>
-    <input type="text" class="fn-search-input" id="fn-search-input" placeholder="Search…">
+    <input type="text" class="fn-search-input" id="fn-search-input" placeholder="Search…" spellcheck="false">
   </div>`;
   html += `<button class="fn-btn fn-help-btn" id="fn-help-btn" data-section="help" data-label="Help" aria-label="Help">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
@@ -13884,23 +16014,23 @@ function _openTagEditor(track) {
       </div>
       <div class="tag-editor-field">
         <label>Title</label>
-        <input id="tag-title" type="text" value="${escapeHtml(track.title || "")}">
+        <input id="tag-title" type="text" value="${escapeHtml(track.title || "")}" spellcheck="false">
       </div>
       <div class="tag-editor-field">
         <label>Artist</label>
-        <input id="tag-artist" type="text" value="${escapeHtml(track.artist || "")}">
+        <input id="tag-artist" type="text" value="${escapeHtml(track.artist || "")}" spellcheck="false">
       </div>
       <div class="tag-editor-field">
         <label>Album</label>
-        <input id="tag-album" type="text" value="${escapeHtml(track.album || "")}">
+        <input id="tag-album" type="text" value="${escapeHtml(track.album || "")}" spellcheck="false">
       </div>
       <div class="tag-editor-field">
         <label>Genre</label>
-        <input id="tag-genre" type="text" value="${escapeHtml(track.genre || "")}">
+        <input id="tag-genre" type="text" value="${escapeHtml(track.genre || "")}" spellcheck="false">
       </div>
       <div class="tag-editor-field">
         <label>Year</label>
-        <input id="tag-year" type="text" value="${track.year || ""}">
+        <input id="tag-year" type="text" value="${track.year || ""}" spellcheck="false">
       </div>
       <div class="tag-editor-actions">
         <button class="btn-cancel" id="tag-cancel">Cancel</button>
@@ -13936,12 +16066,17 @@ function _openTagEditor(track) {
   });
 
   // Save
-  overlay.querySelector("#tag-save").addEventListener("click", async () => {
+  const saveBtn = overlay.querySelector("#tag-save");
+  saveBtn.addEventListener("click", async () => {
     const newTitle = overlay.querySelector("#tag-title").value.trim();
     const newArtist = overlay.querySelector("#tag-artist").value.trim();
     const newAlbum = overlay.querySelector("#tag-album").value.trim();
     const newGenre = overlay.querySelector("#tag-genre").value.trim();
     const newYear = overlay.querySelector("#tag-year").value.trim();
+
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving...";
 
     try {
       const result = await window.novaAPI.invoke("metadata:write-tags", {
@@ -13986,6 +16121,7 @@ function _openTagEditor(track) {
             state.currentTrack._hasCoverArt = true;
           }
         }
+        
         // Re-render current section
         invalidateSectionCache();
         // Invalidate thumbnail cache for this track (cover art may have changed)
@@ -14028,14 +16164,21 @@ function _openTagEditor(track) {
             artist: newArtist,
           });
         }
+        _showActionToast(newTitle || track.title, "tags saved");
         overlay.remove();
+      } else {
+        alert("Failed to save tags: " + (result.error || "Unknown error"));
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Save";
       }
     } catch (err) {
       console.error("[TagEditor] Save failed:", err);
+      alert("Error saving tags: " + (err.message || err));
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save";
     }
   });
 }
-
 
 // ─── Task 10: Menu Icon Morph ────────────────────────────
 // Smooth CSS morph: playlist icon → X via .menu-open class toggle.
@@ -14097,5 +16240,3 @@ closePlaylistMenus = function () {
     ovAddBtn.dataset.tooltip = "Playlist";
   }
 };
-
-

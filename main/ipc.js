@@ -33,6 +33,7 @@ const { ensureDirSync } = require("./windowManager");
 // share the app.getPath('userData') resolution timing.
 const ManifestWriter = require("./manifest");
 const ManifestIPC = require("./manifestIPC");
+const TagLib = require("node-taglib-sharp");
 const ManifestReader = require("./manifestReader");
 
 // ─── Supported Audio Formats ────────────────────────────────────────
@@ -93,6 +94,7 @@ const DEFAULT_SETTINGS = {
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────
+const _coverArtByIdCache = new Map(); // trackId → coverArt string | null
 let db = null;
 const DB_SCHEMA = `
   CREATE TABLE IF NOT EXISTS tracks (
@@ -152,6 +154,37 @@ function writeJSON(filePath, data) {
     console.error(`Failed to write ${filePath}:`, err.message);
     return false;
   }
+}
+
+// ── Task 6: Serialized settings.json read-modify-write queue ──────────
+// BUGFIX (font / other settings reverting after Refresh): many handlers
+// (settings:set, library:scan's scanFolders bookkeeping, the _failedFiles
+// migration writes, etc.) each independently did:
+//   const settings = readJSON(SETTINGS_FILE, ...);
+//   settings.someKey = value;
+//   writeJSON(SETTINGS_FILE, settings);
+// Because library:scan is async and can run for seconds, if the user
+// changed a setting (e.g. picked a font) WHILE a scan's read-modify-write
+// was in flight, the scan's write — built from a settings.json snapshot
+// taken BEFORE the font change — would land last and silently overwrite
+// the font change with the stale value. This is a classic lost-update
+// race, not something you can fix by writing to disk "more carefully" in
+// just one spot — every read-modify-write site needs to be serialized
+// against every other one. withSettingsFile() below chains all mutations
+// onto a single promise queue so each one always reads the settings file
+// AFTER the previous mutation's write has completed, never before it.
+let _settingsFileQueue = Promise.resolve();
+function withSettingsFile(mutator) {
+  const run = _settingsFileQueue.then(() => {
+    const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+    const result = mutator(settings);
+    writeJSON(SETTINGS_FILE, settings);
+    return result;
+  });
+  // Swallow errors in the queue chain itself so one failed mutation
+  // doesn't permanently wedge every future settings write.
+  _settingsFileQueue = run.catch(() => {});
+  return run;
 }
 
 const AUDIO_EXTENSIONS = new Set([
@@ -584,7 +617,9 @@ function saveLibrary(library) {
       insertTrack.run({
         id: track.id,
         title: track.title || "",
-        artist: Array.isArray(track.artist) ? track.artist.join(", ") : track.artist || "",
+        artist: Array.isArray(track.artist)
+          ? track.artist.join(", ")
+          : track.artist || "",
         album: track.album || "",
         genre: track.genre || "",
         year: Number(track.year) || null,
@@ -603,7 +638,10 @@ function saveLibrary(library) {
   let preExistingCovers;
   try {
     preExistingCovers = new Map(
-      db.prepare("SELECT trackId, coverArt FROM track_covers").all().map((r) => [r.trackId, r.coverArt])
+      db
+        .prepare("SELECT trackId, coverArt FROM track_covers")
+        .all()
+        .map((r) => [r.trackId, r.coverArt]),
     );
   } catch (_) {
     preExistingCovers = new Map();
@@ -612,7 +650,9 @@ function saveLibrary(library) {
   tx(library);
 
   if (preExistingCovers.size > 0) {
-    const restoreInsert = db.prepare("INSERT OR IGNORE INTO track_covers (trackId, coverArt) VALUES (?, ?)");
+    const restoreInsert = db.prepare(
+      "INSERT OR IGNORE INTO track_covers (trackId, coverArt) VALUES (?, ?)",
+    );
     const restoreTx = db.transaction(() => {
       for (const track of library) {
         if (!track.coverArt && track._hasCoverArt) {
@@ -636,13 +676,15 @@ function saveLibrary(library) {
 
 function partialSaveLibrary(fullLibrary, newOrUpdatedTracks, removedIds) {
   libraryCache = fullLibrary;
-  _libraryJsonCache = fullLibrary; 
+  _libraryJsonCache = fullLibrary;
   libraryById = new Map(fullLibrary.map((track) => [track.id, track]));
 
   const tx = db.transaction((tracksToUpdate, idsToRemove) => {
     const deleteTrack = db.prepare("DELETE FROM tracks WHERE id = ?");
-    const deleteCover = db.prepare("DELETE FROM track_covers WHERE trackId = ?");
-    
+    const deleteCover = db.prepare(
+      "DELETE FROM track_covers WHERE trackId = ?",
+    );
+
     for (const id of idsToRemove) {
       deleteTrack.run(id);
       deleteCover.run(id);
@@ -659,7 +701,7 @@ function partialSaveLibrary(fullLibrary, newOrUpdatedTracks, removedIds) {
 
     for (const track of tracksToUpdate) {
       const newCoverArt = track.coverArt;
-      
+
       // If updating, preserve existing cover art flag if it had one
       const hasCoverArt = !!(newCoverArt || track._hasCoverArt);
       const { coverArt: _, ...strippedTrack } = track;
@@ -668,7 +710,9 @@ function partialSaveLibrary(fullLibrary, newOrUpdatedTracks, removedIds) {
       insertTrack.run({
         id: track.id,
         title: track.title || "",
-        artist: Array.isArray(track.artist) ? track.artist.join(", ") : track.artist || "",
+        artist: Array.isArray(track.artist)
+          ? track.artist.join(", ")
+          : track.artist || "",
         album: track.album || "",
         genre: track.genre || "",
         year: Number(track.year) || null,
@@ -1081,15 +1125,15 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
 
       // Save folder to settings
       try {
-        const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
-        const scanFolders = Array.isArray(settings.scanFolders)
-          ? settings.scanFolders
-          : [];
-        if (!scanFolders.includes(folderPath)) {
-          scanFolders.push(folderPath);
-          settings.scanFolders = scanFolders;
-          writeJSON(SETTINGS_FILE, settings);
-        }
+        await withSettingsFile((settings) => {
+          const scanFolders = Array.isArray(settings.scanFolders)
+            ? settings.scanFolders
+            : [];
+          if (!scanFolders.includes(folderPath)) {
+            scanFolders.push(folderPath);
+            settings.scanFolders = scanFolders;
+          }
+        });
       } catch (err) {
         console.error("Failed to save scanFolders settings:", err.message);
       }
@@ -1167,82 +1211,53 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       // The failed cache stores { filePath: mtime }. If the file's mtime
       // changes (user replaced the corrupt file with a good one), we
       // re-try it.
-      const scanSettings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
-      // v1.1.0 EXHAUSTIVE SCANNER FIX: One-time reset of the _failedFiles
-      // cache. Files previously rejected as "0:00" (mostly YouTube rips
-      // with corrupt headers like `don_toliver_high_unreleased__yaxBLgIoHuI_140.mp3`)
-      // are now recoverable via the new fallback path in
-      // metadataReader._fallbackMetadata (parses underscore names + estimates
-      // duration from file size). Without this reset, those files would
-      // remain permanently blacklisted.
-      if (!scanSettings._failedFilesResetV110) {
-        scanSettings._failedFiles = {};
-        scanSettings._failedFilesResetV110 = true;
-        writeJSON(SETTINGS_FILE, scanSettings);
-        console.log(
-          "[library:scan] v1.1.0 reset: cleared _failedFiles cache (one-time migration)",
-        );
-      }
-      // v1.1.3 — Force re-scan of underscored files so they pick up the
-      // new artist-splitting parser. We do this by clearing the failedFiles
-      // cache (which may contain underscored files from the v1.1.0 run that
-      // had "Unknown Artist") AND by bumping the _failedFilesResetV113 flag.
-      // This is a ONE-TIME migration — after this scan, the flag prevents
-      // re-running.
-      if (!scanSettings._failedFilesResetV113) {
-        scanSettings._failedFiles = {};
-        scanSettings._failedFilesResetV113 = true;
-        writeJSON(SETTINGS_FILE, scanSettings);
-        console.log(
-          "[library:scan] v1.1.3 reset: cleared _failedFiles cache for underscored-file re-scan",
-        );
-      }
-      // v1.1.5 EXHAUSTIVE SCANNER: Another one-time reset of _failedFiles.
-      // The v1.1.0–v1.1.4 estimators still rejected some YouTube rips
-      // because the worker thread's internal _fallbackMetadata didn't
-      // have knownArtists, and because some files with NO underscores
-      // but corrupt headers were still being blacklisted. v1.1.5 fixes
-      // both issues (Fix B + Fix C below), so we clear _failedFiles one
-      // more time to give every rejected file a fresh chance.
-      if (!scanSettings._failedFilesResetV115) {
-        scanSettings._failedFiles = {};
-        scanSettings._failedFilesResetV115 = true;
-        scanSettings._failedFilesLastRetry = Date.now();
-        writeJSON(SETTINGS_FILE, scanSettings);
-        console.log(
-          "[library:scan] v1.1.5 reset: cleared _failedFiles cache for exhaustive re-scan",
-        );
-      }
-      // v1.1.6 EXHAUSTIVE SCANNER: Force re-scan of underscored files
-      // that were previously added with the RAW FILENAME as the title
-      // (because music-metadata succeeded but returned empty title/artist).
-      // v1.1.6 now runs _fallbackMetadata even when duration > 0, so these
-      // files get proper parsed titles like "High (Unreleased)" instead of
-      // "don_toliver_high_unreleased__yaxBLgIoHuI_140".
-      if (!scanSettings._v116UnderscoreRescan) {
-        scanSettings._v116UnderscoreRescan = true;
-        writeJSON(SETTINGS_FILE, scanSettings);
-        console.log(
-          "[library:scan] v1.1.6: forcing re-scan of underscored files to fix raw-filename titles",
-        );
-      }
-      if (
-        !scanSettings._failedFilesLastRetry ||
-        Date.now() - scanSettings._failedFilesLastRetry >
-          30 * 24 * 60 * 60 * 1000
-      ) {
-        // v1.1.5 PERIODIC RE-CHECK: Clear _failedFiles every 30 days so
-        // files that were previously rejected get another chance. This
-        // makes the scanner truly exhaustive over time — if the estimator
-        // logic improves, or if a file was temporarily corrupt (e.g.
-        // partially downloaded), it gets re-tried.
-        scanSettings._failedFiles = {};
-        scanSettings._failedFilesLastRetry = Date.now();
-        writeJSON(SETTINGS_FILE, scanSettings);
-        console.log(
-          "[library:scan] v1.1.5 periodic re-check: cleared _failedFiles cache (30-day cycle)",
-        );
-      }
+      // BUGFIX (Task 6): this used to be ~5 separate readJSON+writeJSON
+      // round trips, each racing against any other settings write (e.g.
+      // a font change) that could sneak in between them. Collapsed into
+      // a single withSettingsFile() mutation so it's one atomic step in
+      // the serialized settings queue instead of five.
+      const scanSettings = await withSettingsFile((scanSettings) => {
+        if (!scanSettings._failedFilesResetV110) {
+          scanSettings._failedFiles = {};
+          scanSettings._failedFilesResetV110 = true;
+          console.log(
+            "[library:scan] v1.1.0 reset: cleared _failedFiles cache (one-time migration)",
+          );
+        }
+        if (!scanSettings._failedFilesResetV113) {
+          scanSettings._failedFiles = {};
+          scanSettings._failedFilesResetV113 = true;
+          console.log(
+            "[library:scan] v1.1.3 reset: cleared _failedFiles cache for underscored-file re-scan",
+          );
+        }
+        if (!scanSettings._failedFilesResetV115) {
+          scanSettings._failedFiles = {};
+          scanSettings._failedFilesResetV115 = true;
+          scanSettings._failedFilesLastRetry = Date.now();
+          console.log(
+            "[library:scan] v1.1.5 reset: cleared _failedFiles cache for exhaustive re-scan",
+          );
+        }
+        if (!scanSettings._v116UnderscoreRescan) {
+          scanSettings._v116UnderscoreRescan = true;
+          console.log(
+            "[library:scan] v1.1.6: forcing re-scan of underscored files to fix raw-filename titles",
+          );
+        }
+        if (
+          !scanSettings._failedFilesLastRetry ||
+          Date.now() - scanSettings._failedFilesLastRetry >
+            30 * 24 * 60 * 60 * 1000
+        ) {
+          scanSettings._failedFiles = {};
+          scanSettings._failedFilesLastRetry = Date.now();
+          console.log(
+            "[library:scan] v1.1.5 periodic re-check: cleared _failedFiles cache (30-day cycle)",
+          );
+        }
+        return scanSettings;
+      });
       const failedFiles =
         scanSettings._failedFiles &&
         typeof scanSettings._failedFiles === "object"
@@ -1317,6 +1332,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         const needsV117Rescan =
           hasUnderscores &&
           existing &&
+          !existing._userEdited &&
           existing.dateModified === file.modifiedTime;
 
         if (needsV113Rescan || needsV116Rescan || needsV117Rescan) {
@@ -1529,7 +1545,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
               const hasYtSuffix = /__(?:[A-Za-z0-9_-]{8,})_\d{2,4}$/.test(
                 file.fileName || "",
               );
-              if (hasUnderscores || hasYtSuffix) {
+              const existingTrack = existingMap.get(file.filePath);
+              const isUserEdited = existingTrack && existingTrack._userEdited;
+              if ((hasUnderscores || hasYtSuffix) && !isUserEdited) {
                 try {
                   const fallback = await metadataReader._fallbackMetadata(
                     file.filePath,
@@ -1577,6 +1595,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                 _hasCoverArt: !!metadata.coverArt,
                 dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                 dateModified: file.modifiedTime || Date.now(),
+                ...(existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}),
               });
             }
           } else {
@@ -1624,6 +1643,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   _hasCoverArt: false,
                   dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                   dateModified: file.modifiedTime || Date.now(),
+                  ...(existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}),
                 });
               } else {
                 // v1.1.0 EXHAUSTIVE SCANNER FIX: Even when quickInfo also
@@ -1715,6 +1735,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   _hasCoverArt: !!fallback.coverArt,
                   dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                   dateModified: file.modifiedTime || Date.now(),
+                  ...(existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}),
                 });
               } else {
                 failedCount++;
@@ -1755,7 +1776,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       // Clear any tracks from existingMap2 that were in this scan's folder (handles deleted/skipped files)
       const normalizedFolder = folderPath.replace(/\\/g, "/").toLowerCase();
       const removedIds = [];
-      const tracksFromFolder = new Set(tracks.map(t => t.id));
+      const tracksFromFolder = new Set(tracks.map((t) => t.id));
       for (const [id, t] of existingMap2.entries()) {
         if (
           t.filePath &&
@@ -1828,19 +1849,21 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             await new Promise((resolve) => setImmediate(resolve));
           }
         }
-        
+
         // Fast path for small changes: if < 50 new/updated tracks and < 50 removed,
         // do a partial save instead of wiping the whole SQLite table.
         // To compute new/updated tracks, we compare existingLibrary2 size with mergedLibrary.
         // But we actually just processed `tracks` array which has all new + cached tracks for the folder.
         // Since we are scanning a folder, `tracks` can be large if the folder has many cached files.
         // Wait, if `tracks.length` is huge, partial update might be slower than a full transaction?
-        // Actually SQLite `INSERT OR REPLACE` in a transaction is very fast. 
+        // Actually SQLite `INSERT OR REPLACE` in a transaction is very fast.
         // We will just use partial update if `tracks.length <= 50`.
         if (tracks.length <= 50 && removedIds.length <= 50) {
           isPartialUpdate = true;
           partialSaveLibrary(mergedLibrary, tracks, removedIds);
-          console.log(`[library:scan] Used partial DB update (${tracks.length} updated, ${removedIds.length} removed)`);
+          console.log(
+            `[library:scan] Used partial DB update (${tracks.length} updated, ${removedIds.length} removed)`,
+          );
         } else {
           saveLibrary(mergedLibrary);
         }
@@ -1938,7 +1961,11 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       // CHANGED: Also skip manifest rebuild if this was a partial update (< 50 changes)
       // to avoid blocking UI for minutes on large libraries. The UI updates instantly via IPC
       // and the manifest will eventually get rebuilt on next app start or large scan.
-      if (ManifestIPC.isFeatureFlagEnabled() && !nothingChanged && !isPartialUpdate) {
+      if (
+        ManifestIPC.isFeatureFlagEnabled() &&
+        !nothingChanged &&
+        !isPartialUpdate
+      ) {
         const rebuildStart = Date.now();
         setImmediate(async () => {
           try {
@@ -1972,6 +1999,136 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         stage: "error",
         message: `Scan failed: ${err.message}`,
       });
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ─── Task 2: FAST append-only refresh ─────────────────────────────
+  // Unlike library:scan, this does NOT stat/mtime-check every existing
+  // file, does NOT run any of the legacy _failedFiles / underscore
+  // re-scan migrations, and does NOT re-read metadata for anything
+  // already in the DB. It only:
+  //   1. Walks the folder for the current file list (fast, same
+  //      directory-mtime short-circuit fileScanner already uses).
+  //   2. Diffs that list against existing filePaths in the DB.
+  //   3. Reads metadata (incl. cover art) ONLY for brand-new files.
+  //   4. Appends them to the library and rebuilds the manifest.
+  // For a folder with no new songs this is a handful of stats and
+  // finishes in well under a second; for N new songs it costs exactly
+  // N metadata reads, not a full-library re-scan.
+  ipcMain.handle("library:quick-scan", async (event, folderPath) => {
+    const t0 = Date.now();
+    try {
+      const files = await fileScanner.scanDirectory(folderPath);
+      const existingLibrary = getLibrary();
+      const existingPaths = new Set(existingLibrary.map((t) => t.filePath));
+
+      const newFiles = files.filter((f) => !existingPaths.has(f.filePath));
+
+      if (newFiles.length === 0) {
+        return {
+          success: true,
+          newTracks: 0,
+          tracks: existingLibrary,
+          elapsedMs: Date.now() - t0,
+        };
+      }
+
+      console.log(
+        `[library:quick-scan] ${newFiles.length} new file(s) in ${folderPath}`,
+      );
+
+      const coverCacheDir = path.join(app.getPath("userData"), "cached_covers");
+      let worker = null;
+      try {
+        worker = new MetadataWorker();
+        worker.setCoverCacheDir(coverCacheDir);
+      } catch (err) {
+        console.warn(
+          "[library:quick-scan] MetadataWorker unavailable, using main thread:",
+          err.message,
+        );
+      }
+
+      const newTracks = [];
+      for (const file of newFiles) {
+        let metadata;
+        try {
+          metadata = worker
+            ? await worker.readMetadata(file.filePath, new Map())
+            : await metadataReader.readMetadata(file.filePath, new Map());
+        } catch (err) {
+          console.warn(
+            "[library:quick-scan] metadata read failed for",
+            file.filePath,
+            err.message,
+          );
+          continue;
+        }
+
+        newTracks.push({
+          id: generateTrackId(file.filePath),
+          filePath: file.filePath,
+          fileName: file.fileName,
+          title:
+            metadata.title ||
+            path.basename(file.fileName, path.extname(file.fileName)),
+          artist: metadata.artist || "Unknown Artist",
+          album: metadata.album || "Unknown Album",
+          albumArtist: metadata.albumArtist || "",
+          genre: metadata.genre || "",
+          year: metadata.year || 0,
+          trackNumber: metadata.trackNumber || 0,
+          discNumber: metadata.discNumber || 0,
+          duration: metadata.duration || 0,
+          bitrate: metadata.bitrate || 0,
+          sampleRate: metadata.sampleRate || 0,
+          channels: metadata.channels || 2,
+          format:
+            metadata.format ||
+            path.extname(file.fileName).replace(".", "").toUpperCase(),
+          fileSize: file.fileSize || metadata.fileSize || 0,
+          coverArt: metadata.coverArt || null,
+          _hasCoverArt: !!metadata.coverArt,
+          dateAdded: file.birthTime || file.modifiedTime || Date.now(),
+          dateModified: file.modifiedTime || Date.now(),
+        });
+      }
+
+      if (worker && typeof worker.terminate === "function") {
+        try {
+          worker.terminate();
+        } catch (_) {}
+      }
+
+      const mergedLibrary = [...newTracks, ...existingLibrary];
+      saveLibrary(mergedLibrary);
+
+      // Rebuild the binary manifest in the background so fast-startup
+      // reads pick up the new tracks without blocking this response.
+      setImmediate(() => {
+        ManifestIPC.rebuildManifest(mergedLibrary).catch((err) => {
+          console.warn(
+            "[library:quick-scan] background manifest resync failed:",
+            err.message,
+          );
+        });
+      });
+
+      const elapsedMs = Date.now() - t0;
+      console.log(
+        `[library:quick-scan] Added ${newTracks.length} track(s) in ${elapsedMs}ms`,
+      );
+
+      return {
+        success: true,
+        newTracks: newTracks.length,
+        addedTracks: newTracks,
+        tracks: mergedLibrary,
+        elapsedMs,
+      };
+    } catch (err) {
+      console.error("[library:quick-scan] Error:", err);
       return { success: false, error: err.message };
     }
   });
@@ -2581,6 +2738,78 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       return { success: false, error: err.message };
     }
   });
+
+  // ─── Library: batch update tracks (e.g. background unknown artist resolution) ──
+  ipcMain.handle("library:update-tracks", async (event, updates) => {
+    try {
+      if (!Array.isArray(updates) || updates.length === 0) return { success: true, count: 0 };
+      // db is the module-level SQLite handle (let db = null; at top of file)
+      if (db) {
+        const selectStmt = db.prepare("SELECT data FROM tracks WHERE id = ?");
+        const updateStmt = db.prepare("UPDATE tracks SET title = ?, artist = ?, data = ? WHERE id = ?");
+        const tx = db.transaction(() => {
+          for (const u of updates) {
+            if (!u.id) continue;
+            const row = selectStmt.get(u.id);
+            if (row) {
+              try {
+                const track = JSON.parse(row.data);
+                if (u.artist !== undefined) track.artist = u.artist;
+                if (u.title  !== undefined) track.title  = u.title;
+                const artistStr = Array.isArray(track.artist) ? track.artist.join(", ") : (track.artist || "");
+                updateStmt.run(track.title || "", artistStr, JSON.stringify(track), u.id);
+              } catch (_) {}
+            }
+          }
+        });
+        tx();
+      }
+      // Also patch the JSON manifest cache if it's loaded
+      const library = getLibrary ? getLibrary() : null;
+      if (Array.isArray(library)) {
+        const map = new Map(updates.map(u => [u.id, u]));
+        for (const t of library) {
+          const u = map.get(t.id);
+          if (u) {
+            if (u.artist !== undefined) t.artist = u.artist;
+            if (u.title  !== undefined) t.title  = u.title;
+          }
+        }
+        if (saveLibrary) saveLibrary(library);
+      }
+
+      // Rebuild binary manifest.bin so next launch loads updated artist/title metadata
+      if (ManifestIPC.isFeatureFlagEnabled()) {
+        setImmediate(() => {
+          try {
+            const tracksForManifest =
+              typeof module.exports.getLibraryForManifest === "function"
+                ? module.exports.getLibraryForManifest()
+                : (getLibrary ? getLibrary() : null);
+            if (tracksForManifest) {
+              ManifestIPC.rebuildManifest(tracksForManifest).catch((err) => {
+                console.warn(
+                  "[manifest] background manifest resync failed:",
+                  err.message,
+                );
+              });
+            }
+          } catch (syncErr) {
+            console.warn(
+              "[manifest] background manifest resync failed:",
+              syncErr.message,
+            );
+          }
+        });
+      }
+
+      return { success: true, count: updates.length };
+    } catch (err) {
+      console.warn("[library:update-tracks] Failed:", err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
 
   // ─── Cover Art: find sidecar cover art in the audio file's directory ──
   // Revolutionary: This handler was MISSING — the renderer called it via
@@ -3279,11 +3508,17 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   });
 
   // ── Task 9: Write metadata tags to audio file ──
+  // ── Task 9: Write metadata tags to audio file ──
   ipcMain.handle(
     "metadata:write-tags",
     async (event, { trackId, filePath, tags }) => {
       try {
-        console.log("[metadata:write-tags] Request received for trackId:", trackId, "filePath:", filePath);
+        console.log(
+          "[metadata:write-tags] Request received for trackId:",
+          trackId,
+          "filePath:",
+          filePath,
+        );
         if (!filePath || !fs.existsSync(filePath)) {
           console.error("[metadata:write-tags] File not found:", filePath);
           return { success: false, error: "File not found" };
@@ -3294,27 +3529,26 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
 
         const ext = path.extname(filePath).toLowerCase();
 
-        // ── 1. Write tags INTO the actual audio file on disk ──────────────
-        // This is what makes tags survive app restarts and show on other devices.
+        // ── 1. Write tags INTO the actual audio file on disk with retry ───
+        // This is what makes tags survive app restarts, reboots, and show on other devices.
         if (ext === ".mp3") {
-          // node-id3 supports full ID3v2 read+write for MP3
           const NodeID3 = require("node-id3");
 
-          // Build the ID3 tag object (only include fields the user actually changed)
           const id3Tags = {};
-          if (tags.title  !== undefined) id3Tags.title  = tags.title  || "";
+          if (tags.title !== undefined) id3Tags.title = tags.title || "";
           if (tags.artist !== undefined) id3Tags.artist = tags.artist || "";
-          if (tags.album  !== undefined) id3Tags.album  = tags.album  || "";
-          if (tags.genre  !== undefined) id3Tags.genre  = tags.genre  || "";
-          if (tags.year   !== undefined) id3Tags.year   = tags.year   ? String(tags.year) : "";
+          if (tags.album !== undefined) id3Tags.album = tags.album || "";
+          if (tags.genre !== undefined) id3Tags.genre = tags.genre || "";
+          if (tags.year !== undefined)
+            id3Tags.year = tags.year ? String(tags.year) : "";
 
           // Cover art — coverArt arrives as a data-URI ("data:image/...;base64,...")
           if (tags.coverArt) {
             try {
               const match = tags.coverArt.match(/^data:([^;]+);base64,(.+)$/);
               if (match) {
-                const mime   = match[1];              // e.g. "image/jpeg"
-                const buf    = Buffer.from(match[2], "base64");
+                const mime = match[1]; // e.g. "image/jpeg"
+                const buf = Buffer.from(match[2], "base64");
                 id3Tags.image = {
                   mime,
                   type: { id: 3, name: "front cover" },
@@ -3323,38 +3557,144 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                 };
               }
             } catch (coverErr) {
-              console.warn("[metadata:write-tags] cover art parse failed:", coverErr.message);
+              console.warn(
+                "[metadata:write-tags] cover art parse failed:",
+                coverErr.message,
+              );
             }
           }
 
-          // node-id3.update() merges with existing tags; returns true on success
-          const written = NodeID3.update(id3Tags, filePath);
-          if (written !== true) {
-            console.warn("[metadata:write-tags] node-id3 write returned:", written);
+          let writeSuccess = false;
+          let lastWriteErr = null;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              const written = NodeID3.update(id3Tags, filePath);
+              if (written === true) {
+                writeSuccess = true;
+                break;
+              }
+              // If update failed, try reading existing + writing merged
+              const existing = NodeID3.read(filePath) || {};
+              const merged = { ...existing, ...id3Tags };
+              const writeResult = NodeID3.write(merged, filePath);
+              if (writeResult === true) {
+                writeSuccess = true;
+                break;
+              }
+              lastWriteErr = new Error(
+                typeof writeResult === "object" && writeResult
+                  ? writeResult.message
+                  : `node-id3 returned ${writeResult}`,
+              );
+            } catch (err) {
+              lastWriteErr = err;
+            }
+            if (attempt < 3) {
+              await new Promise((resolve) => setTimeout(resolve, 150));
+            }
+          }
+
+          if (!writeSuccess) {
+            console.error(
+              "[metadata:write-tags] MP3 tag write failed:",
+              lastWriteErr ? lastWriteErr.message : "Unknown error",
+            );
+            return {
+              success: false,
+              error: `Failed to write tags to audio file: ${lastWriteErr ? lastWriteErr.message : "File locked or unwriteable"}`,
+            };
           }
         }
-        // For FLAC / M4A / OGG / WAV — these formats need separate libraries
-        // (e.g. flac-metadata, mp4-stream). They are not bundled here yet, so
-        // we fall through to the DB-only path below which at least keeps the
-        // NovaTune library consistent across restarts on the same machine.
-        // TODO: add native tag-write for other formats when needed.
+        // For FLAC / M4A(MP4) / OGG / WAV / APE / WMA — write via node-taglib-sharp
+        else {
+          let writeSuccess = false;
+          let lastWriteErr = null;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              const tagFile = TagLib.File.createFromPath(filePath);
+              try {
+                const t = tagFile.tag;
+                if (tags.title !== undefined) t.title = tags.title || "";
+                if (tags.artist !== undefined) {
+                  t.performers = tags.artist ? [tags.artist] : [];
+                  t.albumArtists = tags.artist ? [tags.artist] : [];
+                }
+                if (tags.album !== undefined) t.album = tags.album || "";
+                if (tags.genre !== undefined)
+                  t.genres = tags.genre ? [tags.genre] : [];
+                if (tags.year !== undefined)
+                  t.year = tags.year ? parseInt(tags.year, 10) || 0 : 0;
 
-        // ── 2. Update in-memory library & SQLite so the UI is instant ─────
+                if (tags.coverArt) {
+                  const match = tags.coverArt.match(/^data:([^;]+);base64,(.+)$/);
+                  if (match) {
+                    const mime = match[1];
+                    const buf = Buffer.from(match[2], "base64");
+                    const picture = TagLib.Picture.fromData(
+                      TagLib.ByteVector.fromByteArray(buf),
+                    );
+                    picture.mimeType = mime;
+                    picture.type = TagLib.PictureType.FrontCover;
+                    t.pictures = [picture];
+                  }
+                }
+
+                tagFile.save();
+                writeSuccess = true;
+                break;
+              } finally {
+                tagFile.dispose();
+              }
+            } catch (tagLibErr) {
+              lastWriteErr = tagLibErr;
+            }
+            if (attempt < 3) {
+              await new Promise((resolve) => setTimeout(resolve, 150));
+            }
+          }
+
+          if (!writeSuccess) {
+            console.error(
+              "[metadata:write-tags] node-taglib-sharp write failed:",
+              lastWriteErr ? lastWriteErr.message : "Unknown error",
+            );
+            return {
+              success: false,
+              error: `Failed to write tags to audio file: ${lastWriteErr ? lastWriteErr.message : "File locked or unwriteable"}`,
+            };
+          }
+        }
+
+        // ── 1b. Re-stat the file and stamp the NEW mtime onto the track ────
+        let freshMtime = null;
+        try {
+          const stat = fs.statSync(filePath);
+          freshMtime = stat.mtimeMs;
+        } catch (statErr) {
+          console.warn(
+            "[metadata:write-tags] post-write stat failed:",
+            statErr.message,
+          );
+        }
+
+        // ── 2. Update in-memory library & SQLite so the UI and queries are instant ──
         let updatedTrack = null;
         if (libraryById && libraryById.has(trackId)) {
           const track = libraryById.get(trackId);
-          if (tags.title  !== undefined) track.title  = tags.title;
+          if (tags.title !== undefined) track.title = tags.title;
           if (tags.artist !== undefined) track.artist = tags.artist;
-          if (tags.album  !== undefined) track.album  = tags.album;
-          if (tags.genre  !== undefined) track.genre  = tags.genre;
-          if (tags.year   !== undefined) track.year   = tags.year;
+          if (tags.album !== undefined) track.album = tags.album;
+          if (tags.genre !== undefined) track.genre = tags.genre;
+          if (tags.year !== undefined) track.year = tags.year;
           if (tags.coverArt) {
-            track.coverArt    = tags.coverArt;
+            track.coverArt = tags.coverArt;
             track._hasCoverArt = true;
           }
+          if (freshMtime !== null) track.dateModified = freshMtime;
+          track._userEdited = true;
           updatedTrack = track;
 
-          // Persist to SQLite
+          // Persist to SQLite: update indexed columns AND data JSON
           try {
             const row = db
               .prepare("SELECT data FROM tracks WHERE id = ?")
@@ -3362,29 +3702,73 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             if (row) {
               const dbTrack = JSON.parse(row.data);
               Object.assign(dbTrack, {
-                title:  track.title,
+                title: track.title,
                 artist: track.artist,
-                album:  track.album,
-                genre:  track.genre,
-                year:   track.year,
+                album: track.album,
+                genre: track.genre,
+                year: track.year,
+                _userEdited: true,
+                ...(freshMtime !== null ? { dateModified: freshMtime } : {}),
                 ...(tags.coverArt
                   ? { coverArt: tags.coverArt, _hasCoverArt: true }
                   : {}),
               });
-              db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(
+              db.prepare(
+                `UPDATE tracks 
+                 SET title = ?, artist = ?, album = ?, genre = ?, year = ?, dateModified = ?, data = ? 
+                 WHERE id = ?`,
+              ).run(
+                track.title || "",
+                Array.isArray(track.artist)
+                  ? track.artist.join(", ")
+                  : track.artist || "",
+                track.album || "",
+                track.genre || "",
+                Number(track.year) || null,
+                freshMtime !== null
+                  ? freshMtime
+                  : track.dateModified || Date.now(),
                 JSON.stringify(dbTrack),
                 trackId,
               );
             }
+
+            // Update track_covers table and memory cache if coverArt changed
+            if (tags.coverArt) {
+              db.prepare(
+                "INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)",
+              ).run(trackId, tags.coverArt);
+              if (typeof _coverArtByIdCache !== "undefined") {
+                _coverArtByIdCache.set(trackId, tags.coverArt);
+              }
+            }
           } catch (dbErr) {
-            console.error("[metadata:write-tags] DB update failed:", dbErr.message);
+            console.error(
+              "[metadata:write-tags] DB update failed:",
+              dbErr.message,
+            );
           }
 
-          // We no longer rebuild the binary manifest synchronously here.
-          // The renderer applies the metadata edits to its in-memory state instantly,
-          // so the UI updates accurately and quickly. The disk manifest will catch up
-          // on the next full app restart or full library scan. This solves the minutes-long 
-          // freeze when editing tags in large libraries.
+          // ── 3. Sync the binary manifest ────────────────────────────────
+          if (ManifestIPC.isFeatureFlagEnabled()) {
+            try {
+              const tracksForManifest =
+                typeof module.exports.getLibraryForManifest === "function"
+                  ? module.exports.getLibraryForManifest()
+                  : getLibrary();
+              ManifestIPC.rebuildManifest(tracksForManifest).catch((err) => {
+                console.warn(
+                  "[metadata:write-tags] background manifest resync failed:",
+                  err.message,
+                );
+              });
+            } catch (syncErr) {
+              console.warn(
+                "[metadata:write-tags] background manifest resync failed:",
+                syncErr.message,
+              );
+            }
+          }
         }
 
         return { success: true, updatedTrack };
@@ -3426,9 +3810,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
 
   ipcMain.handle("settings:set", async (event, key, value) => {
     try {
-      const settings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
-      settings[key] = value;
-      writeJSON(SETTINGS_FILE, settings);
+      await withSettingsFile((settings) => {
+        settings[key] = value;
+      });
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
@@ -4944,7 +5328,6 @@ module.exports.getLibraryForManifest = function () {
  * track row, now-playing display), so caching the lookup result eliminates
  * redundant Map.get() calls and null checks.
  */
-const _coverArtByIdCache = new Map(); // trackId → coverArt string | null
 function getCoverArtByTrackId(trackId) {
   const cached = _coverArtByIdCache.get(trackId);
   if (cached !== undefined) return cached;

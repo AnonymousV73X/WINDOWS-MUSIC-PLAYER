@@ -40,6 +40,9 @@ class PlayerControls {
     this._handlers = {};
     this._callbacks = {};
     this._isPlaying = false;
+    this._showRemaining = false;
+    this._currentTime = 0;
+    this._duration = 0;
 
     // Inject squiggle SVG into seek bar
     this._waveSvg = null;
@@ -115,6 +118,14 @@ class PlayerControls {
       this.setRepeatMode(this._repeatMode);
       this._callbacks.onRepeatChange?.(this._repeatMode);
     });
+
+    // ─── Duration Toggle (Total ↔ Remaining) ─────────────────
+    if (this.durationEl) {
+      this._addHandler(this.durationEl, "click", () => {
+        this._showRemaining = !this._showRemaining;
+        this.updateTimeDisplay(this._currentTime, this._duration);
+      });
+    }
 
     // ─── Seek Bar (div-based) ──────────────────────────────
     if (this.seekBar) {
@@ -222,6 +233,18 @@ class PlayerControls {
           );
           this.setVolume(this._audioEngine.getVolume());
           break;
+        case "KeyN":
+          if (!e.ctrlKey && !e.metaKey && !e.altKey) this._callbacks.onNext?.();
+          break;
+        case "KeyP":
+          if (!e.ctrlKey && !e.metaKey && !e.altKey) this._callbacks.onPrevious?.();
+          break;
+        case "KeyL":
+          if (!e.ctrlKey && !e.metaKey && !e.altKey) this._callbacks.onLike?.();
+          break;
+        case "KeyS":
+          if (!e.ctrlKey && !e.metaKey && !e.altKey) this.setShuffle(!this._shuffleEnabled);
+          break;
         case "KeyM":
           this.volumeIcon?.click();
           break;
@@ -292,10 +315,16 @@ class PlayerControls {
   }
 
   updateTimeDisplay(currentTime, duration) {
+    this._currentTime = currentTime;
+    this._duration = duration;
     if (this.currentTimeEl)
       this.currentTimeEl.textContent = this._formatTime(currentTime);
-    if (this.durationEl)
-      this.durationEl.textContent = this._formatTime(duration);
+    if (this.durationEl) {
+      const formatted = this._showRemaining
+        ? `-${this._formatTime(Math.max(0, (duration || 0) - (currentTime || 0)))}`
+        : this._formatTime(duration);
+      this.durationEl.textContent = formatted;
+    }
   }
 
   updatePlayState(isPlaying) {

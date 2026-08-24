@@ -186,9 +186,9 @@ class LibraryIndex {
     const artistMap = new Map();
 
     for (const track of this._tracks) {
-      const artists = (track.artist || 'Unknown Artist').split(/,\s*|;\s*|feat\.\s*/);
+      const artists = (track.artist || 'Unknown Artist').split(/,\s*|;\s*|\s+(?:feat\.?|ft\.?|featuring)\s+/i);
       for (const artist of artists) {
-        const clean = artist.trim().replace(/^\(|\)$/g, '');
+        const clean = artist.trim().replace(/^[()[\]{}.,;:"\-_]+|[()[\]{}.,;:"\-_]+$/g, '').trim();
         if (!clean) continue;
         const key = clean.toLowerCase();
         if (!artistMap.has(key)) {

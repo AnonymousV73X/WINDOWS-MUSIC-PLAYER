@@ -15,7 +15,8 @@
    - Removed duplicate "Force image fill" section (already in !important rules)
    ═══════════════════════════════════════════════════════════════════ */
 
-*, *::before,
+*,
+*::before,
 *::after {
   box-sizing: border-box;
   margin: 0;
@@ -38,7 +39,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: opacity 0.5s ease, visibility 0.5s ease;
+  transition:
+    opacity 0.5s ease,
+    visibility 0.5s ease;
 }
 .splash-screen.hidden {
   opacity: 0;
@@ -57,14 +60,31 @@
   position: relative;
   width: 48px;
   height: 48px;
+  opacity: 0;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.3));
+  animation: splash-fade-up 0.6s ease 0.1s forwards;
 }
-.splash-music-icon {
+.splash-cycle-icon {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
-  color: var(--green, #1ed760);
-  filter: drop-shadow(0 2px 8px rgba(0,0,0,0.3));
+  color: var(--green, #1ed760) !important;
   opacity: 0;
-  animation: splash-fade-up 0.6s ease 0.1s forwards;
+  will-change: opacity;
+  animation: splash-icon-cycle 12s linear infinite;
+}
+.splash-cycle-icon:nth-of-type(1) {
+  animation-delay: 0s;
+}
+.splash-cycle-icon:nth-of-type(2) {
+  animation-delay: -3s;
+}
+.splash-cycle-icon:nth-of-type(3) {
+  animation-delay: -6s;
+}
+.splash-cycle-icon:nth-of-type(4) {
+  animation-delay: -9s;
 }
 .splash-icon-glow {
   position: absolute;
@@ -123,7 +143,9 @@
   font-weight: 400;
   color: var(--text-secondary, #b3b3b3);
   opacity: 0.35;
-  transition: opacity 0.3s ease, color 0.3s ease;
+  transition:
+    opacity 0.3s ease,
+    color 0.3s ease;
 }
 .splash-status-row.is-loading {
   opacity: 1;
@@ -148,7 +170,9 @@
   height: 8px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.12);
-  transition: background 0.3s ease, box-shadow 0.3s ease;
+  transition:
+    background 0.3s ease,
+    box-shadow 0.3s ease;
   position: relative;
 }
 
@@ -159,16 +183,19 @@
   animation: splash-pulse 1.4s ease-in-out infinite;
 }
 @keyframes splash-pulse {
-  0%, 100% {
+  0%,
+  100% {
     transform: scale(1);
     /* v2.9: Use currentColor so the pulse matches the user's theme color.
        The dot's border color is set to var(--green) in the loading state,
        and currentColor inherits that. */
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--green, #1ed760) 40%, transparent);
+    box-shadow: 0 0 0 0
+      color-mix(in srgb, var(--green, #1ed760) 40%, transparent);
   }
   50% {
     transform: scale(1.15);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--green, #1ed760) 0%, transparent);
+    box-shadow: 0 0 0 4px
+      color-mix(in srgb, var(--green, #1ed760) 0%, transparent);
   }
 }
 
@@ -229,14 +256,43 @@
 
 /* ── Splash Keyframes ── */
 @keyframes splash-glow {
-  0%, 100% { opacity: 0.06; transform: scale(1); }
-  50% { opacity: 0.14; transform: scale(1.08); }
+  0%,
+  100% {
+    opacity: 0.06;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.14;
+    transform: scale(1.08);
+  }
 }
 @keyframes splash-fade-up {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
-
+@keyframes splash-icon-cycle {
+  0% {
+    opacity: 0;
+  }
+  3.3% {
+    opacity: 1;
+  }
+  21.7% {
+    opacity: 1;
+  }
+  25% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
 
 /* Removed global transition/animation override — was causing laggy UI.
    Individual components declare their own transitions where needed. */
@@ -276,16 +332,6 @@
     transform: translateX(-50%) translateY(0);
   }
 }
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
 :root {
   --bg: #121212;
   --sidebar-bg: #181818;
@@ -300,6 +346,1286 @@
   --lyrics-bg: #161616;
   --sidebar-w: 240px;
   --app-font: "Outfit", sans-serif;
+  --ui-scale: 1;
+  --slider-track-unfilled: #3a3a3a;
+  /* Soft dark text for green-background buttons & active toggles in dark mode */
+  --btn-text-dark: #1e2420;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f6f3;
+  --sidebar-bg: #fafbfa;
+  --surface: #ffffff;
+  --surface-hover: #edebe8;
+  --surface-active: color-mix(in srgb, var(--green, #1ed760) 12%, #ffffff);
+  --surface-2: #edebe8;
+  --border: #e2e4df;
+  --text-primary: #1f211d;
+  --text-secondary: #575a53;
+  --text-muted: #8b8f85;
+  --lyrics-bg: #fafbfa;
+  --slider-track-unfilled: #d8dcd3;
+  /* Light mode: button text stays light (handled by !important overrides below) */
+  --btn-text-dark: #e8e8e7;
+}
+
+[data-theme="light"] .splash-screen {
+  background: color-mix(in srgb, var(--green, #1ed760) 10%, #f3f5f0) !important;
+}
+
+[data-theme="light"] .splash-title {
+  color: #1f211d !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   REFERENCE-MATCHED LIGHT THEME DESIGN SYSTEM (DYNAMIC ACCENT)
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Sidebar */
+[data-theme="light"] .sidebar {
+  background: #ffffff !important;
+  border: 1px solid #e8eae5 !important;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .sidebar-search {
+  background: #f3f5f2 !important;
+  border: 1px solid #e3e6e0 !important;
+  border-radius: 20px !important;
+}
+
+[data-theme="light"] .sidebar-search input {
+  color: #1a1c19 !important;
+  font-weight: 500;
+}
+
+[data-theme="light"] .sidebar-search input::placeholder {
+  color: #8e9288 !important;
+}
+
+[data-theme="light"] .nav-item {
+  color: #444741 !important;
+  border-radius: 8px !important;
+  font-weight: 500 !important;
+}
+
+[data-theme="light"] .nav-item:hover:not(.active) {
+  background: #f2f4f1 !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .nav-item.active {
+  background: color-mix(in srgb, var(--green, #1ed760) 12%, #ffffff) !important;
+  color: #1a1c19 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="light"] .nav-item.active::before {
+  background: var(--green, #1ed760) !important;
+}
+
+/* Table Headers & Track List */
+[data-theme="light"] .col-headers {
+  border-bottom: 1px solid #e6e8e3 !important;
+  color: #72766d !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.5px !important;
+}
+
+[data-theme="light"] .track-row {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .track-row:hover {
+  background: #f2f4f1 !important;
+}
+
+[data-theme="light"] .track-row.active {
+  background: #ffffff !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05) !important;
+  border-radius: 12px !important;
+}
+
+[data-theme="light"] .track-row.active .track-title {
+  color: var(--green, #1ed760) !important;
+  font-weight: 600 !important;
+}
+
+/* Home Hero & Cards */
+[data-theme="light"] .home-hero {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.72) 0%,
+    rgba(246, 248, 244, 0.48) 100%
+  ) !important;
+  backdrop-filter: blur(24px) saturate(190%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(190%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.85) !important;
+  box-shadow:
+    0 10px 32px rgba(0, 0, 0, 0.05),
+    0 1px 2px rgba(0, 0, 0, 0.02),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.9) !important;
+  border-radius: 16px !important;
+}
+
+[data-theme="light"] .home-hero-bg {
+  display: none !important;
+}
+
+[data-theme="light"] .home-hero h2 {
+  color: #111310 !important;
+}
+
+[data-theme="light"] .home-hero p,
+[data-theme="light"] .home-hero .section-muted,
+[data-theme="light"] .home-hero-stats span {
+  color: #43463f !important;
+}
+
+[data-theme="light"] .section-panel,
+[data-theme="light"] .album-card,
+[data-theme="light"] .playlist-card,
+[data-theme="light"] .eq-layout {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.03) !important;
+  border-radius: 12px !important;
+}
+
+[data-theme="light"] .album-card:hover,
+[data-theme="light"] .playlist-card:hover {
+  background: #ffffff !important;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.07) !important;
+  transform: translateY(-2px);
+}
+
+[data-theme="light"] .album-cover,
+[data-theme="light"] .playlist-cover,
+[data-theme="light"] .artist-card-cover,
+[data-theme="light"] .art-placeholder,
+/* cover-img-container gets an inline backgroundColor from JS (_getDominantColorForTrack);
+   the JS already returns a light neutral in light mode, but this rule acts as a CSS
+   safety net for any brief flash before the JS evaluates the theme. */
+[data-theme="light"] .cover-img-container {
+  background: #e9ebe6 !important;
+}
+
+/* Playlist collage cells and vinyl-grid base are hardcoded dark — override for light mode */
+[data-theme="light"] .playlist-cover-cell,
+[data-theme="light"] .playlist-cover-4,
+[data-theme="light"] .track-thumb,
+[data-theme="light"] .playlist-song-thumb,
+[data-theme="light"] .mini-track-thumb,
+[data-theme="light"] #scroll-pill-art {
+  background: #e9ebe6 !important;
+}
+
+/* Playlist card vinyl disc skeleton light mode fix — replace dark hole & black outline rings */
+[data-theme="light"] .playlist-vinyl-disc {
+  box-shadow:
+    0 0 0 1px #e6e8e3,
+    0 0 0 2px rgba(0, 0, 0, 0.05),
+    0 8px 24px rgba(0, 0, 0, 0.12) !important;
+}
+
+[data-theme="light"] .playlist-card:hover .playlist-vinyl-disc {
+  box-shadow:
+    0 0 0 1px #e6e8e3,
+    0 0 0 4px rgba(0, 0, 0, 0.08),
+    0 10px 28px rgba(0, 0, 0, 0.15) !important;
+}
+
+[data-theme="light"] .playlist-vinyl-disc::after {
+  background: #e9ebe6 !important;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* NovaTune logo play icon in Light Mode */
+[data-theme="light"] .titlebar-logo svg,
+[data-theme="light"] .titlebar-logo svg * {
+  fill: #efefef !important;
+}
+
+/* Shuffle & Play, Custom Queue, Settings toggles & EQ pills in Light Mode */
+[data-theme="light"] .shuffle-btn,
+[data-theme="light"] .home-shuffle-btn,
+[data-theme="light"] #shuffle-play-btn,
+[data-theme="light"] #home-shuffle-btn,
+[data-theme="light"] .section-primary-btn,
+[data-theme="light"] .cqb-home-btn,
+[data-theme="light"] .settings-toggle-btn.active,
+[data-theme="light"] .accent-dynamic-btn.active,
+[data-theme="light"] .eq-preset-pill.active,
+[data-theme="light"] .help-contact-btn,
+[data-theme="light"] .help-version-btn .version-badge {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06) !important;
+  color: #ffffff !important;
+}
+
+[data-theme="light"] #help-check-update-btn {
+  background: #f0f2ee !important;
+  border: 1px solid #d8dcd3 !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] #help-check-update-btn:hover {
+  background: #e4e8e1 !important;
+  color: #000000 !important;
+}
+
+/* Now Playing floating scroll-to-track pill in Light Mode */
+[data-theme="light"] #scroll-to-track-pill {
+  background: rgba(255, 255, 255, 0.92) !important;
+  border-color: #e6e8e3 !important;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.08),
+    0 0 0 1px rgba(0, 0, 0, 0.03) inset !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] #scroll-to-track-pill:hover {
+  background: #ffffff !important;
+  border-color: var(--accent-color, #f59e0b) !important;
+}
+
+[data-theme="light"] #scroll-pill-title {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] #scroll-pill-artist {
+  color: #6a6e65 !important;
+}
+
+/* ── Now Playing Controls & Heart in Light Mode ──────────────────── */
+[data-theme="light"] .np-heart {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .np-heart:hover {
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .np-heart.liked {
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .np-heart.liked svg {
+  fill: var(--green, #1ed760) !important;
+  stroke: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .np-btn {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .np-btn:hover {
+  color: #1a1c19 !important;
+}
+
+/* Active transport controls (shuffle / repeat) stay green in light mode */
+[data-theme="light"] .np-btn.active {
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .np-btn.active svg {
+  filter: none !important;
+}
+
+[data-theme="light"] .np-btn.active:hover {
+  color: var(--green, #1ed760) !important;
+  opacity: 0.85;
+}
+
+/* ── Playlist Popover & Track Context Menus in Light Mode ─────────── */
+[data-theme="light"] .playlist-popover {
+  background: rgba(255, 255, 255, 0.94) !important;
+  backdrop-filter: blur(24px) saturate(1.8) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.8) !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.12),
+    0 0 0 1px rgba(255, 255, 255, 0.8) inset !important;
+}
+
+[data-theme="light"] .playlist-popover button {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .playlist-popover button:hover {
+  background: rgba(0, 0, 0, 0.06) !important;
+}
+
+[data-theme="light"] .playlist-popover button:disabled {
+  color: #8a8d86 !important;
+  opacity: 0.65 !important;
+}
+
+[data-theme="light"] .playlist-popover button span {
+  color: #72766e !important;
+}
+
+[data-theme="light"] .playlist-popover-title {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .context-menu-divider {
+  background: rgba(0, 0, 0, 0.08) !important;
+}
+
+[data-theme="light"] .track-context-menu .context-menu-danger {
+  color: #e74c3c !important;
+}
+
+[data-theme="light"] .track-context-menu .context-menu-danger:hover {
+  background: rgba(231, 76, 60, 0.1) !important;
+}
+
+/* Floating & Main Lyrics Panel Contrast Fixes */
+[data-theme="light"] .lyrics-panel,
+[data-theme="light"] #lyrics-flyout {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06) !important;
+  border-radius: 16px !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .lyrics-header {
+  border-bottom-color: #e6e8e3 !important;
+}
+
+[data-theme="light"] .lyrics-title {
+  color: #1a1c19 !important;
+  opacity: 1 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="light"] .lyrics-action-btn {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .lyrics-action-btn:hover {
+  color: #1a1c19 !important;
+  background: #f2f4f1 !important;
+}
+
+[data-theme="light"] .lyric-line {
+  color: #1a1c19 !important;
+  opacity: 0.45 !important;
+}
+
+[data-theme="light"] .lyric-line:hover {
+  opacity: 0.75 !important;
+}
+
+[data-theme="light"] .lyric-line.active {
+  color: #1a1c19 !important;
+  opacity: 1 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="light"] .synced-badge {
+  background: #ffffff !important;
+  border: 1px solid #d8dcd3 !important;
+  color: var(--green, #1ed760) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06) !important;
+}
+
+/* Track Table Cell Contrast Fixes */
+[data-theme="light"] .col-headers {
+  color: #444741 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="light"] .track-num,
+[data-theme="light"] .track-year,
+[data-theme="light"] .track-duration {
+  color: #575a53 !important;
+  opacity: 1 !important;
+  font-weight: 500 !important;
+}
+
+[data-theme="light"] .track-title {
+  color: #1a1c19 !important;
+  font-weight: 500 !important;
+}
+
+[data-theme="light"] .track-artist {
+  color: #575a53 !important;
+}
+
+/* Now Playing Bar Controls Contrast Fixes */
+[data-theme="light"] #now-playing {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.04) !important;
+}
+
+[data-theme="light"] .np-btn,
+[data-theme="light"] #np-menu-btn,
+[data-theme="light"] #prev-btn,
+[data-theme="light"] #next-btn {
+  color: #444741 !important;
+}
+
+[data-theme="light"] .np-btn:hover,
+[data-theme="light"] #np-menu-btn:hover,
+[data-theme="light"] #prev-btn:hover,
+[data-theme="light"] #next-btn:hover {
+  color: #1a1c19 !important;
+  opacity: 1 !important;
+}
+
+[data-theme="light"] .np-play {
+  background: transparent !important;
+  border: 2px solid var(--green, #1ed760) !important;
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .np-play:hover {
+  background: color-mix(
+    in srgb,
+    var(--green, #1ed760) 6%,
+    transparent
+  ) !important;
+}
+
+[data-theme="light"] .np-play svg,
+[data-theme="light"] .np-play svg * {
+  fill: var(--green, #1ed760) !important;
+  color: var(--green, #1ed760) !important;
+  stroke: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .np-time {
+  color: #575a53 !important;
+  font-weight: 500 !important;
+}
+
+/* Buttons & Badges */
+[data-theme="light"] .action-btn-circle,
+[data-theme="light"] .action-btn-text,
+[data-theme="light"] .playlist-import-fab {
+  background: #ffffff !important;
+  border: 1px solid #d8dcd3 !important;
+  color: var(--green, #1ed760) !important;
+  border-radius: 20px !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="light"] .action-btn-circle:hover,
+[data-theme="light"] .action-btn-text:hover,
+[data-theme="light"] .playlist-import-fab:hover {
+  background: color-mix(in srgb, var(--green, #1ed760) 12%, #ffffff) !important;
+  border-color: var(--green, #1ed760) !important;
+}
+
+/* Settings Controls & Form Inputs */
+[data-theme="light"] .settings-toggle-btn {
+  background: #f0f2ee !important;
+  border-color: #d8dcd3 !important;
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .settings-toggle-btn:hover:not(.active) {
+  background: #e4e8e1 !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .settings-toggle-btn.active {
+  background: var(--green, #1ed760) !important;
+  color: #f5f6f3 !important;
+  border-color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .settings-row input[type="checkbox"],
+[data-theme="light"] .eq-enable input[type="checkbox"] {
+  background: #d8dcd3 !important;
+}
+
+[data-theme="light"] .settings-row input[type="checkbox"]::after,
+[data-theme="light"] .eq-enable input[type="checkbox"]::after {
+  background: #ffffff !important;
+}
+
+[data-theme="light"] .settings-row input[type="checkbox"]:checked,
+[data-theme="light"] .eq-enable input[type="checkbox"]:checked {
+  background: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .settings-row input[type="checkbox"]:checked::after,
+[data-theme="light"] .eq-enable input[type="checkbox"]:checked::after {
+  background: #ffffff !important;
+}
+
+[data-theme="light"] #accent-dynamic-btn {
+  border-color: #d8dcd3 !important;
+}
+
+/* Search Suggestions Popup in Light Theme */
+[data-theme="light"] .search-suggestions {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.08) !important;
+}
+
+[data-theme="light"] .search-suggestions button {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .search-suggestions button:hover {
+  background: #f2f4f1 !important;
+}
+
+[data-theme="light"] .search-suggestions small {
+  color: #575a53 !important;
+}
+
+/* Custom Sort Dropdown in Light Theme */
+[data-theme="light"] .sort-label {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .dropdown-trigger {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  color: #1a1c19 !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03) !important;
+}
+
+[data-theme="light"] .dropdown-trigger:hover {
+  border-color: #d0d4cc !important;
+  background: #fcfdfe !important;
+}
+
+[data-theme="light"] .dropdown-arrow {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .dropdown-menu {
+  background: rgba(255, 255, 255, 0.95) !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.1) !important;
+}
+
+[data-theme="light"] .dropdown-item {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .dropdown-item:hover {
+  background: #f2f4f1 !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .dropdown-item.active {
+  color: var(--green, #1ed760) !important;
+  font-weight: 600 !important;
+}
+
+/* Equalizer Section in Light Theme */
+[data-theme="light"] .eq-preset-group-label {
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .eq-preset-pill {
+  background: #e9ebe6 !important;
+  border-color: #d8dcd3 !important;
+  color: #333631 !important;
+}
+
+[data-theme="light"] .eq-preset-pill:hover {
+  background: #dfe2dc !important;
+  color: #1a1c19 !important;
+  border-color: #c5cac0 !important;
+}
+
+[data-theme="light"] .eq-preset-pill.active {
+  background: var(--green, #1ed760) !important;
+  border-color: var(--green, #1ed760) !important;
+  color: #f5f6f3 !important;
+}
+
+[data-theme="light"] .eq-gain {
+  color: #1a1c19 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="light"] .eq-band span {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .eq-enable {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .eq-boost-wrap {
+  border-top-color: #e6e8e3 !important;
+}
+
+[data-theme="light"] .eq-boost-header span:first-child {
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .eq-boost-value {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .eq-boost-ticks span {
+  color: #6a6e65 !important;
+}
+
+/* Accent Dynamic button in Light Mode */
+[data-theme="light"] .accent-dynamic-btn {
+  background: #e9ebe6 !important;
+  color: #575a53 !important;
+  border-color: #d8dcd3 !important;
+}
+
+[data-theme="light"] .accent-dynamic-btn:hover {
+  background: #dfe2dc !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .accent-dynamic-btn.active {
+  background: var(--green, #1ed760) !important;
+  color: #f5f6f3 !important;
+  border-color: var(--green, #1ed760) !important;
+}
+
+/* Range input slider accent color (Equalizer, Volume Boost, UI Scaling, Safe Volume) */
+input[type="range"] {
+  accent-color: var(--green, #1ed760);
+}
+
+/* Dynamic accent button had no active-state style at all in dark mode —
+   toggling it on was visually invisible. */
+.accent-dynamic-btn.active {
+  background: var(--green, #1ed760) !important;
+  color: var(--btn-text-dark, #1e2420) !important;
+  border-color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] input[type="range"] {
+  accent-color: var(--green, #1ed760) !important;
+}
+
+/* Chromium picks the *unfilled* track's neutral colour based on the
+   lightness of accent-color itself — with a light/vivid custom accent
+   it can swap to a near-black (light mode) or overly-white (dark mode,
+   since color-scheme isn't pinned there) track. renderer.js computes
+   --range-pct/--range-frac on these four sliders (init + "input").
+   Paint the track ourselves: accent-colored up to the thumb, a fixed
+   theme-appropriate grey after — so the unfilled portion never
+   depends on the accent's lightness. The calc() offsets by 8px (half
+   the native ~16px thumb) on each end so the colour boundary lines up
+   with the thumb's visual center instead of the raw value fraction,
+   which otherwise drifts noticeably near the track's ends. */
+/* Disable native accent-color rendering so pseudo-element track/thumb
+   overrides actually take effect in Chromium/Electron */
+#setting-safe-volume,
+#setting-volume-boost,
+#setting-ui-scale,
+#eq-boost-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+
+#setting-safe-volume::-webkit-slider-runnable-track,
+#setting-volume-boost::-webkit-slider-runnable-track,
+#setting-ui-scale::-webkit-slider-runnable-track,
+#eq-boost-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  background: linear-gradient(
+    to right,
+    var(--green, #1ed760) calc(8px + var(--range-frac, 0.5) * (100% - 16px)),
+    var(--slider-track-unfilled)
+      calc(8px + var(--range-frac, 0.5) * (100% - 16px))
+  ) !important;
+  border-radius: 999px;
+}
+
+/* Thumb: fully custom size/color now that native appearance is off.
+   margin-top re-centers: (track-height - thumb-height) / 2 = (3px - 12px) / 2 */
+#setting-safe-volume::-webkit-slider-thumb,
+#setting-volume-boost::-webkit-slider-thumb,
+#setting-ui-scale::-webkit-slider-thumb,
+#eq-boost-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--green, #1ed760);
+  cursor: default;
+  margin-top: -4.5px;
+}
+
+#setting-safe-volume::-moz-range-track,
+#setting-volume-boost::-moz-range-track,
+#setting-ui-scale::-moz-range-track,
+#eq-boost-slider::-moz-range-track {
+  height: 3px;
+  background: var(--slider-track-unfilled) !important;
+  border-radius: 999px;
+}
+
+#setting-safe-volume::-moz-range-progress,
+#setting-volume-boost::-moz-range-progress,
+#setting-ui-scale::-moz-range-progress,
+#eq-boost-slider::-moz-range-progress {
+  height: 3px;
+  background: var(--green, #1ed760) !important;
+  border-radius: 999px;
+}
+
+/* ── Tooltips in light mode ──────────────────────────────────────
+   Base [data-tooltip] pseudo-elements, the sidebar's portal-rendered
+   tooltips (real DOM node, can't use ::before/::after), and the
+   floating nav card's per-button tooltip were all hardcoded dark
+   (#282828 / near-black glass) with no light-mode variant. */
+[data-theme="light"] [data-tooltip]::before,
+[data-theme="light"] .sidebar-tooltip-portal {
+  background: #ffffff !important;
+  color: #1a1c19 !important;
+  border: 1px solid rgba(0, 0, 0, 0.12) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1) !important;
+}
+
+[data-theme="light"] [data-tooltip]::after {
+  border-top-color: #ffffff !important;
+}
+
+[data-theme="light"] .sidebar-help-btn[data-tooltip]::after,
+[data-theme="light"] #float-nav-trigger[data-tooltip]::after,
+[data-theme="light"] #lyrics-toggle-btn[data-tooltip]::after {
+  border-bottom-color: #ffffff !important;
+}
+
+/* ── Floating nav card (icon-strip nav, ≤950px) in light mode ── */
+[data-theme="light"] .floating-nav-card {
+  background: rgba(255, 255, 255, 0.82) !important;
+  border-left: 1px solid rgba(0, 0, 0, 0.08) !important;
+  border-top: 1px solid rgba(0, 0, 0, 0.08) !important;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.14),
+    0 0 0 1px rgba(0, 0, 0, 0.03) inset !important;
+}
+
+[data-theme="light"] .floating-nav-card .fn-btn:hover,
+[data-theme="light"] .floating-nav-card .fn-btn.active {
+  background: rgba(0, 0, 0, 0.08) !important;
+}
+
+[data-theme="light"] .floating-nav-card .fn-divider {
+  background: rgba(0, 0, 0, 0.1) !important;
+}
+
+[data-theme="light"] .floating-nav-card .fn-btn::after {
+  background: rgba(255, 255, 255, 0.9) !important;
+  border-color: rgba(0, 0, 0, 0.12) !important;
+}
+
+[data-theme="light"] .floating-nav-card .fn-search-input {
+  background: #ffffff !important;
+  border-color: rgba(0, 0, 0, 0.12) !important;
+}
+
+/* ── Hamburger trigger button in light mode ── */
+[data-theme="light"] .float-nav-trigger {
+  border-color: #d8dcd3 !important;
+}
+
+[data-theme="light"] .float-nav-trigger:hover {
+  background: rgba(0, 0, 0, 0.05) !important;
+  border-color: rgba(0, 0, 0, 0.18) !important;
+}
+
+/* ── Equalizer band sliders (vertical) ─────────────────────────────
+   Same root cause and fix as the horizontal sliders above. Bands are
+   vertical (writing-mode: vertical-rl; direction: rtl), so the fill
+   runs bottom (min) → top (max) — same value normalization as
+   _updateRangePct, consumed here via a "to top" gradient instead of
+   "to right", with the same thumb-radius calc() correction.
+   _updateEqBandPct in renderer.js keeps --range-pct/--range-frac in
+   sync on init/input/preset-apply.
+
+   Track width is unset in the base .eq-band input rule, so it would
+   otherwise fall back to Chromium's native OS-themed slim line —
+   UNTIL a custom ::-webkit-slider-runnable-track background is added
+   (right below), which drops native theming and expands the track to
+   the input's full auto layout width, producing a thick capsule bar
+   instead of the original slim equalizer look. Pin that width down
+   in both themes, since both now get a custom track. */
+.eq-band input {
+  width: 2px;
+}
+
+.eq-band input::-webkit-slider-runnable-track {
+  background: linear-gradient(
+    to top,
+    var(--green, #1ed760) calc(8px + var(--range-frac, 0.5) * (100% - 16px)),
+    var(--slider-track-unfilled)
+      calc(8px + var(--range-frac, 0.5) * (100% - 16px))
+  ) !important;
+  border-radius: 999px;
+}
+
+.eq-band input::-moz-range-track {
+  background: var(--slider-track-unfilled) !important;
+  border-radius: 999px;
+}
+
+.eq-band input::-moz-range-progress {
+  background: var(--green, #1ed760) !important;
+  border-radius: 999px;
+}
+
+/* Typography Crispness Optimization */
+[data-theme="light"] body,
+[data-theme="light"] input,
+[data-theme="light"] button {
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+  text-rendering: optimizeLegibility !important;
+}
+
+/* Active Track Row — Pure White Tile */
+[data-theme="light"] .track-row.active {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04) !important;
+  border-radius: 10px !important;
+}
+
+/* ── Now Playing Full-Screen Overlay in Light Mode ───────────────── */
+[data-theme="light"] .np-overlay {
+  background: #e4e7e0 !important;
+}
+
+[data-theme="light"] .np-overlay-bg {
+  filter: blur(85px) brightness(1.05) saturate(1.2) !important;
+  opacity: 0.42 !important;
+}
+
+[data-theme="light"] .np-overlay-shade {
+  background: rgba(228, 231, 224, 0.72) !important;
+}
+
+[data-theme="light"] .np-overlay-close {
+  background: rgba(0, 0, 0, 0.08) !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .np-overlay-close:hover {
+  background: rgba(0, 0, 0, 0.15) !important;
+  color: #000000 !important;
+}
+
+[data-theme="light"] .np-overlay-label {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .np-overlay-track-title {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .np-overlay-track-artist {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .ov-mini-title {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .ov-mini-artist,
+[data-theme="light"] .ov-time {
+  color: #4a4d46 !important;
+  font-weight: 500;
+}
+
+[data-theme="light"] .ov-btn {
+  color: #4a4d46 !important;
+}
+
+[data-theme="light"] .ov-btn:hover {
+  color: #1a1c19 !important;
+}
+
+/* Active overlay controls (shuffle / repeat) stay green in light mode */
+[data-theme="light"] .ov-btn.active {
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .ov-btn.active svg {
+  filter: none !important;
+}
+
+[data-theme="light"] .ov-btn.active:hover {
+  color: var(--green, #1ed760) !important;
+  opacity: 0.85;
+}
+
+/* Overlay and Now-Playing volume bar in light mode */
+[data-theme="light"] #ov-vol-bar,
+[data-theme="light"] .vol-bar {
+  background: rgba(0, 0, 0, 0.18) !important;
+}
+
+[data-theme="light"] #ov-vol-bar #ov-vol-fill,
+[data-theme="light"] .vol-fill {
+  background: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .ov-play {
+  background: transparent !important;
+  border: 2px solid var(--green, #1ed760) !important;
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .ov-play:hover {
+  background: color-mix(
+    in srgb,
+    var(--green, #1ed760) 12%,
+    transparent
+  ) !important;
+  transform: scale(1.01) !important;
+}
+
+[data-theme="light"] .ov-play svg,
+[data-theme="light"] .ov-play svg * {
+  fill: var(--green, #1ed760) !important;
+  color: var(--green, #1ed760) !important;
+  stroke: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .ov-lyric {
+  color: #1a1c19 !important;
+  opacity: 0.28 !important;
+}
+
+[data-theme="light"] .ov-lyric:hover {
+  opacity: 0.55 !important;
+}
+
+[data-theme="light"] .ov-lyric.prev-1,
+[data-theme="light"] .ov-lyric.next-1 {
+  opacity: 0.65 !important;
+}
+
+[data-theme="light"] .ov-lyric.prev-2,
+[data-theme="light"] .ov-lyric.next-2 {
+  opacity: 0.4 !important;
+}
+
+[data-theme="light"] .ov-lyric.active {
+  color: #000000 !important;
+  opacity: 1 !important;
+  font-weight: 700 !important;
+  text-shadow: 0 0 12px rgba(255, 255, 255, 0.9);
+}
+
+[data-theme="light"] .ov-lyric.unsynced-lit {
+  opacity: 0.95 !important;
+}
+
+[data-theme="light"] .ov-lyric-artist {
+  color: rgba(0, 0, 0, 0.4) !important;
+}
+
+[data-theme="light"] .np-overlay-synced {
+  background: rgba(0, 0, 0, 0.05) !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .np-overlay-synced.unsynced {
+  color: rgba(0, 0, 0, 0.45) !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+[data-theme="light"] .ov-lyrics-empty {
+  color: #575a53 !important;
+}
+
+/* ── Dialogs & Alert Cards in Light Mode ──────────────────────────── */
+[data-theme="light"] .app-dialog-backdrop {
+  background: rgba(0, 0, 0, 0.35) !important;
+}
+
+[data-theme="light"] .app-dialog-card {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.12) !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .app-dialog-title {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .app-dialog-message {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .app-dialog-input {
+  background: #f0f2ee !important;
+  border: 1px solid #d8dcd3 !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .app-dialog-btn {
+  background: #f0f2ee !important;
+  color: #1a1c19 !important;
+  border: 1px solid #d8dcd3 !important;
+}
+
+[data-theme="light"] .app-dialog-btn:hover {
+  background: #e4e8e1 !important;
+}
+
+[data-theme="light"] .app-dialog-btn.primary {
+  background: var(--green, #1ed760) !important;
+  color: #f5f6f3 !important;
+  border-color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .app-dialog-btn.danger {
+  background: #ff4d6d !important;
+  color: #ffffff !important;
+  border-color: #ff4d6d !important;
+}
+
+/* ── Modals in Light Mode ─────────────────────────────────────────── */
+[data-theme="light"] .lyrics-editor-backdrop,
+[data-theme="light"] .cqb-modal-overlay {
+  background: rgba(0, 0, 0, 0.4) !important;
+}
+
+[data-theme="light"] .lyrics-editor-inner,
+[data-theme="light"] .cqb-modal-card,
+[data-theme="light"] .aie-dialog {
+  background: #ffffff !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.15) !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .cqb-header {
+  border-bottom: 1px solid #e6e8e3 !important;
+}
+
+/* ── Lyrics Editor in Light Mode ──────────────────────────────────── */
+[data-theme="light"] .lyrics-editor-header {
+  border-bottom: 1px solid #e6e8e3 !important;
+}
+
+[data-theme="light"] .lyrics-editor-title {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .lyrics-editor-track-name {
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .lyrics-editor-close {
+  background: #f0f2ee !important;
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .lyrics-editor-close:hover {
+  background: #e4e8e1 !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .lyrics-editor-tabs {
+  border-bottom: 1px solid #e6e8e3 !important;
+}
+
+[data-theme="light"] .le-tab {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .le-tab:hover {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .le-tab.active {
+  color: #1a1c19 !important;
+  border-bottom-color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .le-input {
+  background: #f4f6f2 !important;
+  border: 1px solid #d8dcd3 !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .le-input:focus {
+  border-color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .le-input::placeholder {
+  color: #8b8f85 !important;
+}
+
+[data-theme="light"] .le-search-btn {
+  background: var(--green, #1ed760) !important;
+  color: #ffffff !important;
+}
+
+[data-theme="light"] .le-search-btn:hover {
+  background: var(--green-hover, #1fdf64) !important;
+}
+
+[data-theme="light"] .le-search-status {
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .le-result-card {
+  background: #f7f8f5 !important;
+  border: 1px solid #e4e6e1 !important;
+}
+
+[data-theme="light"] .le-result-card:hover {
+  background: #eef1ec !important;
+  opacity: 1 !important;
+}
+
+[data-theme="light"] .le-result-card.selected {
+  border-color: var(--green, #1ed760) !important;
+  background: color-mix(in srgb, var(--green, #1ed760) 8%, #ffffff) !important;
+  opacity: 1 !important;
+}
+
+[data-theme="light"] .le-result-title {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .le-result-artist {
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .le-badge {
+  background: #e2e5df !important;
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .le-badge-synced {
+  background: color-mix(in srgb, var(--green, #1ed760) 15%, transparent) !important;
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .le-badge-inst {
+  background: #e2e5df !important;
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .le-badge-dur {
+  background: #e2e5df !important;
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .le-badge-dur-match {
+  background: color-mix(in srgb, var(--green, #1ed760) 15%, transparent) !important;
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .le-result-use-btn {
+  background: #ffffff !important;
+  border: 1px solid #d8dcd3 !important;
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .le-result-use-btn:hover {
+  border-color: var(--green, #1ed760) !important;
+  color: var(--green, #1ed760) !important;
+  background: color-mix(in srgb, var(--green, #1ed760) 8%, #ffffff) !important;
+  opacity: 1 !important;
+}
+
+[data-theme="light"] .le-result-card.selected .le-result-use-btn {
+  border-color: var(--green, #1ed760) !important;
+  color: #ffffff !important;
+  background: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .le-search-results::-webkit-scrollbar-thumb,
+[data-theme="light"] .le-textarea::-webkit-scrollbar-thumb {
+  background: #cdd1c8 !important;
+}
+
+[data-theme="light"] .le-search-results::-webkit-scrollbar-thumb:hover,
+[data-theme="light"] .le-textarea::-webkit-scrollbar-thumb:hover {
+  background: #b5baa0 !important;
+}
+
+[data-theme="light"] .le-paste-hint {
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .le-paste-hint code {
+  background: #e8eae4 !important;
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .le-textarea {
+  background: #f7f8f5 !important;
+  border-top: 1px solid #e6e8e3 !important;
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .le-textarea::placeholder {
+  color: #8b8f85 !important;
+}
+
+[data-theme="light"] .le-file-drop {
+  border-color: #d8dcd3 !important;
+  background: #f7f8f5 !important;
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .le-file-drop:hover,
+[data-theme="light"] .le-file-drop.dragover {
+  border-color: var(--green, #1ed760) !important;
+  background: color-mix(in srgb, var(--green, #1ed760) 6%, #f7f8f5) !important;
+  color: #1a1c19 !important;
+  opacity: 1 !important;
+}
+
+[data-theme="light"] .le-file-name {
+  color: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .lyrics-editor-footer {
+  background: #f4f6f2 !important;
+  border-top: 1px solid #e6e8e3 !important;
+}
+
+[data-theme="light"] .le-save-status {
+  color: #6a6e65 !important;
+}
+
+[data-theme="light"] .le-btn-primary {
+  background: var(--green, #1ed760) !important;
+  color: #ffffff !important;
+}
+
+[data-theme="light"] .le-btn-primary:hover {
+  opacity: 0.9 !important;
+}
+
+[data-theme="light"] .le-btn-secondary {
+  background: #ffffff !important;
+  border: 1px solid #d8dcd3 !important;
+  color: #575a53 !important;
+}
+
+[data-theme="light"] .le-btn-secondary:hover {
+  border-color: #ff4d6d !important;
+  color: #ff4d6d !important;
+  background: #fff5f6 !important;
 }
 
 /* Global text selection — use accent green instead of native blue */
@@ -312,6 +1638,21 @@
   color: var(--text-primary);
 }
 
+html {
+  overflow: hidden !important;
+  height: 100vh;
+  width: 100vw;
+  margin: 0;
+  padding: 0;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
 body {
   font-family: var(--app-font);
   background: var(--bg);
@@ -319,7 +1660,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  overflow: hidden;
+  overflow: hidden !important;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
   user-select: none;
@@ -369,7 +1710,9 @@ body.overlay-visible .titlebar {
   align-items: center;
   justify-content: center;
   cursor: pointer; /* v2.9: clickable — toggles floating menu */
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
 }
 .titlebar-logo:hover {
   transform: scale(1.1);
@@ -384,11 +1727,15 @@ body.overlay-visible .titlebar {
 }
 
 .titlebar-logo svg {
-  width: 8px;
-  height: 8px;
-  fill: #000;
+  width: 6.4px;
+  height: 6.4px;
   display: block;
-  margin-left: 2px;
+  margin-left: 1.2px;
+}
+
+.titlebar-logo svg,
+.titlebar-logo svg * {
+  fill: #3f3f3f !important;
 }
 
 button,
@@ -401,6 +1748,7 @@ textarea {
 .mini-track-list,
 .mini-track-list * {
   font: inherit;
+  font-weight: 500;
 }
 
 .titlebar-name {
@@ -431,7 +1779,6 @@ textarea {
   }
 }
 
-
 /* ── LAYOUT ── */
 .app-body {
   display: flex;
@@ -456,6 +1803,19 @@ textarea {
   z-index: 100;
   border: 1px solid #242424;
   position: relative;
+  /* Task 3: Sidebar overflow fix — nav items were spilling outside the
+     sidebar card on smaller windows / with many nav sections instead of
+     scrolling. The sidebar is a fixed-height flex child of the
+     (height:100vh, overflow:hidden) body, so it's safe to let it manage
+     its own vertical scroll region here. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+.sidebar::-webkit-scrollbar {
+  display: none;
+  width: 0px;
 }
 
 .sidebar-search {
@@ -599,8 +1959,12 @@ textarea {
   transform: translateX(-50%) translateY(0);
 }
 /* Lyrics pill extra offset to avoid overlapping sort group */
-#lyrics-toggle-btn[data-tooltip]::before { top: calc(100% + 14px); }
-#lyrics-toggle-btn[data-tooltip]::after { top: calc(100% + 8px); }
+#lyrics-toggle-btn[data-tooltip]::before {
+  top: calc(100% + 14px);
+}
+#lyrics-toggle-btn[data-tooltip]::after {
+  top: calc(100% + 8px);
+}
 
 .sidebar-help-btn svg {
   width: 16px;
@@ -611,8 +1975,6 @@ textarea {
 .sidebar-help-btn:hover {
   color: var(--text-primary);
 }
-
-
 
 .nav-section {
   padding: 4px 0;
@@ -644,18 +2006,17 @@ textarea {
 }
 /* Left accent bar — only on active item */
 .nav-item.active::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 0;
   top: 50%;
   transform: translateY(-50%);
   width: 3px;
   height: 60%;
-  background: var(--green, #1DB954);
+  background: var(--green, #1db954);
   border-radius: 0 3px 3px 0;
   opacity: 1;
 }
-
 
 .nav-item svg {
   width: 18px;
@@ -667,6 +2028,10 @@ textarea {
   height: 1px;
   background: #222;
   margin: 8px 16px;
+}
+
+[data-theme="light"] .sidebar-divider {
+  background: #e2e4df !important;
 }
 
 .sidebar-overlay {
@@ -719,7 +2084,9 @@ textarea {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: background 0.2s ease, color 0.2s ease;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease;
 }
 
 .queue-source-badge:hover {
@@ -793,7 +2160,7 @@ textarea {
   align-items: center;
   gap: 8px;
   background: var(--green);
-  color: #000;
+  color: var(--btn-text-dark, #1e2420);
   border: none;
   border-radius: 8px;
   padding: 8px 18px;
@@ -811,7 +2178,6 @@ textarea {
 
 .shuffle-btn:hover {
   opacity: 0.8;
-
 }
 
 .shuffle-btn svg {
@@ -859,6 +2225,37 @@ textarea {
   width: 15px;
   height: 15px;
   flex-shrink: 0;
+}
+
+/* Task 4: Lyrics pill click animation — a quick squash/bounce + glowing
+   ring pulse so the toggle feels responsive when tapped. Applied as a
+   one-shot class by toggleLyricsPanel() and removed on animationend. */
+@keyframes lyrics-pill-pop {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0
+      color-mix(in srgb, var(--green, #1ed760) 55%, transparent);
+  }
+  35% {
+    transform: scale(0.98);
+  }
+  60% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 6px
+      color-mix(in srgb, var(--green, #1ed760) 0%, transparent);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.lyrics-toggle-btn.lyrics-pill-pop {
+  animation: lyrics-pill-pop 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.lyrics-toggle-btn.lyrics-pill-pop svg {
+  animation: lyrics-pill-pop 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .sort-label {
@@ -916,7 +2313,8 @@ textarea {
   -webkit-backdrop-filter: blur(24px) saturate(1.6);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.65),
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.65),
     0 0 0 1px rgba(255, 255, 255, 0.04) inset;
   display: none;
   flex-direction: column;
@@ -957,7 +2355,6 @@ textarea {
    Add data-tooltip="Your text" to any element to activate. */
 [data-tooltip] {
   position: relative;
- 
 }
 
 [data-tooltip]::before,
@@ -965,7 +2362,9 @@ textarea {
   position: absolute;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
   z-index: 9000;
 }
 
@@ -1006,7 +2405,7 @@ textarea {
 .scan-progress-overlay {
   position: absolute;
   inset: 0;
-  z-index: 50;
+  z-index: 600;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1025,7 +2424,7 @@ textarea {
   flex-direction: column;
   align-items: center;
   gap: 18px;
-  
+
   min-width: 340px;
   backdrop-filter: blur(4px) saturate(160%);
   -webkit-backdrop-filter: blur(10px) saturate(160%);
@@ -1034,7 +2433,7 @@ textarea {
 .scan-progress-spinner {
   width: 44px;
   height: 44px;
-  border: 2.5px solid rgba(255, 255, 255, 0.10);
+  border: 2.5px solid rgba(255, 255, 255, 0.1);
   border-top-color: var(--green);
   border-radius: 50%;
   animation: spin 0.75s linear infinite;
@@ -1049,7 +2448,7 @@ textarea {
 
 .scan-progress-text {
   font-size: 13.5px;
-  color: rgba(255, 255, 255, 0.70);
+  color: rgba(255, 255, 255, 0.7);
   text-align: center;
   letter-spacing: 0.01em;
 }
@@ -1064,7 +2463,11 @@ textarea {
 
 .scan-progress-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--green), color-mix(in srgb, var(--green) 70%, #fff));
+  background: linear-gradient(
+    90deg,
+    var(--green),
+    color-mix(in srgb, var(--green) 70%, #fff)
+  );
   border-radius: 2px;
   width: 0%;
   transition: width 0.25s ease;
@@ -1322,7 +2725,6 @@ textarea {
 
 .track-row:hover .track-menu {
   opacity: 0.9;
-
 }
 
 .track-menu:hover {
@@ -1358,7 +2760,6 @@ textarea {
   position: relative;
   overflow: hidden;
   border: 1px solid #242424;
-
 }
 
 .lyrics-panel.closed {
@@ -1369,7 +2770,6 @@ textarea {
 }
 
 .lyrics-header {
-
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1418,6 +2818,21 @@ textarea {
   height: 14px;
 }
 
+#lyrics-sync-toggle-btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+#lyrics-sync-toggle-btn.active {
+  color: var(--green);
+  background: var(--surface-hover);
+}
+
+#lyrics-sync-toggle-btn.disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
 .lyrics-body {
   flex: 1;
   overflow-y: auto;
@@ -1432,16 +2847,20 @@ textarea {
   padding: 44% 18px 86%;
   scroll-padding-top: 44%;
   scroll-padding-bottom: 86%;
-  -webkit-mask-image: linear-gradient(to bottom,
-      transparent 0%,
-      black 8%,
-      black 88%,
-      transparent 100%);
-  mask-image: linear-gradient(to bottom,
-      transparent 0%,
-      black 8%,
-      black 88%,
-      transparent 100%);
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black 8%,
+    black 88%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black 8%,
+    black 88%,
+    transparent 100%
+  );
 }
 
 .lyrics-body.is-empty {
@@ -1531,22 +2950,23 @@ textarea {
 
 /* Outer disc */
 .lyrics-empty-vinyl::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background:
-    radial-gradient(circle at 50% 50%,
-      #2a2a2a 0%,
-      #1a1a1a 22%,
-      #222 23%,
-      #181818 34%,
-      #222 35%,
-      #181818 46%,
-      #222 47%,
-      #181818 58%,
-      #232323 59%,
-      #161616 100%);
+  background: radial-gradient(
+    circle at 50% 50%,
+    #2a2a2a 0%,
+    #1a1a1a 22%,
+    #222 23%,
+    #181818 34%,
+    #222 35%,
+    #181818 46%,
+    #222 47%,
+    #181818 58%,
+    #232323 59%,
+    #161616 100%
+  );
   animation: vinyl-spin 3s linear infinite;
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.04),
@@ -1555,7 +2975,7 @@ textarea {
 
 /* Center label */
 .lyrics-empty-vinyl::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: 50%;
   transform: translate(-50%, -50%);
@@ -1566,7 +2986,9 @@ textarea {
   border: 1.5px solid rgba(255, 255, 255, 0.07);
   z-index: 1;
   /* Spindle hole */
-  box-shadow: inset 0 0 0 3px #111, 0 0 0 1px rgba(255, 255, 255, 0.04);
+  box-shadow:
+    inset 0 0 0 3px #111,
+    0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
 @keyframes vinyl-spin {
@@ -1592,7 +3014,11 @@ body:not(.is-playing) .nolyric-bar {
   right: -10px;
   width: 3px;
   height: 42px;
-  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.04) 100%);
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
   border-radius: 2px;
   transform-origin: top center;
   transform: rotate(28deg);
@@ -1619,7 +3045,7 @@ body:not(.is-playing) .nolyric-bar {
 
 /* Center spindle hole — sits on top of the spinning cover */
 .lyrics-nolyrics-vinyl::after {
-  content: '';
+  content: "";
   position: absolute;
   top: 50%;
   left: 50%;
@@ -1643,7 +3069,7 @@ body:not(.is-playing) .nolyric-bar {
   height: 100%;
   border-radius: 50%;
   object-fit: cover;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
   animation: vinyl-spin 4s linear infinite;
   opacity: 0.6;
 }
@@ -1688,7 +3114,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 }
 
 .ov-lyrics-empty .lyrics-nolyrics-cover {
-  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
 }
 
 .ov-lyrics-empty .nolyric-bar {
@@ -1696,8 +3122,15 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 }
 
 @keyframes nolyric-pulse {
-  0%, 100% { height: 2px; opacity: 0.3; }
-  50% { height: 28px; opacity: 0.8; }
+  0%,
+  100% {
+    height: 2px;
+    opacity: 0.3;
+  }
+  50% {
+    height: 28px;
+    opacity: 0.8;
+  }
 }
 
 .lyric-line.active {
@@ -1738,6 +3171,57 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   color: var(--text-muted);
   border-color: #2a2a2a;
   opacity: 0.9;
+}
+
+/* Task 7: Active Lyrics ±1s timing adjustment controls */
+.lyrics-sync-controls {
+  position: absolute;
+  bottom: 58px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #1f1f1f;
+  border: 1px solid #333;
+  border-radius: 20px;
+  padding: 4px 6px;
+  z-index: 10;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+.lyrics-offset-btn {
+  background: var(--surface-2, #2a2a2a);
+  border: 1px solid #3a3a3a;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: inherit;
+  border-radius: 14px;
+  padding: 4px 10px;
+  cursor: default;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    transform 0.1s;
+}
+
+.lyrics-offset-btn:hover {
+  background: var(--surface-3, #333);
+  border-color: var(--green, #1ed760);
+}
+
+.lyrics-offset-btn:active {
+  transform: scale(0.94);
+}
+
+.lyrics-offset-value {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 34px;
+  text-align: center;
+  letter-spacing: 0.3px;
 }
 
 .np-overlay {
@@ -1817,11 +3301,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   width: 16px;
   height: 16px;
   margin-right: 1px;
-
 }
-
-
-
 
 .np-overlay-label {
   font-size: 12px;
@@ -1895,16 +3375,20 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   scroll-padding-top: 36%;
   scroll-padding-bottom: 64%;
   background: none;
-  -webkit-mask-image: linear-gradient(to bottom,
-      transparent 0%,
-      black 15%,
-      black 85%,
-      transparent 100%);
-  mask-image: linear-gradient(to bottom,
-      transparent 0%,
-      black 15%,
-      black 85%,
-      transparent 100%);
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black 15%,
+    black 85%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black 15%,
+    black 85%,
+    transparent 100%
+  );
 }
 
 .ov-lyrics-empty {
@@ -1964,7 +3448,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   transform: scale(1);
   transform-origin: center center;
   will-change: opacity, transform;
-  transition: opacity 0.35s ease, transform 0.35s ease;
+  transition:
+    opacity 0.35s ease,
+    transform 0.35s ease;
   white-space: normal;
   word-break: break-word;
   background: none;
@@ -2075,7 +3561,8 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   backdrop-filter: blur(24px) saturate(1.6);
   -webkit-backdrop-filter: blur(24px) saturate(1.6);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.65),
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.65),
     0 0 0 1px rgba(255, 255, 255, 0.04) inset;
 }
 
@@ -2285,7 +3772,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 #np-menu-btn svg {
   width: 20px;
   height: 20px;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
 }
 
 /* ── Playlist button icon morph (playlist → X) ── */
@@ -2307,7 +3796,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   border-radius: 1px;
   background: currentColor;
   opacity: 0;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
   transform: rotate(0deg) scale(0.5);
 }
 
@@ -2381,33 +3872,60 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  background: #fff;
-  border: none;
+  background: transparent;
+  border: 2px solid var(--green, #1ed760);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: default;
-  color: #000;
+  color: var(--green, #1ed760);
   transition:
     background 0.15s,
-    transform 0.1s;
+    border-color 0.15s,
+    transform 0.1s,
+    box-shadow 0.15s;
   flex-shrink: 0;
 }
 
 .np-play:hover {
-  opacity: 0.8;
+  background: color-mix(in srgb, var(--green, #1ed760) 6%, transparent);
+  box-shadow: 0 0 12px
+    color-mix(in srgb, var(--green, #1ed760) 12%, transparent);
+}
+
+.np-play:active {
+  transform: scale(0.99);
 }
 
 .np-play svg {
   width: 18px;
   height: 18px;
-  fill: #000;
+  fill: var(--green, #1ed760);
+  color: var(--green, #1ed760);
 }
 
-.np-play svg path {
-  transform: translateX(1px);
+/* Margin-left ONLY when it's the triangle (play) SVG, not the two vertical pause bars */
+/* Triangle Play Icon (Paused) */
+/* Triangle Play Icon (Paused) */
+body:not(.is-playing) .np-play svg,
+body:not(.is-playing) .ov-play svg,
+.np-play svg:has(path),
+.ov-play svg:has(path) {
+  margin-left: 2px;
 }
 
+body:not(.is-playing) .ov-play svg,
+.ov-play svg:has(path) {
+  margin-left: 3px;
+}
+
+/* Two Vertical Bars (Playing) */
+body.is-playing .np-play svg,
+body.is-playing .ov-play svg,
+.np-play svg:has(rect),
+.ov-play svg:has(rect) {
+  margin-left: 0;
+}
 .np-progress {
   width: 100%;
   max-width: 600px;
@@ -2419,20 +3937,26 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 .np-time {
   font-size: 10.5px;
   color: var(--text-muted);
-  min-width: 28px;
+  min-width: 36px;
+  font-variant-numeric: tabular-nums;
 }
 
 .np-time.right {
   text-align: right;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s ease;
+}
+
+.np-time.right:hover {
+  color: var(--text-primary);
 }
 
 .squiggly-canvas {
   flex: 1;
   min-width: 0;
   height: 20px;
-  /* BUGFIX: was `cursor: default` — made the bar feel non-interactive
-     and users reported "seek isn't working" partly because there was
-     no visual affordance hinting they could click it. */
+
   cursor: default;
   display: block;
   touch-action: none;
@@ -2469,7 +3993,6 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 .ov-squiggly {
   height: 16px;
   margin-left: 14px !important;
-
 }
 
 .app-dialog {
@@ -2586,7 +4109,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 #np-menu-btn svg {
   width: 20px;
   height: 20px;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
 }
 
 .vol-icon-btn svg {
@@ -2597,19 +4122,21 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 .vol-bar {
   width: 100px;
   height: 5px;
-  background: #333;
+  background: var(--slider-track-unfilled);
   border-radius: 999px;
   cursor: default;
   overflow: visible;
   pointer-events: auto;
-  transition: width 0.15s ease, height 0.1s ease;
+  transition:
+    width 0.15s ease,
+    height 0.1s ease;
   position: relative;
   margin-left: 2px;
 }
 
 /* Expanded invisible hit area — 28px tall, centered on the 4px bar */
 .vol-bar::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 0;
   right: 0;
@@ -2638,7 +4165,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 
 /* Volume drag-handle circle — always visible */
 .vol-fill::after {
-  content: '';
+  content: "";
   position: absolute;
   right: -6px;
   top: 50%;
@@ -2647,9 +4174,11 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   height: 12px;
   border-radius: 50%;
   background: var(--green);
-  border: 2px solid #fff;
+  border: 2px solid var(--bg);
   box-shadow: 0 0 6px rgba(0, 0, 0, 0.5);
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 .vol-group:hover .vol-fill::after,
@@ -2804,7 +4333,10 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   align-items: center;
   justify-content: center;
   cursor: default;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
 }
 
 .playlist-import-fab:hover {
@@ -2849,13 +4381,21 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 .playlist-cover::before {
   top: -20%;
   right: -20%;
-  background: radial-gradient(circle at 70% 30%, var(--bleed-tr, transparent) 0%, transparent 65%);
+  background: radial-gradient(
+    circle at 70% 30%,
+    var(--bleed-tr, transparent) 0%,
+    transparent 65%
+  );
 }
 
 .playlist-cover::after {
   bottom: -20%;
   left: -20%;
-  background: radial-gradient(circle at 30% 70%, var(--bleed-bl, transparent) 0%, transparent 65%);
+  background: radial-gradient(
+    circle at 30% 70%,
+    var(--bleed-bl, transparent) 0%,
+    transparent 65%
+  );
 }
 
 /* ── ⋯ menu button inside playlist cover ── */
@@ -2875,7 +4415,10 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   cursor: default;
   opacity: 0;
   transform: scale(0.85);
-  transition: opacity 0.15s ease, transform 0.15s ease, background 0.12s;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    background 0.12s;
   z-index: 5;
   backdrop-filter: blur(6px);
 }
@@ -2884,10 +4427,6 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   width: 16px;
   height: 16px;
 }
-
-
-
-
 
 /* ── center play button overlay on cover ── */
 .playlist-cover-play-btn {
@@ -2906,12 +4445,15 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   justify-content: center;
   cursor: default;
   opacity: 0;
-  transition: opacity 0.15s ease, transform 0.15s ease, background 0.12s;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    background 0.12s;
   z-index: 4;
   backdrop-filter: blur(6px);
 }
 
-.playlist-cover-play-btn:hover{
+.playlist-cover-play-btn:hover {
   opacity: 1;
 }
 
@@ -2920,9 +4462,6 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   height: 22px;
   margin-left: 2px;
 }
-
-
-
 
 .playlist-cover-1 {
   grid-template-columns: 1fr;
@@ -3012,12 +4551,22 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   box-shadow: none !important;
 }
 
-.playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt:nth-child(1) { grid-area: 1 / 1 / 2 / 2; }
-.playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt:nth-child(2) { grid-area: 1 / 2 / 2 / 3; }
-.playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt:nth-child(3) { grid-area: 2 / 1 / 3 / 2; }
-.playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt:nth-child(4) { grid-area: 2 / 2 / 3 / 3; }
+.playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt:nth-child(1) {
+  grid-area: 1 / 1 / 2 / 2;
+}
+.playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt:nth-child(2) {
+  grid-area: 1 / 2 / 2 / 3;
+}
+.playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt:nth-child(3) {
+  grid-area: 2 / 1 / 3 / 2;
+}
+.playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt:nth-child(4) {
+  grid-area: 2 / 2 / 3 / 3;
+}
 
-.playlist-card:hover .playlist-cover-4 .playlist-cover-cell.playlist-cover-tilt {
+.playlist-card:hover
+  .playlist-cover-4
+  .playlist-cover-cell.playlist-cover-tilt {
   filter: brightness(0.52) saturate(0.65);
 }
 
@@ -3036,7 +4585,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
     0 0 0 1px #0a0a0a,
     0 0 0 2px rgba(255, 255, 255, 0.07),
     0 8px 28px rgba(0, 0, 0, 0.85);
-  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  transition:
+    transform 0.3s ease,
+    box-shadow 0.3s ease;
 }
 
 .playlist-vinyl-disc img {
@@ -3050,7 +4601,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 
 /* Vinyl centre hole */
 .playlist-vinyl-disc::after {
-  content: '';
+  content: "";
   position: absolute;
   top: 50%;
   left: 50%;
@@ -3205,7 +4756,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  transition: color 0.15s, background 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s;
 }
 
 .playlist-action-icon:hover {
@@ -3230,7 +4783,8 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   border-radius: 12px;
   padding: 4px;
   min-width: 170px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.65),
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.65),
     0 0 0 1px rgba(255, 255, 255, 0.04) inset;
   display: flex;
   flex-direction: column;
@@ -3278,7 +4832,10 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   justify-content: center;
   border-radius: 6px;
   opacity: 0;
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  transition:
+    opacity 0.15s,
+    color 0.15s,
+    background 0.15s;
 }
 
 .playlist-song-row:hover .playlist-dots-btn {
@@ -3310,7 +4867,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   gap: 5px;
   white-space: nowrap;
   z-index: 10;
-  transition: background 0.12s, border-color 0.12s;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
 }
 
 .playlist-remove-pill:hover {
@@ -3366,6 +4925,8 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 .home-hero-content {
   position: relative;
   z-index: 1;
+  min-width: 0;
+  flex: 1;
 }
 
 .section-kicker {
@@ -3387,6 +4948,12 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   color: var(--text-secondary);
   margin-top: 4px;
   font-size: 13px;
+  line-height: 1.4;
+}
+
+.home-hero-stats span {
+  display: inline-block;
+  white-space: nowrap;
 }
 
 .settings-toggle-btn {
@@ -3399,13 +4966,16 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   color: var(--text-secondary);
   cursor: default;
   white-space: nowrap;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
   flex-shrink: 0;
 }
 
 .settings-toggle-btn.active {
   background: var(--green);
-  color: #000;
+  color: var(--btn-text-dark, #1e2420);
   border-color: var(--green);
 }
 
@@ -3470,17 +5040,70 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   gap: 6px;
   padding: 8px 16px;
   background: var(--green);
-  color: #fff;
+  color: var(--btn-text-dark, #1e2420);
+  border: none;
   font-weight: 600;
   font-size: 13px;
+  font-family: "Outfit", sans-serif;
   border-radius: 8px;
   text-decoration: none;
-  transition: background 0.15s;
+  cursor: default;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    opacity 0.15s;
   flex-shrink: 0;
 }
 
 .help-contact-btn:hover {
   background: var(--green-hover);
+  color: var(--btn-text-dark, #1e2420);
+  opacity: 0.9;
+}
+
+#help-check-update-btn {
+  background: var(--green);
+  color: var(--btn-text-dark, #1e2420);
+  border: none;
+}
+
+#help-check-update-btn:hover {
+  background: var(--green-hover);
+  color: var(--btn-text-dark, #1e2420);
+  opacity: 0.9;
+}
+
+.help-version-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 10px 20px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  text-decoration: none;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.help-version-btn:hover {
+  background: var(--surface-hover);
+  border-color: var(--green);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.help-version-btn .version-badge {
+  background: var(--green);
+  color: var(--btn-text-dark, #1e2420);
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .help-sections {
@@ -3590,6 +5213,8 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  row-gap: 8px;
   gap: 10px;
   min-height: 42px;
 }
@@ -3604,8 +5229,19 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 
 .settings-btn-group {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
   flex-shrink: 0;
+}
+
+/* Scrubber Head has 7 style buttons — give it its own line so it always
+   has room to wrap onto multiple rows instead of fighting the label. */
+.settings-btn-group--full {
+  flex-basis: 100%;
+  width: 0;
+  min-width: fit-content;
+  justify-content: flex-start;
 }
 
 /* Responsive: collapse to single column below 700px */
@@ -3629,7 +5265,8 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   }
 
   .settings-row--wrap {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
+    row-gap: 6px;
     min-height: 40px;
   }
 
@@ -3659,12 +5296,23 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   border: 0;
   border-radius: 8px;
   background: var(--green);
-  color: #000;
+  color: var(--btn-text-dark, #1e2420);
   font-family: inherit;
   font-size: 13px;
   font-weight: 800;
   padding: 9px 14px;
-  cursor: default;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  line-height: 1;
+}
+
+.section-primary-btn svg {
+  display: block;
+  flex-shrink: 0;
+  margin: 0 !important;
 }
 
 .settings-row.action {
@@ -3766,7 +5414,8 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   background: #333;
   border: none;
   outline: none;
-  cursor: default;
+  cursor: pointer;
+  pointer-events: auto;
   flex-shrink: 0;
   position: relative;
   transition: background 0.18s ease;
@@ -3782,7 +5431,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   height: 14px;
   border-radius: 50%;
   background: #888;
-  transition: transform 0.18s ease, background 0.18s ease;
+  transition:
+    transform 0.18s ease,
+    background 0.18s ease;
 }
 
 .settings-row input[type="checkbox"]:checked,
@@ -3794,6 +5445,27 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 .eq-enable input[type="checkbox"]:checked::after {
   transform: translateX(16px);
   background: #000;
+}
+
+[data-theme="light"] .settings-row input[type="checkbox"],
+[data-theme="light"] .eq-enable input[type="checkbox"] {
+  background: #d8dcd3 !important;
+}
+
+[data-theme="light"] .settings-row input[type="checkbox"]::after,
+[data-theme="light"] .eq-enable input[type="checkbox"]::after {
+  background: #ffffff !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15) !important;
+}
+
+[data-theme="light"] .settings-row input[type="checkbox"]:checked,
+[data-theme="light"] .eq-enable input[type="checkbox"]:checked {
+  background: var(--green, #1ed760) !important;
+}
+
+[data-theme="light"] .settings-row input[type="checkbox"]:checked::after,
+[data-theme="light"] .eq-enable input[type="checkbox"]:checked::after {
+  background: #ffffff !important;
 }
 
 .eq-layout {
@@ -3920,7 +5592,10 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   color: var(--text-secondary);
   cursor: default;
   white-space: nowrap;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
 }
 
 .eq-preset-pill:hover {
@@ -3930,7 +5605,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 
 .eq-preset-pill.active {
   background: var(--green);
-  color: #000;
+  color: var(--btn-text-dark, #1e2420);
   border-color: var(--green);
 }
 
@@ -4050,7 +5725,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 }
 
 .ov-side {
-  width:0px;
+  width: 0px;
   flex-shrink: 0;
 
   align-items: center;
@@ -4086,10 +5761,12 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   height: 20px;
 }
 
-#ov-add-btn svg{
+#ov-add-btn svg {
   width: 26px;
   height: 26px;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
 }
 
 /* ── Overlay playlist button icon morph (playlist → X) ── */
@@ -4111,7 +5788,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   border-radius: 1px;
   background: currentColor;
   opacity: 0;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
   transform: rotate(0deg) scale(0.5);
 }
 
@@ -4134,18 +5813,20 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   color: var(--green);
 }
 
- #np-menu-btn svg{
+#np-menu-btn svg {
   width: 25px;
   height: 25px;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
 }
 
-#ov-repeat-icon{
+#ov-repeat-icon {
   width: 22px;
   height: 22px;
 }
 
-#repeat-btn svg{
+#repeat-btn svg {
   width: 22px;
   height: 22px;
 }
@@ -4154,29 +5835,46 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   width: 46px;
   height: 46px;
   border-radius: 50%;
-  background: #fff;
-  border: none;
+  background: transparent;
+  border: 2px solid var(--green, #1ed760);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: default;
+  color: var(--green, #1ed760);
   transition:
     background 0.15s,
-    transform 0.1s;
+    border-color 0.15s,
+    transform 0.1s,
+    box-shadow 0.15s;
 }
 
 .ov-play:hover {
-  opacity: 0.9;
+  background: color-mix(in srgb, var(--green, #1ed760) 6%, transparent);
+  box-shadow: 0 0 14px
+    color-mix(in srgb, var(--green, #1ed760) 12%, transparent);
+  transform: scale(1.05);
+}
+
+.ov-play:active {
+  transform: scale(0.99);
 }
 
 .ov-play svg {
-  width: 19px;
-  height: 19px;
-  fill: #000;
+  width: 20px;
+  height: 20px;
+  fill: var(--green, #1ed760);
+  color: var(--green, #1ed760);
 }
 
-.ov-play svg path {
-  transform: translateX(1px);
+body:not(.is-playing) .ov-play svg,
+.ov-play svg:has(path) {
+  margin-left: 3px;
+}
+
+body.is-playing .ov-play svg,
+.ov-play svg:has(rect) {
+  margin-left: 0;
 }
 
 .ov-progress {
@@ -4189,13 +5887,20 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 .ov-time {
   font-size: 10.5px;
   color: rgba(255, 255, 255, 0.35);
-  min-width: 28px;
+  min-width: 36px;
   background-color: transparent;
-
+  font-variant-numeric: tabular-nums;
 }
 
 .ov-time.right {
   text-align: right;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s ease;
+}
+
+.ov-time.right:hover {
+  color: var(--text-primary);
 }
 
 .track-skeleton-row {
@@ -4215,15 +5920,36 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   border-radius: 4px;
 }
 
-.skel-thumb { width: 42px; height: 42px; border-radius: 4px; }
-.skel-line  { height: 12px; border-radius: 4px; }
-.skel-short { height: 10px; width: 50px; border-radius: 4px; }
+.skel-thumb {
+  width: 42px;
+  height: 42px;
+  border-radius: 4px;
+}
+.skel-line {
+  height: 12px;
+  border-radius: 4px;
+}
+.skel-short {
+  height: 10px;
+  width: 50px;
+  border-radius: 4px;
+}
 
-.track-skeleton-row > div:nth-child(2) { margin-left: 10px; }
-.track-skeleton-row > div:nth-child(3) { margin-left: 30px; }
-.track-skeleton-row > div:nth-child(4) { margin-left: 20px; }
-.track-skeleton-row > div:nth-child(5) { margin-left: 20px; }
-.track-skeleton-row > div:nth-child(6) { margin-left: 15px; }
+.track-skeleton-row > div:nth-child(2) {
+  margin-left: 10px;
+}
+.track-skeleton-row > div:nth-child(3) {
+  margin-left: 30px;
+}
+.track-skeleton-row > div:nth-child(4) {
+  margin-left: 20px;
+}
+.track-skeleton-row > div:nth-child(5) {
+  margin-left: 20px;
+}
+.track-skeleton-row > div:nth-child(6) {
+  margin-left: 15px;
+}
 
 /* duration — tune me */
 
@@ -4253,7 +5979,6 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   display: none;
 }
 
-
 .vol-group {
   display: flex;
   align-items: center;
@@ -4265,7 +5990,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 #vol-bar {
   width: 0;
   height: 3px;
-  background: #333;
+  background: var(--slider-track-unfilled);
   border-radius: 999px;
   cursor: default;
   overflow: visible;
@@ -4275,7 +6000,10 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   left: 100%;
   top: 50%;
   transform: translateY(-50%);
-  transition: width 0.2s ease, opacity 0.2s ease, height 0.1s ease;
+  transition:
+    width 0.2s ease,
+    opacity 0.2s ease,
+    height 0.1s ease;
 }
 
 .vol-group:hover #vol-bar,
@@ -4344,11 +6072,15 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
     backdrop-filter: blur(24px) saturate(1.6);
     -webkit-backdrop-filter: blur(24px) saturate(1.6);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+    box-shadow:
+      0 16px 48px rgba(0, 0, 0, 0.65),
+      0 0 0 1px rgba(255, 255, 255, 0.04) inset;
     opacity: 0;
     transform: translateY(12px) scale(0.97);
     pointer-events: none;
-    transition: opacity 0.22s cubic-bezier(0.4, 0, 0.2, 1), transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    transition:
+      opacity 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+      transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .lyrics-panel.floating .lyrics-header {
@@ -4390,11 +6122,15 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   -webkit-backdrop-filter: blur(24px) saturate(1.6);
   border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset;
   z-index: 500;
   cursor: default;
   opacity: 1;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
   white-space: nowrap;
   max-width: calc(100vw - 38px);
   animation: scroll-pill-in 0.25s cubic-bezier(0.4, 0, 0.2, 1);
@@ -4466,17 +6202,20 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   max-width: 180px;
 }
 
-
 /* ── Scroll pill EQ animation — modern ── */
 #scroll-pill-art {
   position: relative;
 }
 
 #scroll-pill-art::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0.25) 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(0, 0, 0, 0.55) 0%,
+    rgba(0, 0, 0, 0.25) 100%
+  );
   border-radius: 6px;
   opacity: 0;
   transition: opacity 0.2s;
@@ -4510,7 +6249,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 }
 
 .pill-eq span:nth-child(1) {
-  --d: 1.0s;
+  --d: 1s;
   --e: cubic-bezier(0.45, 0.05, 0.55, 0.95);
   height: 5px;
   animation-delay: 0.2s;
@@ -4554,9 +6293,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   }
 }
 
-
 @media (min-width: 1101px) and (max-width: 1250px) {
-
   .col-headers,
   .track-row {
     grid-template-columns: 52px 1fr 150px 60px 150px 75px 36px;
@@ -4664,7 +6401,8 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   pointer-events: auto;
   opacity: 0;
   transition: opacity 0.15s ease;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.65),
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.65),
     0 0 0 1px rgba(255, 255, 255, 0.04) inset;
 }
 
@@ -4693,7 +6431,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   background: none;
   color: var(--text-muted);
   cursor: default;
-  transition: background 0.12s, color 0.12s;
+  transition:
+    background 0.12s,
+    color 0.12s;
   position: relative;
   flex-shrink: 0;
 }
@@ -4738,14 +6478,14 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   right: calc(100% + 10px);
   top: 50%;
   transform: translateY(-50%);
-  background: rgba(18, 18, 18, 0.88);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(34, 34, 34, 0.826);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1.5px solid rgba(96, 96, 96, 0.248);
   color: var(--text-primary);
   font-size: 11px;
   font-weight: 500;
-  padding: 4px 8px;
+  padding: 7px 14px;
   border-radius: 6px;
   white-space: nowrap;
   pointer-events: none;
@@ -4780,7 +6520,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   padding: 8px 12px;
   height: 38px;
   outline: none;
-  transition: width 0.2s ease, opacity 0.15s ease;
+  transition:
+    width 0.2s ease,
+    opacity 0.15s ease;
   white-space: nowrap;
   font-family: var(--app-font, inherit);
 }
@@ -4797,6 +6539,10 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 
 @media (max-width: 760px) {
   #ov-add-btn {
+    display: none;
+  }
+
+  #ov-tag-btn {
     display: none;
   }
 
@@ -4858,7 +6604,6 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   .track-row {
     grid-template-columns: 46px 1fr 110px 96px 32px;
   }
-  
 
   .track-skeleton-row {
     grid-template-columns: 46px 1fr 110px 96px 32px;
@@ -4947,7 +6692,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
     margin-left: auto;
   }
 
-  .js-duration { padding-left: 28px !important; }
+  .js-duration {
+    padding-left: 28px !important;
+  }
 }
 
 /* ── OVERLAY ART FLIP + PENCIL EDIT ── */
@@ -5129,7 +6876,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   justify-content: center;
   cursor: default;
   flex-shrink: 0;
-  transition: background 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
 
 .lyrics-editor-close:hover {
@@ -5167,7 +6916,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   padding: 7px 12px 9px;
   cursor: default;
   margin-bottom: -1px;
-  transition: color 0.15s, border-color 0.15s;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
 }
 
 .le-tab:hover {
@@ -5264,8 +7015,6 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  scrollbar-width: thin;
-  scrollbar-color: #333 transparent;
 }
 
 /* Lyrics editor — dark-themed scrollbars */
@@ -5299,7 +7048,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   align-items: center;
   gap: 12px;
   cursor: default;
-  transition: background 0.12s, border-color 0.12s;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
   min-width: 0;
   flex-wrap: wrap;
 }
@@ -5378,7 +7129,10 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   cursor: default;
   white-space: nowrap;
   flex-shrink: 0;
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    color 0.15s,
+    background 0.15s;
 }
 
 .le-result-use-btn:hover {
@@ -5422,8 +7176,6 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   resize: none;
   outline: none;
   min-height: 200px;
-  scrollbar-width: thin;
-  scrollbar-color: #333 transparent;
 }
 
 .le-file-drop {
@@ -5438,7 +7190,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   cursor: default;
   color: var(--text-muted);
   font-size: 13px;
-  transition: border-color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
   flex-shrink: 0;
 }
 
@@ -5501,7 +7255,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   font-weight: 600;
   padding: 8px 16px;
   cursor: default;
-  transition: border-color 0.15s, color 0.15s;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
 }
 
 .le-btn-secondary:hover {
@@ -5574,15 +7330,15 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 }
 
 .ov-btn.active svg {
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--green) 50%, transparent));
+  filter: none;
 }
 
 @media (max-width: 680px) {
-
   .ov-heart,
   #ov-shuffle-btn,
   #ov-repeat-btn,
   #ov-add-btn,
+  #ov-tag-btn,
   .ov-heart-placeholder {
     display: none !important;
   }
@@ -5590,47 +7346,66 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 
 /* ── Now-playing bar responsive declutter ── */
 
-/* ≤820px: keep buttons visible now that bar is centered and spacious */
+/* ≤820px: tighten transport gap; volume is hidden at this point too */
 @media (max-width: 820px) {
+  .vol-group,
+  #vol-bar,
+  #vol-btn {
+    display: none !important;
+  }
+
+  /* Override the 10% right padding that was reserving space for the vol control */
+  .now-playing {
+    padding-right: 16px !important;
+  }
+
   .np-transport {
     gap: 12px;
   }
 
   .np-right {
-    min-width: 420px;
+    /* Don't force a min-width — let it compress naturally */
+    min-width: 0;
+    padding-right: 0;
   }
 }
 
-/* ≤660px: hide volume bar, keep volume icon */
+/* ≤660px: tighten transport gap further */
 @media (max-width: 660px) {
-  #vol-bar {
-    display: none !important;
-  }
-
   .np-transport {
-    gap: 10px;
+    gap: 8px;
   }
 
   .np-right {
-    min-width: 180px;
+    gap: 4px;
   }
 }
 
-/* ≤460px: hide vol-btn too */
+/* ≤460px: small screen layout */
 @media (max-width: 460px) {
-  #vol-btn {
-    display: none !important;
-  }
-
-  .np-right {
-    min-width: 140px;
-    padding: 0 8px;
+  .now-playing {
+    padding-right: 8px !important;
   }
 }
 
 /* ── Floating art card (hidden by default, shown ≤460px) ── */
 .np-float-card {
   display: none;
+}
+
+/* Light theme: white frosted pill instead of dark */
+[data-theme="light"] .np-float-card {
+  background: rgba(255, 255, 255, 0.92) !important;
+  border: 1px solid #e6e8e3 !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1) !important;
+}
+
+[data-theme="light"] .np-float-title {
+  color: #1a1c19 !important;
+}
+
+[data-theme="light"] .np-float-artist {
+  color: #575a53 !important;
 }
 
 /* ≤460px: float card replaces the in-bar left panel */
@@ -5667,7 +7442,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
     cursor: default;
     max-width: calc(100vw - 32px);
     white-space: nowrap;
-    transition: opacity 0.2s ease, transform 0.2s ease;
+    transition:
+      opacity 0.2s ease,
+      transform 0.2s ease;
     animation: np-float-in 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
@@ -5923,7 +7700,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   line-height: 0;
   font-size: 0;
 }
-.album-detail-cover .cover-img-container > img:not(.thumbhash-placeholder):not(.art-placeholder) {
+.album-detail-cover
+  .cover-img-container
+  > img:not(.thumbhash-placeholder):not(.art-placeholder) {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -5936,13 +7715,22 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 .cover-loading-shimmer {
   position: absolute;
   inset: 0;
-  background: linear-gradient(110deg, transparent 33%, rgba(255,255,255,0.04) 50%, transparent 67%);
+  background: linear-gradient(
+    110deg,
+    transparent 33%,
+    rgba(255, 255, 255, 0.04) 50%,
+    transparent 67%
+  );
   animation: shimmer 1.5s infinite;
 }
 
 @keyframes shimmer {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 /* REVFIX v1: Removed duplicate "Force image fill" rules. These are already
@@ -6013,10 +7801,13 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   gap: 8px;
   z-index: 200000;
   opacity: 0;
-  transition: opacity 0.25s ease, transform 0.25s ease;
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
   pointer-events: none;
   white-space: nowrap;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55),
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.55),
     0 0 0 1px rgba(255, 255, 255, 0.04) inset;
   max-width: 90vw;
   overflow: hidden;
@@ -6093,7 +7884,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   cursor: default;
   flex-shrink: 0;
   padding: 0;
-  transition: color 0.15s, background 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s;
 }
 .sidebar-refresh-btn:hover {
   color: var(--green);
@@ -6104,12 +7897,56 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   height: 13px;
 }
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 .sidebar-refresh-btn.spinning svg {
   animation: spin 1s linear infinite;
   color: var(--green);
+}
+
+/* Tooltips for elements inside the (scrollable, overflow-clipped) sidebar
+   can't use the normal [data-tooltip]::before/::after pseudo-elements —
+   any ancestor with overflow:auto/hidden clips ALL descendants, including
+   position:absolute/fixed ones, so a centered tooltip on an edge button
+   just gets cut off. We suppress the pseudo-element tooltip inside the
+   sidebar and render those tooltips as real DOM nodes appended to
+   <body> instead (see initSidebarTooltipPortal in renderer.js), which
+   are free to overflow the sidebar's bounds. */
+.sidebar [data-tooltip]::before,
+.sidebar [data-tooltip]::after {
+  display: none;
+}
+
+.sidebar-tooltip-portal {
+  position: fixed;
+  z-index: 20000;
+  background: #282828;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 5px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  border: 1px solid #3a3a3a;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
+}
+
+.sidebar-tooltip-portal.visible {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 /* ── Album / Artist card hover play button ─────────────────────── */
@@ -6131,10 +7968,13 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   align-items: center;
   justify-content: center;
   color: #000;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
   opacity: 0;
   transform: translateY(6px);
-  transition: opacity 0.18s ease, transform 0.18s ease, background 0.15s;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease,
+    background 0.15s;
   z-index: 10;
 }
 .album-card:hover .card-play-btn {
@@ -6151,19 +7991,23 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 
 /* ── Track row loading spinner ─────────────────────────────────── */
 @keyframes nova-spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 .track-row.track-loading::after,
 .playlist-song-row.track-loading::after {
-  content: '';
+  content: "";
   position: absolute;
   right: 17px;
   top: 52%;
   width: 14px;
   height: 14px;
   margin-top: -8px;
-  border: 2px solid rgba(255,255,255,0.15);
+  border: 2px solid rgba(255, 255, 255, 0.15);
   border-top-color: var(--green, #1db954);
   border-radius: 50%;
   animation: nova-spin 0.7s linear infinite;
@@ -6191,7 +8035,11 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   background: var(--surface);
   color: var(--text-secondary);
   cursor: default;
-  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.2s ease,
+    transform 0.2s ease;
 }
 
 .float-nav-trigger.hidden {
@@ -6199,7 +8047,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 }
 
 .float-nav-trigger svg {
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
 }
 
 /* ── Morph wrapper: holds SVG + X bars via ::before/::after ── */
@@ -6221,7 +8071,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   border-radius: 1px;
   background: currentColor;
   opacity: 0;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
   transform: rotate(0deg) scale(0.5);
 }
 
@@ -6295,7 +8147,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   align-items: center;
   gap: 5px;
   min-width: 0;
-  margin-bottom: 0;  /* replaces .album-title margin if any */
+  margin-bottom: 0; /* replaces .album-title margin if any */
 }
 .artist-title-row .album-title {
   flex: 1;
@@ -6319,7 +8171,11 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   padding: 0;
   opacity: 0;
   transform: scale(0.82);
-  transition: opacity 0.15s ease, transform 0.15s ease, color 0.12s, background 0.12s;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    color 0.12s,
+    background 0.12s;
 }
 .artist-edit-img-btn svg {
   width: 13px;
@@ -6388,15 +8244,33 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   background: #1a1a1a;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 14px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255,255,255,0.04);
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(255, 255, 255, 0.04);
   overflow: hidden;
   animation: aie-slide-in 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
   display: flex;
   flex-direction: column;
 }
 
-@keyframes aie-fade-in  { from { opacity: 0; } to { opacity: 1; } }
-@keyframes aie-slide-in { from { opacity: 0; transform: scale(0.92) translateY(12px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+@keyframes aie-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes aie-slide-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
 
 /* Header */
 .aie-header {
@@ -6442,17 +8316,25 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   justify-content: center;
   padding: 0;
   flex-shrink: 0;
-  transition: color 0.14s, background 0.14s;
+  transition:
+    color 0.14s,
+    background 0.14s;
 }
-.aie-close svg { width: 15px; height: 15px; }
-.aie-close:hover { color: #fff; background: rgba(255,255,255,0.08); }
+.aie-close svg {
+  width: 15px;
+  height: 15px;
+}
+.aie-close:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
 
 /* Tabs */
 .aie-tabs {
   display: flex;
   gap: 2px;
   padding: 10px 18px 0;
-  border-bottom: 1px solid rgba(255,255,255,0.07);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
 }
 .aie-tab {
   padding: 7px 16px;
@@ -6464,17 +8346,26 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   border-bottom: 2px solid transparent;
   cursor: default;
   border-radius: 4px 4px 0 0;
-  transition: color 0.15s, border-color 0.15s;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
 }
 .aie-tab.active {
   color: var(--text-primary, #fff);
   border-bottom-color: var(--green, #1db954);
 }
-.aie-tab:hover:not(.active) { color: var(--text-secondary, #bbb); }
+.aie-tab:hover:not(.active) {
+  color: var(--text-secondary, #bbb);
+}
 
 /* Panels */
-.aie-panel { display: none; padding: 16px 18px 4px; }
-.aie-panel.active { display: block; }
+.aie-panel {
+  display: none;
+  padding: 16px 18px 4px;
+}
+.aie-panel.active {
+  display: block;
+}
 
 /* Drop zone */
 .aie-drop-zone {
@@ -6484,10 +8375,12 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   justify-content: center;
   gap: 8px;
   padding: 28px 20px;
-  border: 2px dashed rgba(255,255,255,0.14);
+  border: 2px dashed rgba(255, 255, 255, 0.14);
   border-radius: 10px;
   cursor: default;
-  transition: border-color 0.18s, background 0.18s;
+  transition:
+    border-color 0.18s,
+    background 0.18s;
   text-align: center;
 }
 .aie-drop-zone:hover,
@@ -6501,7 +8394,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   color: var(--text-muted, #888);
 }
 .aie-drop-zone:hover .aie-drop-icon svg,
-.aie-drop-zone.aie-drop-over .aie-drop-icon svg { color: var(--green, #1db954); }
+.aie-drop-zone.aie-drop-over .aie-drop-icon svg {
+  color: var(--green, #1db954);
+}
 .aie-drop-text {
   font-size: 13px;
   font-weight: 600;
@@ -6530,10 +8425,10 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 .aie-preview-img {
   width: 100px;
   height: 100px;
-  object-fit: cover;   /* mirrors the final card crop so user sees exactly what they'll get */
+  object-fit: cover; /* mirrors the final card crop so user sees exactly what they'll get */
   border-radius: 8px;
   display: block;
-  border: 1.5px solid rgba(255,255,255,0.1);
+  border: 1.5px solid rgba(255, 255, 255, 0.1);
 }
 .aie-preview-badge {
   font-size: 10px;
@@ -6545,7 +8440,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   width: 26px;
   height: 26px;
   border: none;
-  background: rgba(255,255,255,0.06);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--text-muted, #888);
   border-radius: 6px;
   cursor: default;
@@ -6553,9 +8448,14 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   align-items: center;
   justify-content: center;
   padding: 0;
-  transition: background 0.14s, color 0.14s;
+  transition:
+    background 0.14s,
+    color 0.14s;
 }
-.aie-clear-btn:hover { background: rgba(255,80,80,0.18); color: #ff5c5c; }
+.aie-clear-btn:hover {
+  background: rgba(255, 80, 80, 0.18);
+  color: #ff5c5c;
+}
 
 /* URL panel */
 .aie-url-row {
@@ -6566,8 +8466,8 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 .aie-url-input {
   flex: 1;
   min-width: 0;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   color: var(--text-primary, #fff);
   font-size: 13px;
@@ -6575,20 +8475,27 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   outline: none;
   transition: border-color 0.15s;
 }
-.aie-url-input:focus { border-color: var(--green, #1db954); }
+.aie-url-input:focus {
+  border-color: var(--green, #1db954);
+}
 .aie-url-preview-btn {
   flex-shrink: 0;
   padding: 8px 14px;
-  background: rgba(255,255,255,0.07);
-  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   color: var(--text-secondary, #ccc);
   font-size: 13px;
   font-weight: 500;
   cursor: default;
-  transition: background 0.14s, color 0.14s;
+  transition:
+    background 0.14s,
+    color 0.14s;
 }
-.aie-url-preview-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.aie-url-preview-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
 .aie-url-error {
   margin-top: 10px;
   font-size: 11.5px;
@@ -6602,7 +8509,7 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   align-items: center;
   gap: 8px;
   padding: 14px 18px 18px;
-  border-top: 1px solid rgba(255,255,255,0.07);
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
   margin-top: 12px;
 }
 .aie-status {
@@ -6614,13 +8521,18 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.aie-status.aie-status-ok    { color: var(--green, #1db954); font-weight: 600; }
-.aie-status.aie-status-error { color: #ff6b6b; }
+.aie-status.aie-status-ok {
+  color: var(--green, #1db954);
+  font-weight: 600;
+}
+.aie-status.aie-status-error {
+  color: #ff6b6b;
+}
 
 .aie-btn-secondary {
   padding: 8px 16px;
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   color: var(--text-secondary, #ccc);
   font-size: 13px;
@@ -6628,7 +8540,9 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   cursor: default;
   transition: background 0.14s;
 }
-.aie-btn-secondary:hover { background: rgba(255,255,255,0.11); }
+.aie-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.11);
+}
 
 .aie-btn-primary {
   padding: 8px 20px;
@@ -6639,11 +8553,22 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   font-size: 13px;
   font-weight: 700;
   cursor: default;
-  transition: filter 0.14s, transform 0.14s, opacity 0.14s;
+  transition:
+    filter 0.14s,
+    transform 0.14s,
+    opacity 0.14s;
 }
-.aie-btn-primary:hover  { filter: brightness(1.1); }
-.aie-btn-primary:active { transform: scale(0.97); }
-.aie-btn-primary:disabled { opacity: 0.45; pointer-events: none; filter: none; }
+.aie-btn-primary:hover {
+  filter: brightness(1.1);
+}
+.aie-btn-primary:active {
+  transform: scale(0.97);
+}
+.aie-btn-primary:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+  filter: none;
+}
 
 /* ── Task 5: Expanded Sidebar for smaller screens (experimental) ── */
 /* When body has .expanded-sidebar class, sidebar stays visible on
@@ -6712,13 +8637,12 @@ body.expanded-sidebar .sidebar-search {
   }
 }
 
-
 /* ── Task 9: Song Tag Editor ── */
 .tag-editor-overlay {
   position: fixed;
   inset: 0;
   z-index: 100000;
-  background: rgba(0,0,0,0.6);
+  background: rgba(0, 0, 0, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -6733,7 +8657,7 @@ body.expanded-sidebar .sidebar-search {
   max-width: 90vw;
   max-height: 80vh;
   overflow: hidden;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   position: relative;
 }
 .tag-editor-scroll {
@@ -6777,7 +8701,7 @@ body.expanded-sidebar .sidebar-search {
   transition: border-color 0.15s;
 }
 .tag-editor-field input:focus {
-  border-color: var(--green, #1DB954);
+  border-color: var(--green, #1db954);
 }
 .tag-editor-cover {
   display: flex;
@@ -6819,7 +8743,9 @@ body.expanded-sidebar .sidebar-search {
   font-weight: 600;
   cursor: pointer;
   border: none;
-  transition: filter 0.15s, transform 0.1s;
+  transition:
+    filter 0.15s,
+    transform 0.1s;
 }
 .tag-editor-actions button:active {
   transform: scale(0.97);
@@ -6830,6 +8756,525 @@ body.expanded-sidebar .sidebar-search {
   border: 1px solid var(--border, #333);
 }
 .tag-editor-actions .btn-save {
-  background: var(--green, #1DB954);
+  background: var(--green, #1db954);
+  color: var(--btn-text-dark, #1e2420);
+}
+
+/* ─── Custom Queue Builder Styles ────────────────────────────────────── */
+.cqb-home-btn,
+#home-shuffle-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+
+@media (max-width: 650px) {
+  .home-hero {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .home-hero h2 {
+    font-size: 20px;
+  }
+
+  .cqb-home-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+.cqb-btn-outline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 14px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cqb-btn-outline:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.cqb-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cqb-chip-btn:hover {
+  background: var(--green);
   color: #000;
+  border-color: var(--green);
+}
+
+.home-cq-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.home-cq-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.home-cq-card:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: color-mix(in srgb, var(--green) 40%, transparent);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+}
+
+.home-cq-badge {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--green) 18%, transparent);
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.home-cq-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-cq-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-cq-sub {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.home-cq-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.home-cq-action-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.home-cq-action-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.home-cq-play-btn:hover {
+  background: var(--green);
+  color: var(--btn-text-dark, #1e2420);
+}
+
+.home-cq-delete-btn:hover {
+  background: #e74c3c;
+  color: #fff;
+}
+
+/* Modal Overlay */
+.cqb-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9990;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: cqbFadeIn 0.2s ease-out;
+}
+
+.cqb-modal-overlay.closing {
+  opacity: 0;
+  transition: opacity 0.2s ease-out;
+}
+
+@keyframes cqbFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.cqb-modal-card {
+  width: 100%;
+  max-width: 680px;
+  max-height: 85vh;
+  background: #181818;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.8);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: cqbSlideUp 0.25s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+@keyframes cqbSlideUp {
+  from {
+    transform: translateY(20px) scale(0.97);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.cqb-header {
+  padding: 18px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cqb-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.cqb-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: color-mix(in srgb, var(--green) 20%, transparent);
+  border: 1px solid color-mix(in srgb, var(--green) 40%, transparent);
+  color: var(--green);
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  white-space: nowrap;
+}
+
+.cqb-name-input {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 700;
+  font-family: inherit;
+  flex: 1;
+  padding: 4px 0;
+  transition: border-color 0.15s ease;
+}
+
+
+.cqb-name-input:focus {
+  border-bottom-color: var(--green);
+}
+
+.cqb-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 24px;
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease;
+}
+
+.cqb-close-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.cqb-subbar {
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.cqb-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 6px 12px;
+  flex: 1;
+  max-width: 320px;
+  color: var(--text-secondary);
+}
+
+.cqb-search-input {
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  width: 100%;
+}
+
+.cqb-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cqb-counter {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--green);
+  margin-left: 6px;
+}
+
+.cqb-track-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 250px;
+  max-height: 480px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.cqb-track-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.cqb-track-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cqb-track-container::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+}
+
+.cqb-track-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.cqb-track-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.cqb-track-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.cqb-track-row.selected {
+  background: color-mix(in srgb, var(--green) 10%, transparent);
+  border-color: color-mix(in srgb, var(--green) 30%, transparent);
+}
+
+.cqb-checkbox {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  color: #000;
+}
+
+.cqb-checkbox.checked {
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.cqb-checkbox svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.cqb-checkbox.checked svg {
+  opacity: 1;
+}
+
+.cqb-thumb-img {
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.cqb-track-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.cqb-track-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cqb-track-artist {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cqb-track-duration {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.cqb-empty {
+  padding: 40px 0;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.cqb-footer {
+  padding: 14px 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.cqb-footer-info {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.cqb-footer-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cqb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cqb-btn-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.cqb-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.cqb-btn-primary {
+  background: var(--green);
+  color: #000;
+}
+
+.cqb-btn-primary:hover {
+  background: var(--green-hover, #1ed760);
+  transform: translateY(-1px);
+}
+
+[data-theme="light"] .shuffle-btn,
+[data-theme="light"] .home-shuffle-btn,
+[data-theme="light"] #home-shuffle-btn,
+[data-theme="light"] .section-primary-btn {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06) !important;
+  color: #ffffff !important; /* ← Add this */
 }
