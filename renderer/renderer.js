@@ -10,7 +10,7 @@
  * - Protocol URL reuse: same artPath+size returns cached result instantly
  * - In-flight dedupe for _getThumb, _attachEagerThumb, _loadThumbFallback
  *
- * CHANGES v1:
+ * CHANGES TO BE INSTATED v1:
  * - playTrack() uses _resolveCoverArtSrc() instead of raw track.coverArt check (BUG 1)
  * - Album/artist detail views wrap <img> in .cover-img-container (BUG 3)
  * - _getProtocolThumbUrl uses nova-media://thumb/ for sized thumbnails (BUG 4)
