@@ -7673,8 +7673,8 @@ function renderSettings() {
               <span class="nova-dropdown__label">${{"library":"Music Library (Default)","artists":"Artists","albums":"Albums","playlists":"Playlists","home":"Home","queue":"Play Queue","equalizer":"Equalizer"}[state.settings.startSection || "library"]}</span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.7;transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
-            <ul class="nova-dropdown__menu" style="display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:100%;background:var(--surface-2,var(--surface));border:1px solid var(--border);border-radius:8px;padding:4px;margin:0;list-style:none;z-index:999;box-shadow:0 8px 24px rgba(0,0,0,.4);">
-              ${[["library","Music Library (Default)"],["artists","Artists"],["albums","Albums"],["playlists","Playlists"],["home","Home"],["queue","Play Queue"],["equalizer","Equalizer"]].map(([v,l])=>`<li data-value="${v}" style="padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;color:var(--text-primary);${(state.settings.startSection||"library")===v?"background:var(--accent-10,rgba(30,215,96,.12));color:var(--accent,#1ed760);font-weight:600;":""}">${(state.settings.startSection||"library")===v?'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>':''}<span>${l}</span></li>`).join("")}
+            <ul class="nova-dropdown__menu" style="display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:100%;background:var(--surface-2,var(--surface));border:1px solid var(--border);border-radius:8px;padding:6px;margin:0;list-style:none;z-index:999;box-shadow:0 8px 24px rgba(0,0,0,.4);display:flex;flex-direction:column;gap:4px;">
+              ${[["library","Music Library (Default)"],["artists","Artists"],["albums","Albums"],["playlists","Playlists"],["home","Home"],["queue","Play Queue"],["equalizer","Equalizer"]].map(([v,l])=>`<li data-value="${v}" style="padding:9px 12px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;color:var(--text-primary);transition:background .15s, color .15s;${(state.settings.startSection||"library")===v?"background:color-mix(in srgb, var(--green, #1ed760) 14%, transparent);color:var(--green, #1ed760);font-weight:600;":""}">${(state.settings.startSection||"library")===v?'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>':''}<span>${l}</span></li>`).join("")}
             </ul>
           </div>
         </div>
@@ -7791,11 +7791,11 @@ function renderSettings() {
 
     trigger.addEventListener("click", (e) => {
       e.stopPropagation();
-      const open = menu.style.display === "block";
+      const open = menu.style.display === "flex";
       if (open) { closeMenu(); } else {
-        menu.style.display = "block";
+        menu.style.display = "flex";
         chevron.style.transform = "rotate(180deg)";
-        trigger.style.borderColor = "var(--accent, #1ed760)";
+        trigger.style.borderColor = "var(--green, #1ed760)";
       }
     });
 
@@ -7810,9 +7810,15 @@ function renderSettings() {
       // Highlight selected item
       menu.querySelectorAll("li").forEach(item => {
         const sel = item.dataset.value === val;
-        item.style.background = sel ? "var(--accent-10,rgba(30,215,96,.12))" : "";
-        item.style.color = sel ? "var(--accent,#1ed760)" : "var(--text-primary)";
+        item.style.background = sel ? "color-mix(in srgb, var(--green, #1ed760) 14%, transparent)" : "";
+        item.style.color = sel ? "var(--green, #1ed760)" : "var(--text-primary)";
         item.style.fontWeight = sel ? "600" : "";
+        let svg = item.querySelector("svg");
+        if (sel && !svg) {
+          item.insertAdjacentHTML("afterbegin", '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>');
+        } else if (!sel && svg) {
+          svg.remove();
+        }
       });
       // Save
       state.settings.startSection = val;
