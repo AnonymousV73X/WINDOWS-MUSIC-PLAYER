@@ -7668,15 +7668,15 @@ function renderSettings() {
         <div class="section-panel-title">Startup &amp; Appearance</div>
         <div class="settings-row settings-row--wrap">
           <span>Startup section</span>
-          <select id="setting-start-section" style="background:var(--surface);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:13px;outline:none;cursor:default;">
-            <option value="library"${(state.settings.startSection || "library") === "library" ? " selected" : ""}>Music Library (Default)</option>
-            <option value="artists"${(state.settings.startSection || "library") === "artists" ? " selected" : ""}>Artists</option>
-            <option value="albums"${(state.settings.startSection || "library") === "albums" ? " selected" : ""}>Albums</option>
-            <option value="playlists"${(state.settings.startSection || "library") === "playlists" ? " selected" : ""}>Playlists</option>
-            <option value="home"${(state.settings.startSection || "library") === "home" ? " selected" : ""}>Home</option>
-            <option value="queue"${(state.settings.startSection || "library") === "queue" ? " selected" : ""}>Play Queue</option>
-            <option value="equalizer"${(state.settings.startSection || "library") === "equalizer" ? " selected" : ""}>Equalizer</option>
-          </select>
+          <div class="nova-dropdown" id="setting-start-section" data-value="${state.settings.startSection || "library"}" style="position:relative;min-width:220px;">
+            <button type="button" class="nova-dropdown__trigger" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-2,var(--surface));color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;transition:border-color .15s;">
+              <span class="nova-dropdown__label">${{"library":"Music Library (Default)","artists":"Artists","albums":"Albums","playlists":"Playlists","home":"Home","queue":"Play Queue","equalizer":"Equalizer"}[state.settings.startSection || "library"]}</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.7;transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <ul class="nova-dropdown__menu" style="display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:100%;background:var(--surface-2,var(--surface));border:1px solid var(--border);border-radius:8px;padding:4px;margin:0;list-style:none;z-index:999;box-shadow:0 8px 24px rgba(0,0,0,.4);">
+              ${[["library","Music Library (Default)"],["artists","Artists"],["albums","Albums"],["playlists","Playlists"],["home","Home"],["queue","Play Queue"],["equalizer","Equalizer"]].map(([v,l])=>`<li data-value="${v}" style="padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;color:var(--text-primary);${(state.settings.startSection||"library")===v?"background:var(--accent-10,rgba(30,215,96,.12));color:var(--accent,#1ed760);font-weight:600;":""}">${(state.settings.startSection||"library")===v?'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>':''}<span>${l}</span></li>`).join("")}
+            </ul>
+          </div>
         </div>
         <div class="settings-row settings-row--wrap">
           <span>Theme mode</span>
@@ -7774,12 +7774,66 @@ function renderSettings() {
   const hardware = $("setting-hardware");
   const expandedSidebar = $("setting-expanded-sidebar");
   const disableCustomQueue = $("setting-disable-custom-queue");
-  const startSectionSelect = $("setting-start-section");
+  const startSectionDropdown = $("setting-start-section");
 
-  startSectionSelect?.addEventListener("change", async (e) => {
-    state.settings.startSection = e.target.value;
-    await saveSetting("startSection", e.target.value);
-  });
+  if (startSectionDropdown) {
+    const trigger = startSectionDropdown.querySelector(".nova-dropdown__trigger");
+    const menu = startSectionDropdown.querySelector(".nova-dropdown__menu");
+    const label = startSectionDropdown.querySelector(".nova-dropdown__label");
+    const chevron = trigger.querySelector("svg");
+    const LABELS = { library:"Music Library (Default)", artists:"Artists", albums:"Albums", playlists:"Playlists", home:"Home", queue:"Play Queue", equalizer:"Equalizer" };
+
+    const closeMenu = () => {
+      menu.style.display = "none";
+      chevron.style.transform = "";
+      trigger.style.borderColor = "";
+    };
+
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const open = menu.style.display === "block";
+      if (open) { closeMenu(); } else {
+        menu.style.display = "block";
+        chevron.style.transform = "rotate(180deg)";
+        trigger.style.borderColor = "var(--accent, #1ed760)";
+      }
+    });
+
+    menu.addEventListener("click", async (e) => {
+      const li = e.target.closest("li[data-value]");
+      if (!li) return;
+      const val = li.dataset.value;
+      closeMenu();
+      // Update label
+      label.textContent = LABELS[val];
+      startSectionDropdown.dataset.value = val;
+      // Highlight selected item
+      menu.querySelectorAll("li").forEach(item => {
+        const sel = item.dataset.value === val;
+        item.style.background = sel ? "var(--accent-10,rgba(30,215,96,.12))" : "";
+        item.style.color = sel ? "var(--accent,#1ed760)" : "var(--text-primary)";
+        item.style.fontWeight = sel ? "600" : "";
+      });
+      // Save
+      state.settings.startSection = val;
+      await saveSetting("startSection", val);
+    });
+
+    // Hover highlight
+    menu.addEventListener("mouseover", (e) => {
+      const li = e.target.closest("li[data-value]");
+      if (li && li.dataset.value !== startSectionDropdown.dataset.value)
+        li.style.background = "var(--surface-3,rgba(255,255,255,.06))";
+    });
+    menu.addEventListener("mouseout", (e) => {
+      const li = e.target.closest("li[data-value]");
+      if (li && li.dataset.value !== startSectionDropdown.dataset.value)
+        li.style.background = "";
+    });
+
+    document.addEventListener("click", closeMenu, { capture: true });
+  }
+
   if (shuffle) shuffle.checked = !!state.shuffleEnabled;
   if (lyrics) lyrics.checked = !!state.settings.showLyrics;
   if (hardware)
