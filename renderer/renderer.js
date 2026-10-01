@@ -1,7 +1,22 @@
 /**
- * NovaTune — Renderer Entry Point  [v2 — REVFIX]
+ * NovaTune — Renderer Entry Point  [v1.1.5]
  * Wires the user's custom UI to the Electron backend.
  * Uses window.novaAPI (from preload.js) for all IPC communication.
+ *
+ * CHANGES v1.1.5:
+ * - EQ playing animation now persists across back-navigation in Artists, Albums & Playlists
+ * - Fixed: renderPlaylistDetail rows were missing data-track-id (animation was never findable)
+ * - Added _applyPlayingStateToDetailRows() — re-applies active/is-playing + eq-icon
+ *   after every detail view render (Album, Artist & Playlist detail renderers)
+ * - Fixed: virtual list translateY gap when songs are prepended/sorted to top
+ * - Added Startup Section setting — user can choose which section the app opens to on launch
+ * - Fixed: newly created playlists now appear in realtime without needing a restart
+ *
+ * CHANGES v1.1.4:
+ * - Build a search-optimized track object for iTunes/Deezer queries
+ * - Sibling cover fallback & Unknown Artist heuristic for YouTube rips
+ * - 128px thumbnails for true retina quality on 4K displays (was 96px)
+ * - One-time thumbnail migration: delete old 48px/96px WebP cache files
  *
  * CHANGES v2 (revolutionary performance):
  * - SingleFlight request deduplication: same thumbnail requested by 50 tracks = 1 IPC call
@@ -3103,6 +3118,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     const elapsed = performance.now() - initTime;
     const remaining = Math.max(0, MIN_SPLASH_MS - elapsed);
     setTimeout(dismiss, remaining);
+  }
+
+  // Navigate to startup section selected by user in Settings (default: library)
+  const targetStartSection = state.settings?.startSection || "library";
+  if (targetStartSection !== "library") {
+    $$(".nav-item").forEach((n) => {
+      n.classList.toggle("active", n.dataset.section === targetStartSection);
+    });
+    state.activeNavSection = targetStartSection;
+    _navigateTo(targetStartSection);
   }
 
   // ── Deferred background scan (30s after startup) ──────────────────
@@ -7640,7 +7665,19 @@ function renderSettings() {
 
       <!-- Row 2b: Theme Mode & Scaling -->
       <div class="section-panel">
-        <div class="section-panel-title">Appearance &amp; Scaling</div>
+        <div class="section-panel-title">Startup &amp; Appearance</div>
+        <div class="settings-row settings-row--wrap">
+          <span>Startup section</span>
+          <select id="setting-start-section" style="background:var(--surface);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:13px;outline:none;cursor:default;">
+            <option value="library"${(state.settings.startSection || "library") === "library" ? " selected" : ""}>Music Library (Default)</option>
+            <option value="artists"${(state.settings.startSection || "library") === "artists" ? " selected" : ""}>Artists</option>
+            <option value="albums"${(state.settings.startSection || "library") === "albums" ? " selected" : ""}>Albums</option>
+            <option value="playlists"${(state.settings.startSection || "library") === "playlists" ? " selected" : ""}>Playlists</option>
+            <option value="home"${(state.settings.startSection || "library") === "home" ? " selected" : ""}>Home</option>
+            <option value="queue"${(state.settings.startSection || "library") === "queue" ? " selected" : ""}>Play Queue</option>
+            <option value="equalizer"${(state.settings.startSection || "library") === "equalizer" ? " selected" : ""}>Equalizer</option>
+          </select>
+        </div>
         <div class="settings-row settings-row--wrap">
           <span>Theme mode</span>
           <div class="settings-btn-group">
@@ -7737,6 +7774,12 @@ function renderSettings() {
   const hardware = $("setting-hardware");
   const expandedSidebar = $("setting-expanded-sidebar");
   const disableCustomQueue = $("setting-disable-custom-queue");
+  const startSectionSelect = $("setting-start-section");
+
+  startSectionSelect?.addEventListener("change", async (e) => {
+    state.settings.startSection = e.target.value;
+    await saveSetting("startSection", e.target.value);
+  });
   if (shuffle) shuffle.checked = !!state.shuffleEnabled;
   if (lyrics) lyrics.checked = !!state.settings.showLyrics;
   if (hardware)
@@ -8363,6 +8406,7 @@ async function _loadPlaylists() {
     state.playlists = result.playlists || [];
     const favorites = state.playlists.find((p) => p.name === "Favorites");
     state.favoritesPlaylistId = favorites ? favorites.id : null;
+    _panelDirty["playlists"] = true;
     if (state.activeNavSection === "playlists")
       _reRenderPanel("playlists", renderPlaylists);
     _syncHeartButton();
@@ -8913,7 +8957,7 @@ async function createPlaylistAndAdd(track) {
   if (!name) return;
   const created = await window.novaAPI.invoke("playlist:create", name);
   if (created.success) {
-    state.playlists.push(created.playlist);
+    await _loadPlaylists();
     await addTrackToPlaylist(track, created.playlist.id);
   }
 }
@@ -11061,6 +11105,7 @@ function renderAlbumDetail(albumKey) {
       frag.appendChild(_createTrackRow(track, album.tracks, albumSource)),
     );
   list.appendChild(frag);
+  _applyPlayingStateToDetailRows(list);
   if (album.tracks.length > CHUNK) {
     let idx = CHUNK;
     function renderChunk(deadline) {
@@ -11077,6 +11122,7 @@ function renderAlbumDetail(albumKey) {
           );
       }
       list.appendChild(cf);
+      _applyPlayingStateToDetailRows(list);
       if (idx < album.tracks.length)
         requestIdleCallback(renderChunk, { timeout: 300 });
     }
@@ -11764,6 +11810,7 @@ function renderArtistDetail(artistKey) {
       frag.appendChild(_createTrackRow(track, artist.tracks, artistSource)),
     );
   list.appendChild(frag);
+  _applyPlayingStateToDetailRows(list);
   if (artist.tracks.length > CHUNK) {
     let idx = CHUNK;
     function renderChunk(deadline) {
@@ -11780,6 +11827,7 @@ function renderArtistDetail(artistKey) {
           );
       }
       list.appendChild(cf);
+      _applyPlayingStateToDetailRows(list);
       if (idx < artist.tracks.length)
         requestIdleCallback(renderChunk, { timeout: 300 });
     }
@@ -12337,6 +12385,7 @@ function renderPlaylistDetail(playlistId) {
   tracks.forEach((track, idx) => {
     const row = document.createElement("div");
     row.className = "playlist-song-row";
+    row.dataset.trackId = track.id;
     const thumbDiv = document.createElement("div");
     thumbDiv.className = "playlist-song-thumb";
     // v1.1.0 — Use TrackThumbHandler for per-track accuracy + permanent cache.
@@ -12461,6 +12510,7 @@ function renderPlaylistDetail(playlistId) {
     });
     list.appendChild(row);
   });
+  _applyPlayingStateToDetailRows(list);
 }
 
 function playPlaylistTracks(tracks, shuffle, sourceContext) {
@@ -12702,9 +12752,19 @@ function renderVirtualRows() {
 
     if (activeSlots.has(trackId)) {
       // Slot already exists for this track.
+      // ALWAYS keep its transform position and dataset index synced to its current index i!
+      // When songs are prepended or re-sorted, existing active slots shift their index.
+      // If translateY isn't updated, rows remain stuck at their old offset, creating huge uneven gaps.
+      const slot = activeSlots.get(trackId);
+      const targetTransform = `translateY(${Math.round(i * VIRTUAL_ROW_HEIGHT)}px)`;
+      if (slot.style.transform !== targetTransform) {
+        slot.style.transform = targetTransform;
+      }
+      slot.dataset.idx = i;
+      if (virtualList.mode === "queue") slot.dataset.queueIdx = i;
+
       // If active state changed, repopulate only this row.
       if (activeChanged) {
-        const slot = activeSlots.get(trackId);
         const isActive = activeTrackId === trackId;
         const wasActive = slot.classList.contains("active");
         if (isActive !== wasActive) {
@@ -13131,6 +13191,29 @@ function updateActiveTrackRows(previousId, nextId) {
       }
     });
   }
+}
+
+// Restore playing animation on freshly-rendered detail rows.
+// Called after every detail view render so back-navigation keeps the state.
+function _applyPlayingStateToDetailRows(container) {
+  if (!state.currentTrack) return;
+  const id = state.currentTrack.id;
+  const isPlaying = state.isPlaying;
+  container
+    .querySelectorAll(`.playlist-song-row[data-track-id="${CSS.escape(id)}"]`)
+    .forEach((row) => {
+      row.classList.add("active");
+      row.classList.toggle("is-playing", isPlaying);
+      const thumb = row.querySelector(".playlist-song-thumb");
+      if (thumb && !thumb.querySelector(".eq-icon")) {
+        const placeholder = thumb.querySelector(".art-placeholder");
+        if (placeholder) placeholder.textContent = "";
+        thumb.insertAdjacentHTML(
+          "beforeend",
+          '<div class="eq-icon"><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div></div>',
+        );
+      }
+    });
 }
 
 // ─── Playback ─────────────────────────────────────────────────────
