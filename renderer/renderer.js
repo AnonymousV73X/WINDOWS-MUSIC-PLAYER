@@ -1,9 +1,9 @@
 /**
- * NovaTune — Renderer Entry Point  [v1.1.5]
+ * NovaTune — Renderer Entry Point  [v1.1.7]
  * Wires the user's custom UI to the Electron backend.
  * Uses window.novaAPI (from preload.js) for all IPC communication.
  *
- * CHANGES v1.1.5:
+ * CHANGES v1.1.7:
  * - EQ playing animation now persists across back-navigation in Artists, Albums & Playlists
  * - Fixed: renderPlaylistDetail rows were missing data-track-id (animation was never findable)
  * - Added _applyPlayingStateToDetailRows() — re-applies active/is-playing + eq-icon
