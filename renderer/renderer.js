@@ -10713,7 +10713,51 @@ function renderHelp() {
 
       <div class="help-sections">
         <div class="section-panel" id="help-updates-section">
-          <div class="section-panel-title">What's New in v1.1.6</div>
+          <div class="section-panel-title">What's New in v1.1.7</div>
+
+          <div class="help-item">
+            <div class="help-item-title">🎵 EQ Animation in All Sections</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>Universal Playing Indicator:</strong> The animated EQ bars now correctly appear on the playing track row in every section — Music Library, Artists, Albums, and Playlists.</li>
+                <li><strong>Persistent on Back-Navigation:</strong> Previously, navigating back and re-entering a detail view would lose the animation. It now instantly re-applies to the correct row every time the view is rendered.</li>
+                <li><strong>Bug Fixed:</strong> Playlist detail rows were missing their track ID attribute, making them invisible to the animation system — this is now corrected.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="help-item">
+            <div class="help-item-title">🚀 Startup Section Setting</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>Choose Your Landing Page:</strong> Head to Settings and pick which section the app opens to on launch — Music Library (default), Artists, Albums, Playlists, or any other menu item.</li>
+                <li><strong>Instant Navigation:</strong> The selected section is loaded immediately after the splash screen without any delay.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="help-item">
+            <div class="help-item-title">🃏 Realtime Playlist Card Updates</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>Instant Appearance:</strong> Newly created playlists now appear immediately in the Playlists section without needing to restart or log out.</li>
+                <li><strong>Always in Sync:</strong> Playlist cards stay up to date in real time after any create or modify action.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="help-item">
+            <div class="help-item-title">📐 Virtual List Row Gap Fix</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>No More Gaps:</strong> Fixed uneven large gaps that appeared in the track list when new songs were added or sorted to the top of the library.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-panel" id="help-updates-section-prev">
+          <div class="section-panel-title">Previously in v1.1.6</div>
 
           <div class="help-item">
             <div class="help-item-title">⌨️ Expanded Keyboard Shortcuts</div>
@@ -10907,7 +10951,7 @@ function renderHelp() {
       </div>
 
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
-        NovaTune v1.1.6 &bull; Made by SIR ALEX for music lovers
+        NovaTune v1.1.7 &bull; Made by SIR ALEX for music lovers
       </div>
     </div>
   `);
