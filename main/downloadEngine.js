@@ -232,6 +232,67 @@ function callYtmEndpoint(body, timeoutMs = 8000) {
   });
 }
 
+
+function scrapeWatchDuration(videoId, timeoutMs = 2500) {
+  return new Promise((resolve) => {
+    if (!videoId) return resolve(0);
+    const parsedUrl = new URL(`https://www.youtube.com/watch?v=${videoId}`);
+    const req = https.get(
+      parsedUrl,
+      {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        let d = "";
+        res.on("data", (chunk) => {
+          d += chunk;
+          const m =
+            d.match(/itemprop="duration"\s+content="PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?"/i) ||
+            d.match(/approxDurationMs["\s:]+(\d+)/);
+          if (m) {
+            req.destroy();
+            if (m[0].includes("approxDurationMs")) {
+              return resolve(parseInt(m[1], 10));
+            } else {
+              const h = parseInt(m[1] || "0", 10);
+              const min = parseInt(m[2] || "0", 10);
+              const s = parseInt(m[3] || "0", 10);
+              return resolve((h * 3600 + min * 60 + s) * 1000);
+            }
+          }
+        });
+        res.on("end", () => {
+          const m =
+            d.match(/itemprop="duration"\s+content="PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?"/i) ||
+            d.match(/approxDurationMs["\s:]+(\d+)/);
+          if (m) {
+            if (m[0].includes("approxDurationMs")) {
+              resolve(parseInt(m[1], 10));
+            } else {
+              const h = parseInt(m[1] || "0", 10);
+              const min = parseInt(m[2] || "0", 10);
+              const s = parseInt(m[3] || "0", 10);
+              resolve((h * 3600 + min * 60 + s) * 1000);
+            }
+          } else {
+            resolve(0);
+          }
+        });
+      }
+    );
+    req.on("error", () => resolve(0));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(0);
+    });
+  });
+}
+
 async function searchYouTubeMusic(query, limit = 40) {
   const baseClient = {
     client: {
@@ -455,7 +516,22 @@ async function searchYouTubeMusic(query, limit = 40) {
     if (tracks.length >= limit) break;
   }
 
-  return tracks.slice(0, limit);
+  const slice = tracks.slice(0, limit);
+
+  // Background enrich tracks with durationMs === 0 (e.g. unreleased leaks/videos)
+  const zeroDurTracks = slice.filter((t) => (!t.durationMs || t.durationMs === 0) && t.videoId);
+  if (zeroDurTracks.length > 0) {
+    await Promise.all(
+      zeroDurTracks.map(async (t) => {
+        try {
+          const scraped = await scrapeWatchDuration(t.videoId, 2000);
+          if (scraped > 0) t.durationMs = scraped;
+        } catch (_) {}
+      })
+    );
+  }
+
+  return slice;
 }
 
 // 2. JioSaavn Direct Search

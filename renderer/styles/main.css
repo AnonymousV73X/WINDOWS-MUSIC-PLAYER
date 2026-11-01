@@ -8116,6 +8116,8 @@ body.is-playing .ov-play svg,
 
 .toolbar.toolbar-section-mode {
   position: relative;
+  min-height: 52px;
+  box-sizing: border-box;
 }
 
 .toolbar.toolbar-section-mode .nav-lyrics-group {
@@ -8124,7 +8126,7 @@ body.is-playing .ov-play svg,
   top: 50%;
   transform: translateY(-50%);
   margin-left: 0;
-  }
+}
 
 .float-nav-trigger:hover {
   background: rgba(36, 36, 36, 0.95);
