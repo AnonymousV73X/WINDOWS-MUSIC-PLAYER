@@ -117,7 +117,13 @@ class DiscoveryView {
       <div class="discovery-container" style="padding: 24px 32px; height: 100%; overflow-y: auto; color: var(--text-base); scrollbar-width: none; -ms-overflow-style: none;">
         <!-- Header & Search -->
         <div class="discovery-header" style="margin-bottom: 24px;">
-          <h1 style="font-size: 28px; font-weight: 700; margin: 0 0 8px 0; letter-spacing: -0.5px;">Music Downloader & Search</h1>
+          <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+            <h1 style="font-size: 28px; font-weight: 700; margin: 0; letter-spacing: -0.5px;">Music Downloader & Search</h1>
+            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; padding: 3px 8px; border-radius: 6px; background: rgba(29, 185, 84, 0.15); color: var(--green, #1ed760); border: 1px solid rgba(29, 185, 84, 0.3); display: inline-flex; align-items: center; gap: 4px;">
+              <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--green, #1ed760);"></span>
+              BETA • Early Test
+            </span>
+          </div>
           <p style="color: var(--text-muted); font-size: 14px; margin: 0 0 20px 0;">
             Search any song, listen to instant previews, or download high-fidelity 320kbps MP3s directly to your library.
           </p>
