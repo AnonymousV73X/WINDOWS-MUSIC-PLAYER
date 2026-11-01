@@ -1,3 +1,4 @@
+const { spawn } = require("child_process");
 /**
  * NovaTune — Music Discovery & Download Engine [v3.0 - Universal Search]
  * Multi-Engine Aggregator:
@@ -740,40 +741,135 @@ function downloadFileWithProgress(streamUrl, destPath, onProgress) {
 }
 
 // ─── Download & Store Orchestration ───────────────────────────────────────────
+function getYtDlpPath() {
+  const localBin = path.join(__dirname, "../bin/yt-dlp.exe");
+  if (fs.existsSync(localBin)) return localBin;
+  try {
+    const { app } = require("electron");
+    if (app) {
+      const userBin = path.join(app.getPath("userData"), "bin/yt-dlp.exe");
+      if (fs.existsSync(userBin)) return userBin;
+    }
+  } catch (_) {}
+  return "yt-dlp";
+}
+
+function downloadWithYtDlp(urlOrQuery, destBase, onProgress) {
+  return new Promise((resolve, reject) => {
+    const ytDlpBinary = getYtDlpPath();
+    const args = [
+      urlOrQuery,
+      "-x",
+      "--audio-format", "mp3",
+      "--audio-quality", "0",
+      "--embed-thumbnail",
+      "--add-metadata",
+      "-o", `${destBase}.%(ext)s`,
+      "--no-playlist",
+      "--newline"
+    ];
+
+    let finalFile = null;
+    let proc = null;
+    try {
+      proc = spawn(ytDlpBinary, args, { windowsHide: true });
+    } catch (err) {
+      return reject(err);
+    }
+
+    proc.stdout.on("data", (data) => {
+      const lines = data.toString().split("\n");
+      for (const line of lines) {
+        const text = line.trim();
+        const pMatch = text.match(/\[download\]\s+([0-9.]+)%/);
+        if (pMatch && onProgress) {
+          const pct = Math.min(95, Math.round(parseFloat(pMatch[1])));
+          onProgress({ status: "downloading", percent: 10 + Math.round((pct * 80) / 100), message: `Downloading… ${pct}%` });
+        }
+        if (text.includes("[ExtractAudio] Destination:") || text.includes("[download] Destination:")) {
+          const m = text.match(/Destination:\s*(.*)$/);
+          if (m && m[1]) finalFile = m[1].trim();
+        }
+      }
+    });
+
+    proc.stderr.on("data", () => {});
+
+    proc.on("close", (code) => {
+      if (code === 0) {
+        const expectedMp3 = `${destBase}.mp3`;
+        if (fs.existsSync(expectedMp3)) return resolve(expectedMp3);
+        if (finalFile && fs.existsSync(finalFile)) return resolve(finalFile);
+        const dir = path.dirname(destBase);
+        const baseName = path.basename(destBase);
+        const files = fs.readdirSync(dir);
+        const matched = files.find(f => f.startsWith(baseName) && (f.endsWith(".mp3") || f.endsWith(".m4a")));
+        if (matched) return resolve(path.join(dir, matched));
+        resolve(expectedMp3);
+      } else {
+        reject(new Error(`yt-dlp process exited with code ${code}`));
+      }
+    });
+
+    proc.on("error", reject);
+  });
+}
+
 async function downloadAndTagTrack(trackInfo, targetFolder, onProgress) {
   onProgress({ status: "resolving", percent: 5, message: "Resolving audio stream…" });
-
-  const resolved = await resolveSaavnStream(trackInfo.trackName, trackInfo.artistName);
-  if (!resolved || !resolved.streamUrl) {
-    throw new Error("Could not resolve an audio stream for this track.");
-  }
 
   const sanitize = (name) => name.replace(/[<>:"/\\|?*]/g, "").trim();
   const safeArtist = sanitize(trackInfo.artistName || "Unknown Artist");
   const safeTitle = sanitize(trackInfo.trackName || "Unknown Track");
+  const destBase = path.join(targetFolder, `${safeArtist} - ${safeTitle}`);
 
-  // Save as clean .m4a container with native MP4 atom layout.
-  // CRITICAL: We do NOT write ID3v2 headers on MP4/M4A containers because prepending
-  // an ID3 header destroys the MP4 'ftyp' box, causing Chromium's demuxer to throw
-  // PIPELINE_ERROR_DECODE. NovaTune's SQLite database and metadataReader index the track
-  // metadata natively from the trackInfo payload.
-  const fileName = `${safeArtist} - ${safeTitle}.m4a`;
-  const destPath = path.join(targetFolder, fileName);
+  if (!fs.existsSync(targetFolder)) fs.mkdirSync(targetFolder, { recursive: true });
 
-  onProgress({ status: "downloading", percent: 10, message: `Downloading (${resolved.quality})…` });
-  await downloadFileWithProgress(resolved.streamUrl, destPath, (prog) => {
-    const scaledPercent = 10 + Math.round((prog.percent * 85) / 100);
-    onProgress({
-      status: "downloading",
-      percent: scaledPercent,
-      downloadedBytes: prog.downloadedBytes,
-      totalBytes: prog.totalBytes,
-      message: `Downloading… ${prog.percent}%`,
+  // Priority 1: Direct YouTube Music download if videoId is known
+  const videoId = trackInfo.videoId || (trackInfo.id && trackInfo.id.startsWith("ytm_") ? trackInfo.id.replace("ytm_", "") : null);
+  if (videoId && videoId.length >= 5) {
+    try {
+      onProgress({ status: "downloading", percent: 10, message: "Downloading high quality audio via yt-dlp…" });
+      const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
+      const downloadedPath = await downloadWithYtDlp(targetUrl, destBase, onProgress);
+      onProgress({ status: "done", percent: 100, message: "Done!", filePath: downloadedPath });
+      return downloadedPath;
+    } catch (ytdlpErr) {
+      console.warn("[DownloadEngine] Direct yt-dlp videoId failed, falling back:", ytdlpErr.message);
+    }
+  }
+
+  // Priority 2: High accuracy yt-dlp query search (for Spotify, iTunes, Deezer items)
+  try {
+    const searchQuery = `ytsearch1:${trackInfo.artistName} - ${trackInfo.trackName} official audio`;
+    onProgress({ status: "downloading", percent: 10, message: "Searching and downloading via yt-dlp…" });
+    const downloadedPath = await downloadWithYtDlp(searchQuery, destBase, onProgress);
+    onProgress({ status: "done", percent: 100, message: "Done!", filePath: downloadedPath });
+    return downloadedPath;
+  } catch (ytdlpSearchErr) {
+    console.warn("[DownloadEngine] ytsearch1 failed, checking Saavn fallback:", ytdlpSearchErr.message);
+  }
+
+  // Priority 3: JioSaavn fallback (strictly checked with scoreMatch)
+  const resolved = await resolveSaavnStream(trackInfo.trackName, trackInfo.artistName);
+  if (resolved && resolved.streamUrl) {
+    const destPath = `${destBase}.m4a`;
+    onProgress({ status: "downloading", percent: 15, message: `Downloading (${resolved.quality})…` });
+    await downloadFileWithProgress(resolved.streamUrl, destPath, (prog) => {
+      const scaledPercent = 15 + Math.round((prog.percent * 80) / 100);
+      onProgress({
+        status: "downloading",
+        percent: scaledPercent,
+        downloadedBytes: prog.downloadedBytes,
+        totalBytes: prog.totalBytes,
+        message: `Downloading… ${prog.percent}%`,
+      });
     });
-  });
+    onProgress({ status: "done", percent: 100, message: "Done!", filePath: destPath });
+    return destPath;
+  }
 
-  onProgress({ status: "done", percent: 100, message: "Done!", filePath: destPath });
-  return destPath;
+  throw new Error("Could not find an authentic audio stream for this track.");
 }
 
-module.exports = { searchITunes, resolveSaavnStream, downloadAndTagTrack };
+module.exports = { searchITunes, resolveSaavnStream, downloadAndTagTrack, getYtDlpPath };
