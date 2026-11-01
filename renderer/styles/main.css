@@ -1098,7 +1098,8 @@ input[type="range"] {
 
 [data-theme="light"] .sidebar-help-btn[data-tooltip]::after,
 [data-theme="light"] #float-nav-trigger[data-tooltip]::after,
-[data-theme="light"] #lyrics-toggle-btn[data-tooltip]::after {
+[data-theme="light"] #lyrics-toggle-btn[data-tooltip]::after,
+[data-theme="light"] .playlist-import-fab[data-tooltip]::after {
   border-bottom-color: #ffffff !important;
 }
 
@@ -1647,10 +1648,17 @@ html {
 }
 
 html::-webkit-scrollbar,
-body::-webkit-scrollbar {
+body::-webkit-scrollbar,
+.discovery-container::-webkit-scrollbar,
+#discovery-root-container::-webkit-scrollbar {
   display: none !important;
   width: 0 !important;
   height: 0 !important;
+}
+
+.discovery-container {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
 }
 
 body {
@@ -1936,17 +1944,21 @@ textarea {
 #float-nav-trigger[data-tooltip]:hover::before,
 #float-nav-trigger[data-tooltip]:hover::after,
 #lyrics-toggle-btn[data-tooltip]:hover::before,
-#lyrics-toggle-btn[data-tooltip]:hover::after {
+#lyrics-toggle-btn[data-tooltip]:hover::after,
+.playlist-import-fab[data-tooltip]:hover::before,
+.playlist-import-fab[data-tooltip]:hover::after {
   z-index: 100000;
 }
 #float-nav-trigger[data-tooltip]::before,
-#lyrics-toggle-btn[data-tooltip]::before {
+#lyrics-toggle-btn[data-tooltip]::before,
+.playlist-import-fab[data-tooltip]::before {
   bottom: auto;
   top: calc(100% + 10px);
   transform: translateX(-50%) translateY(-4px);
 }
 #float-nav-trigger[data-tooltip]::after,
-#lyrics-toggle-btn[data-tooltip]::after {
+#lyrics-toggle-btn[data-tooltip]::after,
+.playlist-import-fab[data-tooltip]::after {
   bottom: auto;
   top: calc(100% + 4px);
   border-top-color: transparent;
@@ -4316,6 +4328,7 @@ body.is-playing .ov-play svg,
 
 /* ── playlist top bar with import FAB ── */
 .playlist-top-bar {
+  margin-top: 10px;
   display: flex;
   justify-content: flex-end;
   margin-bottom: 8px;
@@ -8111,7 +8124,7 @@ body.is-playing .ov-play svg,
   top: 50%;
   transform: translateY(-50%);
   margin-left: 0;
-}
+  }
 
 .float-nav-trigger:hover {
   background: rgba(36, 36, 36, 0.95);
