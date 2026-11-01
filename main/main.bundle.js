@@ -42704,6 +42704,30 @@ ${items}
             });
           } catch (_) {
           }
+          if (!parsedTrack.coverArt && trackInfo && trackInfo.artworkUrl) {
+            try {
+              const sidecarPath = savedPath.replace(/\.[^.]+$/, ".novaart.jpg");
+              const imgBuf = await new Promise((resolve, reject) => {
+                const req = net.request(trackInfo.artworkUrl);
+                const chunks = [];
+                req.on("response", (res) => {
+                  res.on("data", (c) => chunks.push(c));
+                  res.on("end", () => resolve(Buffer.concat(chunks)));
+                  res.on("error", reject);
+                });
+                req.on("error", reject);
+                req.end();
+              });
+              if (imgBuf && imgBuf.length > 1e3) {
+                fs.writeFileSync(sidecarPath, imgBuf);
+                parsedTrack.coverArt = sidecarPath;
+                parsedTrack._hasCoverArt = true;
+                console.log("[IPC:download] Saved sidecar cover art:", sidecarPath);
+              }
+            } catch (imgErr) {
+              console.warn("[IPC:download] Could not save sidecar cover art:", imgErr.message);
+            }
+          }
           const currentLibrary = getLibrary();
           const updatedLibrary = [parsedTrack, ...currentLibrary.filter((t) => t.id !== parsedTrack.id)];
           partialSaveLibrary(updatedLibrary, [parsedTrack], []);
