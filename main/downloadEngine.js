@@ -1,4 +1,5 @@
 const { spawn } = require("child_process");
+const NodeID3 = require("node-id3");
 /**
  * NovaTune — Music Discovery & Download Engine [v3.0 - Universal Search]
  * Multi-Engine Aggregator:
@@ -815,6 +816,53 @@ function downloadWithYtDlp(urlOrQuery, destBase, onProgress) {
   });
 }
 
+// ─── Post-download metadata injection ─────────────────────────────────────────
+// After yt-dlp embeds YouTube metadata (often wrong: uploader name as artist,
+// video title as track name), overwrite with the rich trackInfo the user clicked.
+function injectTrackInfoTags(filePath, trackInfo) {
+  try {
+    if (!filePath.endsWith(".mp3")) return; // Only ID3 on MP3s
+    const cleanTags = {};
+
+    // Title: trackInfo always wins — yt-dlp uses the YouTube video title
+    if (trackInfo.trackName && trackInfo.trackName.trim())
+      cleanTags.title = trackInfo.trackName.trim();
+
+    // Artist: trackInfo always wins — yt-dlp uses the uploader channel name
+    if (trackInfo.artistName && trackInfo.artistName !== "Unknown Artist" && trackInfo.artistName.trim())
+      cleanTags.artist = trackInfo.artistName.trim();
+
+    // Album artist: same as artist if not separately specified
+    if (cleanTags.artist)
+      cleanTags.performerInfo = cleanTags.artist;
+
+    // Album: only if we have a real name (not empty/unknown)
+    if (trackInfo.albumName && trackInfo.albumName.trim() && trackInfo.albumName !== "Unknown Album")
+      cleanTags.album = trackInfo.albumName.trim();
+
+    // Year: only if plausible
+    const yr = Number(trackInfo.releaseYear);
+    if (yr > 1900 && yr <= new Date().getFullYear() + 1)
+      cleanTags.year = String(yr);
+
+    // Genre: skip the generic "Music" placeholder
+    if (trackInfo.genre && trackInfo.genre !== "Music" && trackInfo.genre.trim())
+      cleanTags.genre = trackInfo.genre.trim();
+
+    if (Object.keys(cleanTags).length > 0) {
+      // NodeID3.update() preserves existing APIC (embedded thumbnail) frames
+      const result = NodeID3.update(cleanTags, filePath);
+      if (result === true) {
+        console.log(`[DownloadEngine] Tags injected for "${trackInfo.trackName}" →`, Object.keys(cleanTags).join(", "));
+      } else {
+        console.warn("[DownloadEngine] NodeID3.update returned:", result);
+      }
+    }
+  } catch (tagErr) {
+    console.warn("[DownloadEngine] Failed to inject track tags:", tagErr.message);
+  }
+}
+
 async function downloadAndTagTrack(trackInfo, targetFolder, onProgress) {
   onProgress({ status: "resolving", percent: 5, message: "Resolving audio stream…" });
 
@@ -832,6 +880,8 @@ async function downloadAndTagTrack(trackInfo, targetFolder, onProgress) {
       onProgress({ status: "downloading", percent: 10, message: "Downloading high quality audio via yt-dlp…" });
       const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
       const downloadedPath = await downloadWithYtDlp(targetUrl, destBase, onProgress);
+      // Overwrite yt-dlp's auto-tags with rich metadata from the search card
+      injectTrackInfoTags(downloadedPath, trackInfo);
       onProgress({ status: "done", percent: 100, message: "Done!", filePath: downloadedPath });
       return downloadedPath;
     } catch (ytdlpErr) {
@@ -844,13 +894,15 @@ async function downloadAndTagTrack(trackInfo, targetFolder, onProgress) {
     const searchQuery = `ytsearch1:${trackInfo.artistName} - ${trackInfo.trackName} official audio`;
     onProgress({ status: "downloading", percent: 10, message: "Searching and downloading via yt-dlp…" });
     const downloadedPath = await downloadWithYtDlp(searchQuery, destBase, onProgress);
+    // Overwrite yt-dlp's auto-tags with rich metadata from the search card
+    injectTrackInfoTags(downloadedPath, trackInfo);
     onProgress({ status: "done", percent: 100, message: "Done!", filePath: downloadedPath });
     return downloadedPath;
   } catch (ytdlpSearchErr) {
     console.warn("[DownloadEngine] ytsearch1 failed, checking Saavn fallback:", ytdlpSearchErr.message);
   }
 
-  // Priority 3: JioSaavn fallback (strictly checked with scoreMatch)
+  // Priority 3: JioSaavn fallback (strictly checked with scoreMatch) — M4A, no ID3 injection needed
   const resolved = await resolveSaavnStream(trackInfo.trackName, trackInfo.artistName);
   if (resolved && resolved.streamUrl) {
     const destPath = `${destBase}.m4a`;
