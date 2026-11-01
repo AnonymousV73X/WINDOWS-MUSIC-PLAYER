@@ -201,19 +201,18 @@ async function resolveBestStreamUrl(rawUrl, has320Flag) {
 // ─── Multi-Source Search Providers ────────────────────────────────────────────
 
 // 1. YouTube Music InnerTube Search (Official YouTube client API, unlimited coverage)
-function searchYouTubeMusic(query, limit = 15) {
+function searchYouTubeMusic(query, limit = 40) {
   return new Promise((resolve) => {
     const postData = JSON.stringify({
       context: {
         client: {
           clientName: "WEB_REMIX",
-          clientVersion: "1.20231204.01.00",
+          clientVersion: "1.20240101.01.00",
           hl: "en",
           gl: "US"
         }
       },
-      query: query.trim(),
-      params: "Eg-KAQwIARAAGAAgACgAMABqChAKEAMQBBAKEAU%3D" // Songs only
+      query: query.trim()
     });
 
     const req = https.request({
@@ -230,76 +229,148 @@ function searchYouTubeMusic(query, limit = 15) {
       timeout: 8000
     }, (res) => {
       let data = "";
-      res.on("data", c => data += c);
+      res.on("data", (c) => (data += c));
       res.on("end", () => {
         try {
           const json = JSON.parse(data);
-          const sections = json.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
+          const sections =
+            json.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
           const tracks = [];
-          for (const sec of sections) {
-            const items = sec.musicShelfRenderer?.contents || sec.musicCardShelfRenderer?.contents || [];
-            for (const item of items) {
-              const r = item.musicResponsiveListItemRenderer;
-              if (!r) continue;
-              const title = r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text;
-              const subRuns = r.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
-              const videoId = r.playlistItemData?.videoId || r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.navigationEndpoint?.watchEndpoint?.videoId;
+          const nonPlayableTypes = new Set(["album", "artist", "playlist", "single", "ep"]);
 
-              let artist = "Unknown Artist";
-              let album = "";
-              let durationMs = 0;
+          function parseItem(r) {
+            if (!r) return;
+            const title =
+              r.title?.runs?.map((x) => x.text).join("") ||
+              r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.map((x) => x.text).join("");
+            if (!title) return;
 
-              if (subRuns.length > 0) {
-                const parts = [];
-                let current = [];
-                for (const run of subRuns) {
-                  if (run.text === " • ") {
-                    parts.push(current.join(""));
-                    current = [];
-                  } else {
-                    current.push(run.text);
-                  }
+            const subRuns =
+              r.subtitle?.runs ||
+              r.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs ||
+              [];
+
+            let artist = "Unknown Artist";
+            let album = "";
+            let durationMs = 0;
+
+            if (subRuns.length > 0) {
+              const parts = [];
+              let current = [];
+              for (const run of subRuns) {
+                if (run.text === " \u2022 " || run.text === " • ") {
+                  parts.push(current.join("").trim());
+                  current = [];
+                } else {
+                  current.push(run.text);
                 }
-                if (current.length > 0) parts.push(current.join(""));
+              }
+              if (current.length > 0) parts.push(current.join("").trim());
 
-                if (parts.length >= 1) artist = parts[0];
-                if (parts.length >= 3) {
-                  album = parts[1];
-                  const durParts = (parts[2] || "").split(":").map(Number);
+              if (parts.length >= 1) {
+                const firstLower = parts[0].toLowerCase();
+                if (nonPlayableTypes.has(firstLower)) return;
+                if (firstLower === "song" || firstLower === "video") {
+                  artist = parts[1] || "Unknown Artist";
+                  album = parts[2] || "";
+                  const durParts = (parts[parts.length - 1] || "").split(":").map(Number);
                   if (durParts.length === 2) durationMs = (durParts[0] * 60 + durParts[1]) * 1000;
-                } else if (parts.length === 2) {
-                  const durParts = (parts[1] || "").split(":").map(Number);
-                  if (durParts.length === 2) {
-                    durationMs = (durParts[0] * 60 + durParts[1]) * 1000;
-                  } else {
+                } else {
+                  artist = parts[0];
+                  if (parts.length >= 3) {
                     album = parts[1];
+                    const durParts = (parts[parts.length - 1] || "").split(":").map(Number);
+                    if (durParts.length === 2) durationMs = (durParts[0] * 60 + durParts[1]) * 1000;
+                  } else if (parts.length === 2) {
+                    const durParts = (parts[1] || "").split(":").map(Number);
+                    if (durParts.length === 2) durationMs = (durParts[0] * 60 + durParts[1]) * 1000;
+                    else album = parts[1];
                   }
                 }
               }
-
-              const thumbs = r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
-              const art = thumbs[thumbs.length - 1]?.url || "";
-              const thumb = thumbs[0]?.url || art;
-
-              if (title) {
-                tracks.push({
-                  id: `ytm_${videoId || Math.random().toString(36).slice(2)}`,
-                  source: "ytmusic",
-                  trackName: title,
-                  artistName: artist,
-                  albumName: album,
-                  releaseYear: "",
-                  durationMs: durationMs,
-                  previewUrl: "",
-                  artworkUrl: art,
-                  artworkThumbnail: thumb,
-                  genre: "Music"
-                });
-              }
-              if (tracks.length >= limit) break;
             }
+
+            const videoId =
+              r.playlistItemData?.videoId ||
+              r.navigationEndpoint?.watchEndpoint?.videoId ||
+              r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.navigationEndpoint?.watchEndpoint?.videoId;
+
+            if (!videoId || videoId.length < 5) return;
+
+            const thumbs = r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
+            const art = thumbs[thumbs.length - 1]?.url || "";
+            const thumb = thumbs[0]?.url || art;
+
+            tracks.push({
+              id: `ytm_${videoId}`,
+              videoId: videoId,
+              source: "ytmusic",
+              trackName: title,
+              artistName: artist,
+              albumName: album,
+              releaseYear: "",
+              durationMs: durationMs,
+              previewUrl: "",
+              artworkUrl: art,
+              artworkThumbnail: thumb,
+              genre: "Music",
+            });
+          }
+
+          for (const sec of sections) {
+            if (sec.musicCardShelfRenderer) {
+              const card = sec.musicCardShelfRenderer;
+              const title = card.title?.runs?.map((x) => x.text).join("");
+              const subRuns = card.subtitle?.runs || [];
+              const cardType = subRuns[0]?.text?.toLowerCase() || "";
+              if (!nonPlayableTypes.has(cardType)) {
+                const artist = subRuns.length > 2 ? subRuns[2]?.text : subRuns[0]?.text || "Unknown Artist";
+                const thumbs = card.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
+                const art = thumbs[thumbs.length - 1]?.url || "";
+                const thumb = thumbs[0]?.url || art;
+                const videoId =
+                  card.onTap?.watchEndpoint?.videoId ||
+                  card.buttons?.find((b) => b.buttonRenderer?.navigationEndpoint?.watchEndpoint)?.buttonRenderer
+                    ?.navigationEndpoint?.watchEndpoint?.videoId;
+
+                if (title && videoId) {
+                  tracks.push({
+                    id: `ytm_${videoId}`,
+                    videoId: videoId,
+                    source: "ytmusic",
+                    trackName: title,
+                    artistName: artist,
+                    albumName: "",
+                    releaseYear: "",
+                    durationMs: 0,
+                    previewUrl: "",
+                    artworkUrl: art,
+                    artworkThumbnail: thumb,
+                    genre: "Music",
+                  });
+                }
+              }
+
+              for (const it of card.contents || []) {
+                parseItem(it.musicResponsiveListItemRenderer);
+              }
+            }
+
+            if (sec.musicShelfRenderer) {
+              for (const it of sec.musicShelfRenderer.contents || []) {
+                parseItem(it.musicResponsiveListItemRenderer);
+              }
+            }
+
+            if (sec.itemSectionRenderer) {
+              for (const it of sec.itemSectionRenderer.contents || []) {
+                parseItem(it.musicResponsiveListItemRenderer);
+              }
+            }
+
             if (tracks.length >= limit) break;
           }
+
           resolve(tracks);
         } catch (_) {
           resolve([]);
@@ -307,7 +378,10 @@ function searchYouTubeMusic(query, limit = 15) {
       });
     });
     req.on("error", () => resolve([]));
-    req.on("timeout", () => { req.destroy(); resolve([]); });
+    req.on("timeout", () => {
+      req.destroy();
+      resolve([]);
+    });
     req.write(postData);
     req.end();
   });
@@ -460,25 +534,26 @@ async function resolveUrlMetadata(inputUrl) {
 }
 
 // ─── Main Universal Search Aggregator ─────────────────────────────────────────
-async function searchITunes(query, limit = 30) {
+async function searchITunes(query, limit = 80) {
   let effectiveQuery = query.trim();
   if (effectiveQuery.startsWith("http://") || effectiveQuery.startsWith("https://")) {
     const resolvedTitle = await resolveUrlMetadata(effectiveQuery);
     if (resolvedTitle) effectiveQuery = resolvedTitle;
   }
 
-  // Execute all 4 primary providers simultaneously
+  // Execute providers: YouTube Music gets primary high priority (35 items), Saavn, iTunes & Deezer get secondary
   const [ytmResults, saavnResults, itunesResults, deezerResults] = await Promise.all([
-    searchYouTubeMusic(effectiveQuery, 15),
+    searchYouTubeMusic(effectiveQuery, 40),
     searchJioSaavn(effectiveQuery, 15),
-    searchITunesInternal(effectiveQuery, 15),
-    searchDeezerInternal(effectiveQuery, 10),
+    searchITunesInternal(effectiveQuery, 20),
+    searchDeezerInternal(effectiveQuery, 15),
   ]);
 
   const results = [];
   const seenSignatures = new Set();
 
   const addTrack = (track) => {
+    if (!track) return;
     const cleanTitle = (track.trackName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
     const cleanArtist = (track.artistName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
     const sig = `${cleanTitle}__${cleanArtist}`;
@@ -488,13 +563,15 @@ async function searchITunes(query, limit = 30) {
     }
   };
 
-  // Interleave and merge for maximum variety: YTM + JioSaavn + iTunes + Deezer
-  const maxLen = Math.max(ytmResults.length, saavnResults.length, itunesResults.length, deezerResults.length);
+  // Give top priority to YouTube Music hits first (so rare/leaked/unreleased songs are immediately front and center)
+  for (const t of ytmResults) addTrack(t);
+
+  // Then add other providers for variety
+  const maxLen = Math.max(saavnResults.length, itunesResults.length, deezerResults.length);
   for (let i = 0; i < maxLen; i++) {
-    if (ytmResults[i]) addTrack(ytmResults[i]);
-    if (saavnResults[i]) addTrack(saavnResults[i]);
     if (itunesResults[i]) addTrack(itunesResults[i]);
     if (deezerResults[i]) addTrack(deezerResults[i]);
+    if (saavnResults[i]) addTrack(saavnResults[i]);
   }
 
   return results.slice(0, limit);
@@ -508,26 +585,34 @@ function scoreMatch(result, trackName, artistName) {
   const aName = artistName.toLowerCase();
 
   let score = 0;
-  if (title === tName) score += 50;
-  else if (title.startsWith(tName + " (") || title.startsWith(tName + " [")) score += 25;
-  else if (title.startsWith(tName)) score += 20;
-  else if (title.includes(tName)) score += 10;
+  let hasTitleMatch = false;
 
-  const artistWords = aName.split(/[\s,]+/).filter(Boolean);
+  if (title === tName) { score += 50; hasTitleMatch = true; }
+  else if (title.startsWith(tName + " (") || title.startsWith(tName + " [")) { score += 35; hasTitleMatch = true; }
+  else if (title.startsWith(tName)) { score += 25; hasTitleMatch = true; }
+  else if (title.includes(tName)) { score += 15; hasTitleMatch = true; }
+
+  const artistWords = aName.split(/[\s,]+/).filter((w) => w.length > 2);
+  let artistMatched = false;
   for (const word of artistWords) {
-    if (word.length > 2 && artists.includes(word)) score += 15;
+    if (artists.includes(word)) { score += 15; artistMatched = true; }
   }
 
+  // CRITICAL: If neither title nor artist matched at all, do NOT award points!
+  if (!hasTitleMatch && !artistMatched) return 0;
+
   const penaltyWords = [
-    "karaoke", "instrumental", "tribute", "cover", "originally performed",
-    "dubstep", "dnb", "drum and bass", "garage", "techno", "house mix",
-    "remix", "re-mix", "re mix", "radio edit",
+    "karaoke", "tribute", "originally performed",
+    "dubstep", "dnb", "drum and bass", "garage", "techno", "house mix"
   ];
   for (const p of penaltyWords) {
     if (title.includes(p)) { score -= 40; break; }
   }
 
-  if (result.more_info?.["320kbps"] === "true" || result["320kbps"] === "true") score += 5;
+  if (hasTitleMatch && (result.more_info?.["320kbps"] === "true" || result["320kbps"] === "true")) {
+    score += 5;
+  }
+
   return score;
 }
 
