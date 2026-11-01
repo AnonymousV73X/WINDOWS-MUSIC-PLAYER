@@ -122,14 +122,26 @@ class DiscoveryView {
             Search any song, listen to instant previews, or download high-fidelity 320kbps MP3s directly to your library.
           </p>
 
-          <div class="discovery-search-wrap" style="position: relative; max-width: 600px;">
+          <div class="discovery-search-wrap" style="position: relative; max-width: 600px; display: flex; align-items: center;">
             <input 
               type="text" 
               id="discovery-search-input" 
               placeholder="Search by song name, artist, or paste a Spotify link..." 
-              style="width: 100%; height: 46px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 23px; padding: 0 48px 0 20px; color: #fff; font-size: 15px; outline: none; transition: border-color 0.2s;"
+              style="width: 100%; height: 46px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 23px; padding: 0 54px 0 20px; color: #fff; font-size: 15px; outline: none; transition: border-color 0.2s;"
             />
-            <div id="discovery-search-spinner" style="display: none; position: absolute; right: 18px; top: 14px; width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.2); border-top-color: var(--green); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+            <button 
+              id="discovery-search-btn" 
+              title="Search" 
+              style="position: absolute; right: 6px; top: 5px; width: 36px; height: 36px; background: var(--green); border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #000; transition: transform 0.15s, opacity 0.15s;"
+              onmouseenter="this.style.opacity='0.85'; this.style.transform='scale(1.05)'"
+              onmouseleave="this.style.opacity='1'; this.style.transform='scale(1)'"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+            </button>
+            <div id="discovery-search-spinner" style="display: none; position: absolute; right: 52px; top: 14px; width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.2); border-top-color: var(--green); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
           </div>
         </div>
 
@@ -143,8 +155,14 @@ class DiscoveryView {
     `;
 
     const input = this.container.querySelector("#discovery-search-input");
+    const searchBtn = this.container.querySelector("#discovery-search-btn");
     if (input) {
-      input.addEventListener("input", (e) => this._onSearchInput(e.target.value));
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          this._performSearch(input.value);
+        }
+      });
       input.addEventListener("focus", () => {
         input.style.borderColor = "var(--green)";
       });
@@ -152,12 +170,15 @@ class DiscoveryView {
         input.style.borderColor = "rgba(255,255,255,0.1)";
       });
     }
+    if (searchBtn) {
+      searchBtn.addEventListener("click", () => {
+        if (input) this._performSearch(input.value);
+      });
+    }
   }
 
-  _onSearchInput(value) {
-    clearTimeout(this.debounceTimer);
-    const query = value.trim();
-
+  async _performSearch(value) {
+    const query = (value || "").trim();
     if (!query) {
       this._renderEmpty("Type a song or artist above to start discovering music.");
       return;
@@ -166,22 +187,20 @@ class DiscoveryView {
     const spinner = this.container.querySelector("#discovery-search-spinner");
     if (spinner) spinner.style.display = "block";
 
-    this.debounceTimer = setTimeout(async () => {
-      try {
-        const res = await this.novaAPI.invoke("discovery:search", query);
-        if (spinner) spinner.style.display = "none";
+    try {
+      const res = await this.novaAPI.invoke("discovery:search", query);
+      if (spinner) spinner.style.display = "none";
 
-        if (res && res.success && Array.isArray(res.results)) {
-          this.tracks = res.results;
-          this._renderResults(this.tracks);
-        } else {
-          this._renderEmpty("No results found. Try another query.");
-        }
-      } catch (err) {
-        if (spinner) spinner.style.display = "none";
-        this._renderEmpty("Error searching tracks: " + err.message);
+      if (res && res.success && Array.isArray(res.results)) {
+        this.tracks = res.results;
+        this._renderResults(this.tracks);
+      } else {
+        this._renderEmpty("No results found. Try another query.");
       }
-    }, 350);
+    } catch (err) {
+      if (spinner) spinner.style.display = "none";
+      this._renderEmpty("Error searching tracks: " + err.message);
+    }
   }
 
   _renderEmpty(message) {

@@ -203,20 +203,9 @@ async function resolveBestStreamUrl(rawUrl, has320Flag) {
 // ─── Multi-Source Search Providers ────────────────────────────────────────────
 
 // 1. YouTube Music InnerTube Search (Official YouTube client API, unlimited coverage)
-function searchYouTubeMusic(query, limit = 40) {
+function callYtmEndpoint(body, timeoutMs = 8000) {
   return new Promise((resolve) => {
-    const postData = JSON.stringify({
-      context: {
-        client: {
-          clientName: "WEB_REMIX",
-          clientVersion: "1.20240101.01.00",
-          hl: "en",
-          gl: "US"
-        }
-      },
-      query: query.trim()
-    });
-
+    const postData = JSON.stringify(body);
     const req = https.request({
       hostname: "music.youtube.com",
       path: "/youtubei/v1/search",
@@ -228,165 +217,321 @@ function searchYouTubeMusic(query, limit = 40) {
         "Origin": "https://music.youtube.com",
         "Referer": "https://music.youtube.com/"
       },
-      timeout: 8000
+      timeout: timeoutMs
     }, (res) => {
       let data = "";
       res.on("data", (c) => (data += c));
       res.on("end", () => {
-        try {
-          const json = JSON.parse(data);
-          const sections =
-            json.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
-          const tracks = [];
-          const nonPlayableTypes = new Set(["album", "artist", "playlist", "single", "ep"]);
-
-          function parseItem(r) {
-            if (!r) return;
-            const title =
-              r.title?.runs?.map((x) => x.text).join("") ||
-              r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.map((x) => x.text).join("");
-            if (!title) return;
-
-            const subRuns =
-              r.subtitle?.runs ||
-              r.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs ||
-              [];
-
-            let artist = "Unknown Artist";
-            let album = "";
-            let durationMs = 0;
-
-            if (subRuns.length > 0) {
-              const parts = [];
-              let current = [];
-              for (const run of subRuns) {
-                if (run.text === " \u2022 " || run.text === " • ") {
-                  parts.push(current.join("").trim());
-                  current = [];
-                } else {
-                  current.push(run.text);
-                }
-              }
-              if (current.length > 0) parts.push(current.join("").trim());
-
-              if (parts.length >= 1) {
-                const firstLower = parts[0].toLowerCase();
-                if (nonPlayableTypes.has(firstLower)) return;
-                if (firstLower === "song" || firstLower === "video") {
-                  artist = parts[1] || "Unknown Artist";
-                  album = parts[2] || "";
-                  const durParts = (parts[parts.length - 1] || "").split(":").map(Number);
-                  if (durParts.length === 2) durationMs = (durParts[0] * 60 + durParts[1]) * 1000;
-                } else {
-                  artist = parts[0];
-                  if (parts.length >= 3) {
-                    album = parts[1];
-                    const durParts = (parts[parts.length - 1] || "").split(":").map(Number);
-                    if (durParts.length === 2) durationMs = (durParts[0] * 60 + durParts[1]) * 1000;
-                  } else if (parts.length === 2) {
-                    const durParts = (parts[1] || "").split(":").map(Number);
-                    if (durParts.length === 2) durationMs = (durParts[0] * 60 + durParts[1]) * 1000;
-                    else album = parts[1];
-                  }
-                }
-              }
-            }
-
-            const videoId =
-              r.playlistItemData?.videoId ||
-              r.navigationEndpoint?.watchEndpoint?.videoId ||
-              r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.navigationEndpoint?.watchEndpoint?.videoId;
-
-            if (!videoId || videoId.length < 5) return;
-
-            const thumbs = r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
-            const art = thumbs[thumbs.length - 1]?.url || "";
-            const thumb = thumbs[0]?.url || art;
-
-            tracks.push({
-              id: `ytm_${videoId}`,
-              videoId: videoId,
-              source: "ytmusic",
-              trackName: title,
-              artistName: artist,
-              albumName: album,
-              releaseYear: "",
-              durationMs: durationMs,
-              previewUrl: "",
-              artworkUrl: art,
-              artworkThumbnail: thumb,
-              genre: "Music",
-            });
-          }
-
-          for (const sec of sections) {
-            if (sec.musicCardShelfRenderer) {
-              const card = sec.musicCardShelfRenderer;
-              const title = card.title?.runs?.map((x) => x.text).join("");
-              const subRuns = card.subtitle?.runs || [];
-              const cardType = subRuns[0]?.text?.toLowerCase() || "";
-              if (!nonPlayableTypes.has(cardType)) {
-                const artist = subRuns.length > 2 ? subRuns[2]?.text : subRuns[0]?.text || "Unknown Artist";
-                const thumbs = card.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
-                const art = thumbs[thumbs.length - 1]?.url || "";
-                const thumb = thumbs[0]?.url || art;
-                const videoId =
-                  card.onTap?.watchEndpoint?.videoId ||
-                  card.buttons?.find((b) => b.buttonRenderer?.navigationEndpoint?.watchEndpoint)?.buttonRenderer
-                    ?.navigationEndpoint?.watchEndpoint?.videoId;
-
-                if (title && videoId) {
-                  tracks.push({
-                    id: `ytm_${videoId}`,
-                    videoId: videoId,
-                    source: "ytmusic",
-                    trackName: title,
-                    artistName: artist,
-                    albumName: "",
-                    releaseYear: "",
-                    durationMs: 0,
-                    previewUrl: "",
-                    artworkUrl: art,
-                    artworkThumbnail: thumb,
-                    genre: "Music",
-                  });
-                }
-              }
-
-              for (const it of card.contents || []) {
-                parseItem(it.musicResponsiveListItemRenderer);
-              }
-            }
-
-            if (sec.musicShelfRenderer) {
-              for (const it of sec.musicShelfRenderer.contents || []) {
-                parseItem(it.musicResponsiveListItemRenderer);
-              }
-            }
-
-            if (sec.itemSectionRenderer) {
-              for (const it of sec.itemSectionRenderer.contents || []) {
-                parseItem(it.musicResponsiveListItemRenderer);
-              }
-            }
-
-            if (tracks.length >= limit) break;
-          }
-
-          resolve(tracks);
-        } catch (_) {
-          resolve([]);
-        }
+        try { resolve(JSON.parse(data)); } catch (_) { resolve(null); }
       });
     });
-    req.on("error", () => resolve([]));
-    req.on("timeout", () => {
-      req.destroy();
-      resolve([]);
-    });
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => { req.destroy(); resolve(null); });
     req.write(postData);
     req.end();
   });
+}
+
+
+function scrapeWatchDuration(videoId, timeoutMs = 2500) {
+  return new Promise((resolve) => {
+    if (!videoId) return resolve(0);
+    const parsedUrl = new URL(`https://www.youtube.com/watch?v=${videoId}`);
+    const req = https.get(
+      parsedUrl,
+      {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        let d = "";
+        res.on("data", (chunk) => {
+          d += chunk;
+          const m =
+            d.match(/itemprop="duration"\s+content="PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?"/i) ||
+            d.match(/approxDurationMs["\s:]+(\d+)/);
+          if (m) {
+            req.destroy();
+            if (m[0].includes("approxDurationMs")) {
+              return resolve(parseInt(m[1], 10));
+            } else {
+              const h = parseInt(m[1] || "0", 10);
+              const min = parseInt(m[2] || "0", 10);
+              const s = parseInt(m[3] || "0", 10);
+              return resolve((h * 3600 + min * 60 + s) * 1000);
+            }
+          }
+        });
+        res.on("end", () => {
+          const m =
+            d.match(/itemprop="duration"\s+content="PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?"/i) ||
+            d.match(/approxDurationMs["\s:]+(\d+)/);
+          if (m) {
+            if (m[0].includes("approxDurationMs")) {
+              resolve(parseInt(m[1], 10));
+            } else {
+              const h = parseInt(m[1] || "0", 10);
+              const min = parseInt(m[2] || "0", 10);
+              const s = parseInt(m[3] || "0", 10);
+              resolve((h * 3600 + min * 60 + s) * 1000);
+            }
+          } else {
+            resolve(0);
+          }
+        });
+      }
+    );
+    req.on("error", () => resolve(0));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(0);
+    });
+  });
+}
+
+async function searchYouTubeMusic(query, limit = 40) {
+  const baseClient = {
+    client: {
+      clientName: "WEB_REMIX",
+      clientVersion: "1.20240101.01.00",
+      hl: "en",
+      gl: "US"
+    }
+  };
+
+  // Run both Universal (for top hit card & unreleased/leaks) and Songs Filter (for exact track durations & albums) in parallel
+  const [universalJson, songsJson] = await Promise.all([
+    callYtmEndpoint({ context: baseClient, query: query.trim() }),
+    callYtmEndpoint({ context: baseClient, query: query.trim(), params: "EgWKAQIIAWoSEAQQBRADEAkQChAVEBAQDhAR" })
+  ]);
+
+  const tracks = [];
+  const seenVideoIds = new Set();
+  const nonPlayableTypes = new Set(["album", "artist", "playlist", "single", "ep", "profile", "podcast", "episode"]);
+
+  // Detect if a string is a duration (e.g. "3:45", "1:03:22")
+  function parseDurationMs(str) {
+    if (!str) return 0;
+    const s = str.trim();
+    const m2 = s.match(/^(\d+):(\d{2})$/);
+    if (m2) return (Number(m2[1]) * 60 + Number(m2[2])) * 1000;
+    const m3 = s.match(/^(\d+):(\d{2}):(\d{2})$/);
+    if (m3) return (Number(m3[1]) * 3600 + Number(m3[2]) * 60 + Number(m3[3])) * 1000;
+    return 0;
+  }
+
+  // Detect if a string looks like a YouTube views or plays count
+  function isViewsString(str) {
+    return /^\d[\d.,KMB]*\s+(views?|plays?)$/i.test((str || "").trim());
+  }
+
+  function parseItem(r) {
+    if (!r) return null;
+    const title =
+      r.title?.runs?.map((x) => x.text).join("") ||
+      r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.map((x) => x.text).join("");
+    if (!title) return null;
+
+    const subRuns =
+      r.subtitle?.runs ||
+      r.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs ||
+      [];
+
+    let artist = "Unknown Artist";
+    let album = "";
+    let durationMs = 0;
+
+    // Check fixedColumns first if present
+    if (r.fixedColumns?.[0]) {
+      const fixedText = r.fixedColumns[0].musicResponsiveListItemFixedColumnRenderer?.text?.runs?.map((x) => x.text).join("");
+      const d = parseDurationMs(fixedText);
+      if (d > 0) durationMs = d;
+    }
+
+    if (subRuns.length > 0) {
+      const parts = [];
+      let current = [];
+      for (const run of subRuns) {
+        if (run.text === " \u2022 " || run.text === " • ") {
+          parts.push(current.join("").trim());
+          current = [];
+        } else {
+          current.push(run.text);
+        }
+      }
+      if (current.length > 0) parts.push(current.join("").trim());
+
+      // If duration not yet found, check last part
+      if (durationMs === 0) {
+        const lastPart = parts[parts.length - 1] || "";
+        const durFromLast = parseDurationMs(lastPart);
+        if (durFromLast > 0) {
+          durationMs = durFromLast;
+          parts.pop();
+        }
+      }
+
+      // Filter out any "views" or "plays" count strings
+      const meaningfulParts = parts.filter((p) => !isViewsString(p));
+
+      if (meaningfulParts.length >= 1) {
+        const firstLower = meaningfulParts[0].toLowerCase();
+        if (nonPlayableTypes.has(firstLower)) return null;
+        if (firstLower === "song" || firstLower === "video") {
+          artist = meaningfulParts[1] || "Unknown Artist";
+          album = meaningfulParts[2] || "";
+        } else {
+          artist = meaningfulParts[0];
+          if (meaningfulParts.length >= 2) {
+            album = meaningfulParts[1];
+          }
+        }
+      }
+    }
+
+    const videoId =
+      r.playlistItemData?.videoId ||
+      r.navigationEndpoint?.watchEndpoint?.videoId ||
+      r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.navigationEndpoint?.watchEndpoint?.videoId;
+
+    if (!videoId || videoId.length < 5) return null;
+
+    const thumbs = r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
+    const art = thumbs[thumbs.length - 1]?.url || "";
+    const thumb = thumbs[0]?.url || art;
+
+    return {
+      id: `ytm_${videoId}`,
+      videoId: videoId,
+      source: "ytmusic",
+      trackName: title,
+      artistName: artist,
+      albumName: album,
+      releaseYear: "",
+      durationMs: durationMs,
+      previewUrl: "",
+      artworkUrl: art,
+      artworkThumbnail: thumb,
+      genre: "Music",
+    };
+  }
+
+  // 1. Process universal search top card (gives the exact best match first)
+  const universalSections =
+    universalJson?.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
+
+  for (const sec of universalSections) {
+    if (sec.musicCardShelfRenderer) {
+      const card = sec.musicCardShelfRenderer;
+      const title = card.title?.runs?.map((x) => x.text).join("");
+      const subRuns = card.subtitle?.runs || [];
+
+      const cardParts = [];
+      let cur = [];
+      for (const run of subRuns) {
+        if (run.text === " \u2022 " || run.text === " • ") {
+          cardParts.push(cur.join("").trim());
+          cur = [];
+        } else cur.push(run.text);
+      }
+      if (cur.length > 0) cardParts.push(cur.join("").trim());
+
+      const cardType = (cardParts[0] || "").toLowerCase();
+      if (!nonPlayableTypes.has(cardType)) {
+        const cardLastPart = cardParts[cardParts.length - 1] || "";
+        const cardDurationMs = parseDurationMs(cardLastPart);
+        const cardMeaningful = cardParts.slice(1).filter((p) => !isViewsString(p) && parseDurationMs(p) === 0);
+        const artist = cardMeaningful[0] || "Unknown Artist";
+
+        const thumbs = card.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
+        const art = thumbs[thumbs.length - 1]?.url || "";
+        const thumb = thumbs[0]?.url || art;
+        const videoId =
+          card.onTap?.watchEndpoint?.videoId ||
+          card.buttons?.find((b) => b.buttonRenderer?.navigationEndpoint?.watchEndpoint)?.buttonRenderer
+            ?.navigationEndpoint?.watchEndpoint?.videoId;
+
+        if (title && videoId && !seenVideoIds.has(videoId)) {
+          seenVideoIds.add(videoId);
+          tracks.push({
+            id: `ytm_${videoId}`,
+            videoId: videoId,
+            source: "ytmusic",
+            trackName: title,
+            artistName: artist,
+            albumName: "",
+            releaseYear: "",
+            durationMs: cardDurationMs,
+            previewUrl: "",
+            artworkUrl: art,
+            artworkThumbnail: thumb,
+            genre: "Music",
+          });
+        }
+      }
+
+      for (const it of card.contents || []) {
+        const parsed = parseItem(it.musicResponsiveListItemRenderer);
+        if (parsed && !seenVideoIds.has(parsed.videoId)) {
+          seenVideoIds.add(parsed.videoId);
+          tracks.push(parsed);
+        }
+      }
+    }
+  }
+
+  // 2. Process Songs-filter results (gives rich track info, official releases & accurate durations)
+  const songsSections =
+    songsJson?.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
+
+  for (const sec of songsSections) {
+    const contents = (sec.musicShelfRenderer || sec.itemSectionRenderer)?.contents || [];
+    for (const it of contents) {
+      const parsed = parseItem(it.musicResponsiveListItemRenderer);
+      if (parsed && !seenVideoIds.has(parsed.videoId)) {
+        seenVideoIds.add(parsed.videoId);
+        tracks.push(parsed);
+      }
+      if (tracks.length >= limit) break;
+    }
+    if (tracks.length >= limit) break;
+  }
+
+  // 3. Process remaining universal sections (leaks, remixes, live performances)
+  for (const sec of universalSections) {
+    if (sec.musicCardShelfRenderer) continue;
+    const contents = (sec.musicShelfRenderer || sec.itemSectionRenderer)?.contents || [];
+    for (const it of contents) {
+      const parsed = parseItem(it.musicResponsiveListItemRenderer);
+      if (parsed && !seenVideoIds.has(parsed.videoId)) {
+        seenVideoIds.add(parsed.videoId);
+        tracks.push(parsed);
+      }
+      if (tracks.length >= limit) break;
+    }
+    if (tracks.length >= limit) break;
+  }
+
+  const slice = tracks.slice(0, limit);
+
+  // Background enrich tracks with durationMs === 0 (e.g. unreleased leaks/videos)
+  const zeroDurTracks = slice.filter((t) => (!t.durationMs || t.durationMs === 0) && t.videoId);
+  if (zeroDurTracks.length > 0) {
+    await Promise.all(
+      zeroDurTracks.map(async (t) => {
+        try {
+          const scraped = await scrapeWatchDuration(t.videoId, 2000);
+          if (scraped > 0) t.durationMs = scraped;
+        } catch (_) {}
+      })
+    );
+  }
+
+  return slice;
 }
 
 // 2. JioSaavn Direct Search
