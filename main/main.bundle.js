@@ -37810,7 +37810,7 @@ var require_package = __commonJS({
   "package.json"(exports2, module2) {
     module2.exports = {
       name: "novatune",
-      version: "1.1.6",
+      version: "1.1.7",
       description: "NovaTune \u2014 A premium Windows music player with Spotify-dark aesthetics",
       main: "main/main.bundle.js",
       scripts: {
@@ -37890,6 +37890,7 @@ var require_ipc = __commonJS({
     var ManifestIPC = require_manifestIPC();
     var TagLib = require_dist();
     var ManifestReader = require_manifestReader();
+    var DownloadEngine = require("./downloadEngine");
     var SUPPORTED_FORMATS = [
       ".mp3",
       ".flac",
@@ -42634,6 +42635,88 @@ ${items}
         );
         return { success: true, migrated: true, deletedCount };
       } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
+    ipcMain.handle("discovery:search", async (_event, query) => {
+      try {
+        if (!query || !query.trim()) return { success: true, results: [] };
+        const results = await DownloadEngine.searchITunes(query);
+        return { success: true, results };
+      } catch (err) {
+        console.error("[IPC] discovery:search error:", err);
+        return { success: false, error: err.message, results: [] };
+      }
+    });
+    ipcMain.handle("discovery:download", async (event, trackInfo) => {
+      try {
+        if (!trackInfo || !trackInfo.trackName) {
+          return { success: false, error: "Invalid track data" };
+        }
+        const musicDir = app.getPath("music") || path.join(app.getPath("userData"), "Downloads");
+        const targetFolder = path.join(musicDir, "NovaTune Downloads");
+        const onProgress = (prog) => {
+          try {
+            event.sender.send("discovery:progress", {
+              trackId: trackInfo.id,
+              ...prog
+            });
+          } catch (_) {
+          }
+        };
+        const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress);
+        let parsedTrack = null;
+        try {
+          const stats = fs.statSync(savedPath);
+          const meta = await metadataReader.readMetadata(savedPath);
+          const fileName = path.basename(savedPath);
+          const trackId = generateTrackId(savedPath);
+          parsedTrack = {
+            id: trackId,
+            filePath: savedPath,
+            fileName,
+            title: meta?.title || trackInfo.trackName || path.basename(fileName, path.extname(fileName)),
+            artist: meta?.artist || trackInfo.artistName || "Unknown Artist",
+            album: meta?.album || trackInfo.albumName || "Unknown Album",
+            albumArtist: meta?.albumArtist || "",
+            genre: meta?.genre || trackInfo.genre || "",
+            year: Number(meta?.year || trackInfo.releaseYear) || 0,
+            trackNumber: Number(meta?.trackNumber) || 0,
+            discNumber: Number(meta?.discNumber) || 0,
+            duration: Number(meta?.duration) || (trackInfo.durationMs ? Math.round(trackInfo.durationMs / 1e3) : 0),
+            bitrate: Number(meta?.bitrate) || 320,
+            sampleRate: Number(meta?.sampleRate) || 44100,
+            channels: Number(meta?.channels) || 2,
+            format: path.extname(fileName).replace(".", "").toUpperCase() || "MP3",
+            fileSize: stats.size,
+            coverArt: meta?.coverArt || null,
+            _hasCoverArt: !!(meta?.coverArt || trackInfo.artworkUrl),
+            dateAdded: Date.now(),
+            dateModified: stats.mtimeMs || Date.now()
+          };
+          try {
+            await withSettingsFile((settings) => {
+              const scanFolders = Array.isArray(settings.scanFolders) ? settings.scanFolders : [];
+              if (!scanFolders.includes(targetFolder)) {
+                scanFolders.push(targetFolder);
+                settings.scanFolders = scanFolders;
+              }
+            });
+          } catch (_) {
+          }
+          const currentLibrary = getLibrary();
+          const updatedLibrary = [parsedTrack, ...currentLibrary.filter((t) => t.id !== parsedTrack.id)];
+          partialSaveLibrary(updatedLibrary, [parsedTrack], []);
+          BrowserWindow.getAllWindows().forEach((win) => {
+            win.webContents.send("library:track-added", parsedTrack);
+          });
+          console.log(`[IPC] Successfully saved & broadcasted downloaded track: "${parsedTrack.title}" (${parsedTrack.id})`);
+        } catch (trackParseErr) {
+          console.warn("[IPC] Failed to hot-append track to library:", trackParseErr.message);
+        }
+        return { success: true, filePath: savedPath, track: parsedTrack };
+      } catch (err) {
+        console.error("[IPC] discovery:download error:", err);
         return { success: false, error: err.message };
       }
     });

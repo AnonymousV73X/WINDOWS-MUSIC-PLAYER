@@ -43,6 +43,7 @@ const EQEngine = require("./audio/EQEngine");
 // and N×500 JSON.parse calls on startup. Falls back silently to the
 // SQLite paginated path if the manifest is missing/corrupt.
 const ManifestDecoder = require("./services/ManifestDecoder");
+const DiscoveryView = require("./ui/DiscoveryView");
 let manifestDecoder = null; // initialized lazily in _loadLibrary()
 
 const arg = process.argv.find((a) => a.startsWith("--accent-color="));
@@ -2066,6 +2067,7 @@ function _saveSectionScroll(section) {
 // Navigation = display toggle only — zero DOM work after first visit.
 // Virtual sections (library, queue) still use #track-list as before.
 const _PANEL_SECTIONS = [
+  "discovery",
   "home",
   "albums",
   "artists",
@@ -3616,7 +3618,47 @@ function _wireSidebar() {
     });
   });
 
+  // Listener for instant hot-reload of newly downloaded tracks from Music Downloader
+  if (window.novaAPI?.on) {
+    window.novaAPI.on("library:track-added", async (newTrack) => {
+      try {
+        if (!newTrack || !newTrack.id) return;
+        console.log("[library:track-added] Ingesting downloaded track into renderer state:", newTrack.title);
+        // Avoid duplicate additions
+        const existingIdx = state.tracks.findIndex((t) => t.id === newTrack.id || t.filePath === newTrack.filePath);
+        if (existingIdx !== -1) {
+          state.tracks[existingIdx] = newTrack;
+        } else {
+          state.tracks.unshift(newTrack);
+        }
+        state.filteredTracks = [...state.tracks];
+        if (state.sortKey) _sortTracks();
+        if (typeof invalidateSectionCache === "function") invalidateSectionCache();
+        if (typeof buildSearchIndex === "function") buildSearchIndex();
+        if (typeof _panelDirty !== "undefined") {
+          _panelDirty["home"] = true;
+          _panelDirty["albums"] = true;
+          _panelDirty["artists"] = true;
+        }
+        if (typeof _updateSidebarFolderInfo === "function") _updateSidebarFolderInfo();
+        console.log(`[library:track-added] Library updated! Total tracks: ${state.tracks.length}`);
+      } catch (err) {
+        console.warn("[library:track-added] Failed to update library state:", err);
+      }
+    });
+  }
+
   // Help "?" button in sidebar search bar
+  const dlBtn = $("sidebar-download-btn");
+  if (dlBtn) {
+    dlBtn.addEventListener("click", () => {
+      $$(".nav-item").forEach((n) => n.classList.remove("active"));
+      state.activeNavSection = "discovery";
+      _navigateTo("discovery");
+      if (window.innerWidth <= 640) toggleSidebar();
+    });
+  }
+
   const helpBtn = $("sidebar-help-btn");
   if (helpBtn) {
     helpBtn.addEventListener("click", () => {
@@ -3762,7 +3804,11 @@ function _navigateTo(section) {
       title.textContent = "Home";
       _showCached("home", renderHome);
       break;
-    case "library":
+    case "discovery":
+      title.textContent = "Music Downloader";
+      _showCached("discovery", renderDiscovery);
+      break;
+      case "library":
       title.textContent = "Music";
       _showVirtual();
       renderTracks(state.filteredTracks, "library");
@@ -8561,7 +8607,7 @@ function renderPlaylists() {
   container.className = "playlist-section";
   container.innerHTML = `
     <div class="playlist-top-bar">
-      <button class="playlist-import-fab" type="button" id="playlist-import-btn" title="Import playlist">
+      <button class="playlist-import-fab" type="button" id="playlist-import-btn" data-tooltip="Import Playlist">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       </button>
     </div>
@@ -8608,7 +8654,7 @@ function renderPlaylists() {
   if (playlists.length === 0) {
     container.innerHTML = `
       <div class="playlist-top-bar">
-        <button class="playlist-import-fab" type="button" id="playlist-import-btn" title="Import playlist">
+        <button class="playlist-import-fab" type="button" id="playlist-import-btn" data-tooltip="Import Playlist">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
       </div>
@@ -10743,6 +10789,22 @@ function _makeAlbumCard(album) {
     _activePanelTarget = null;
   });
   return card;
+}
+
+
+function renderDiscovery() {
+  renderSectionSurface(`
+    <div id="discovery-root-container" style="height: 100%; width: 100%;"></div>
+  `);
+  const root = document.getElementById("discovery-root-container");
+  if (root) {
+    const view = new DiscoveryView(root, window.novaAPI, (trackToPlay) => {
+      if (typeof playTrack === "function" && trackToPlay) {
+        playTrack(trackToPlay);
+      }
+    });
+    view.render();
+  }
 }
 
 function renderHelp() {

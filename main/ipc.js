@@ -35,6 +35,7 @@ const ManifestWriter = require("./manifest");
 const ManifestIPC = require("./manifestIPC");
 const TagLib = require("node-taglib-sharp");
 const ManifestReader = require("./manifestReader");
+const DownloadEngine = require("./downloadEngine");
 
 // ─── Supported Audio Formats ────────────────────────────────────────
 const SUPPORTED_FORMATS = [
@@ -6444,6 +6445,103 @@ ipcMain.handle("coverart:migrate-v114", async () => {
 /**
  * Simple semver comparison. Returns 1 if a > b, -1 if a < b, 0 if equal.
  */
+
+// ─── Music Discovery & Downloader IPC Handlers ───────────────────────
+ipcMain.handle("discovery:search", async (_event, query) => {
+  try {
+    if (!query || !query.trim()) return { success: true, results: [] };
+    const results = await DownloadEngine.searchITunes(query);
+    return { success: true, results };
+  } catch (err) {
+    console.error("[IPC] discovery:search error:", err);
+    return { success: false, error: err.message, results: [] };
+  }
+});
+
+ipcMain.handle("discovery:download", async (event, trackInfo) => {
+  try {
+    if (!trackInfo || !trackInfo.trackName) {
+      return { success: false, error: "Invalid track data" };
+    }
+
+    const musicDir = app.getPath("music") || path.join(app.getPath("userData"), "Downloads");
+    const targetFolder = path.join(musicDir, "NovaTune Downloads");
+
+    const onProgress = (prog) => {
+      try {
+        event.sender.send("discovery:progress", {
+          trackId: trackInfo.id,
+          ...prog,
+        });
+      } catch (_) {}
+    };
+
+    const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress);
+
+    // ── Task 4.1: Instant Single-Track Hot-Reload into Library ────────
+    let parsedTrack = null;
+    try {
+      const stats = fs.statSync(savedPath);
+      const meta = await metadataReader.readMetadata(savedPath);
+      const fileName = path.basename(savedPath);
+      const trackId = generateTrackId(savedPath);
+
+      parsedTrack = {
+        id: trackId,
+        filePath: savedPath,
+        fileName: fileName,
+        title: meta?.title || trackInfo.trackName || path.basename(fileName, path.extname(fileName)),
+        artist: meta?.artist || trackInfo.artistName || "Unknown Artist",
+        album: meta?.album || trackInfo.albumName || "Unknown Album",
+        albumArtist: meta?.albumArtist || "",
+        genre: meta?.genre || trackInfo.genre || "",
+        year: Number(meta?.year || trackInfo.releaseYear) || 0,
+        trackNumber: Number(meta?.trackNumber) || 0,
+        discNumber: Number(meta?.discNumber) || 0,
+        duration: Number(meta?.duration) || (trackInfo.durationMs ? Math.round(trackInfo.durationMs / 1000) : 0),
+        bitrate: Number(meta?.bitrate) || 320,
+        sampleRate: Number(meta?.sampleRate) || 44100,
+        channels: Number(meta?.channels) || 2,
+        format: path.extname(fileName).replace(".", "").toUpperCase() || "MP3",
+        fileSize: stats.size,
+        coverArt: meta?.coverArt || null,
+        _hasCoverArt: !!(meta?.coverArt || trackInfo.artworkUrl),
+        dateAdded: Date.now(),
+        dateModified: stats.mtimeMs || Date.now(),
+      };
+
+      // Add folder to scanFolders if not already there so it persists across full re-scans
+      try {
+        await withSettingsFile((settings) => {
+          const scanFolders = Array.isArray(settings.scanFolders) ? settings.scanFolders : [];
+          if (!scanFolders.includes(targetFolder)) {
+            scanFolders.push(targetFolder);
+            settings.scanFolders = scanFolders;
+          }
+        });
+      } catch (_) {}
+
+      // Persist directly to SQLite database using partialSaveLibrary
+      const currentLibrary = getLibrary();
+      const updatedLibrary = [parsedTrack, ...currentLibrary.filter((t) => t.id !== parsedTrack.id)];
+      partialSaveLibrary(updatedLibrary, [parsedTrack], []);
+
+      // Notify all renderer windows so UI state updates immediately
+      BrowserWindow.getAllWindows().forEach((win) => {
+        win.webContents.send("library:track-added", parsedTrack);
+      });
+      console.log(`[IPC] Successfully saved & broadcasted downloaded track: "${parsedTrack.title}" (${parsedTrack.id})`);
+    } catch (trackParseErr) {
+      console.warn("[IPC] Failed to hot-append track to library:", trackParseErr.message);
+    }
+
+    return { success: true, filePath: savedPath, track: parsedTrack };
+  } catch (err) {
+    console.error("[IPC] discovery:download error:", err);
+    return { success: false, error: err.message };
+  }
+});
+
 function compareVersions(a, b) {
   const pa = (a || "0").split(".").map(Number);
   const pb = (b || "0").split(".").map(Number);

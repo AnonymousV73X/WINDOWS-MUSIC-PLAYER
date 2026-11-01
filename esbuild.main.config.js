@@ -14,6 +14,7 @@ esbuild
       "node-id3", // Must be external — MP3 tag writing
       "electron-updater", // Must be external — contains dynamic requires
       "chokidar", // Must be external — used by electron-updater
+      "./downloadEngine",
     ],
     outfile: "main/main.bundle.js",
     minify: process.env.NODE_ENV === "production",
