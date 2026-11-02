@@ -3778,6 +3778,7 @@ function _updateToolbarVisibility(section) {
       if (toolbar) toolbar.insertBefore(sectionLabel, toolbar.firstChild);
     }
     const sectionNames = {
+      discovery: "Music Downloader",
       albums: "Albums",
       artists: "Artists",
       playlists: "Playlists",
@@ -15844,6 +15845,11 @@ function _createFloatingNavCard() {
       id: "library",
       label: "Library",
       icon: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
+    },
+    {
+      id: "discovery",
+      label: "Music Downloader",
+      icon: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
     },
     {
       id: "albums",
