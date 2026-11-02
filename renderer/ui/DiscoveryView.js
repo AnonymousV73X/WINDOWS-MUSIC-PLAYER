@@ -101,8 +101,15 @@ class DiscoveryView {
         if (!parsedTrack || !parsedTrack.filePath) return;
         // Find matching download by filePath
         for (const [trackId, state] of this.downloadStates) {
-          if (state._pendingFilePath && state._pendingFilePath === parsedTrack.filePath) {
-            const doneState = { status: "done", percent: 100, track: parsedTrack };
+          if (
+            state._pendingFilePath &&
+            state._pendingFilePath === parsedTrack.filePath
+          ) {
+            const doneState = {
+              status: "done",
+              percent: 100,
+              track: parsedTrack,
+            };
             this.downloadStates.set(trackId, doneState);
             this._updateTrackDownloadUI(trackId, doneState);
             break;
@@ -186,7 +193,9 @@ class DiscoveryView {
   async _performSearch(value) {
     const query = (value || "").trim();
     if (!query) {
-      this._renderEmpty("Type a song or artist above to start discovering music.");
+      this._renderEmpty(
+        "Type a song or artist above to start discovering music.",
+      );
       return;
     }
 
@@ -360,7 +369,11 @@ class DiscoveryView {
       });
 
       row.addEventListener("click", (e) => {
-        if (e.target.closest(".preview-btn") || e.target.closest(".action-download-btn")) return;
+        if (
+          e.target.closest(".preview-btn") ||
+          e.target.closest(".action-download-btn")
+        )
+          return;
         const id = row.dataset.id;
         const state = this.downloadStates.get(id);
         if (state && state.status === "done" && state.track) {
@@ -377,23 +390,25 @@ class DiscoveryView {
     });
 
     // Play downloaded CTA
-    this.container.querySelectorAll(".action-play-downloaded-btn").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const id = btn.dataset.id;
-        const state = this.downloadStates.get(id);
-        if (state && state.status === "done" && state.track) {
-          if (this.currentPreviewAudio) {
-            this.currentPreviewAudio.pause();
-            this.currentPreviewAudio = null;
-            this.playingTrackId = null;
+    this.container
+      .querySelectorAll(".action-play-downloaded-btn")
+      .forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const id = btn.dataset.id;
+          const state = this.downloadStates.get(id);
+          if (state && state.status === "done" && state.track) {
+            if (this.currentPreviewAudio) {
+              this.currentPreviewAudio.pause();
+              this.currentPreviewAudio = null;
+              this.playingTrackId = null;
+            }
+            if (typeof this.onPlayTrack === "function") {
+              this.onPlayTrack(state.track);
+            }
           }
-          if (typeof this.onPlayTrack === "function") {
-            this.onPlayTrack(state.track);
-          }
-        }
+        });
       });
-    });
   }
 
   _togglePreview(id, url, buttonEl) {
@@ -455,7 +470,9 @@ class DiscoveryView {
             artist: track.artistName,
             album: track.albumName,
             filePath: savedPath,
-            duration: track.durationMs ? Math.round(track.durationMs / 1000) : 0,
+            duration: track.durationMs
+              ? Math.round(track.durationMs / 1000)
+              : 0,
             coverArt: track.artworkUrl,
             _hasCoverArt: !!track.artworkUrl,
           },
@@ -468,13 +485,17 @@ class DiscoveryView {
         setTimeout(() => {
           const current = this.downloadStates.get(track.id);
           if (current && current.status === "verifying") {
-            const doneState = { status: "done", percent: 100, track: current.track };
+            const doneState = {
+              status: "done",
+              percent: 100,
+              track: current.track,
+            };
             this.downloadStates.set(track.id, doneState);
             this._updateTrackDownloadUI(track.id, doneState);
           }
         }, 4000);
       } else {
-        const msg = (res?.error || "Unknown error");
+        const msg = res?.error || "Unknown error";
         this._showToast("Download failed: " + msg);
         this.downloadStates.delete(track.id);
         this._updateTrackDownloadUI(track.id, { status: "idle" });
@@ -490,7 +511,9 @@ class DiscoveryView {
     const container = this.container.querySelector(`#dl-container-${trackId}`);
     if (container) {
       container.innerHTML = this._getDownloadButtonHtml(trackId, state);
-      const row = this.container.querySelector(`.discovery-track-row[data-id="${trackId}"]`);
+      const row = this.container.querySelector(
+        `.discovery-track-row[data-id="${trackId}"]`,
+      );
       if (row) {
         if (state.status === "done") {
           row.classList.add("is-downloaded");
