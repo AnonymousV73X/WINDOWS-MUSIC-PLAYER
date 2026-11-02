@@ -248,7 +248,7 @@ class DiscoveryView {
       .map((track) => {
         const durationMin = track.durationMs
           ? `${Math.floor(track.durationMs / 60000)}:${String(Math.floor((track.durationMs % 60000) / 1000)).padStart(2, "0")}`
-          : "--:--";
+          : "";
 
         const state = this.downloadStates.get(track.id) || { status: "idle" };
         const isDownloaded = state.status === "done";
