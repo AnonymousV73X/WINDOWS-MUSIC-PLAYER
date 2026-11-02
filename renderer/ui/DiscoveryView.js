@@ -125,7 +125,7 @@ class DiscoveryView {
         <!-- Header & Search -->
         <div class="discovery-header" style="margin-bottom: 24px;">
           <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
-            <h1 style="font-size: 28px; font-weight: 700; margin: 0; letter-spacing: -0.5px;">Music Downloader & Search</h1>
+            <h1 style="font-size: 28px; font-weight: 700; margin: 0; letter-spacing: -0.5px;">Music Search & Download </h1>
             <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; padding: 2px 8px; border-radius: 6px; background: color-mix(in srgb, var(--green, #1ed760) 15%, transparent); color: var(--green, #1ed760); border: 1px solid color-mix(in srgb, var(--green, #1ed760) 30%, transparent); display: inline-flex; align-items: center; gap: 5px;">
               <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--green, #1ed760);"></span>
               Beta
