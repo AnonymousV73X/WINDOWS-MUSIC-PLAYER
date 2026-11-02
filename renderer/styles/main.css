@@ -1920,7 +1920,7 @@ textarea {
 .sidebar-help-btn.active {
   color: var(--text-primary);
   background: var(--surface-active);
-  border-radius: 8px;
+  border-radius: 4px;
   box-shadow: 0 0 0 5px var(--surface-active);
 }
 
