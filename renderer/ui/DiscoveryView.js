@@ -1,7 +1,7 @@
 /**
  * NovaTune — Discovery & Download View
  * Ultra-lightweight UI component matching NovaTune's Spotify-dark aesthetics.
- * Features instant iTunes+Deezer search, 30s preview playback, and one-click 320kbps MP3 download.
+ * Features instant iTunes+Deezer search and one-click 320kbps MP3 download.
  */
 
 class DiscoveryView {
@@ -101,15 +101,8 @@ class DiscoveryView {
         if (!parsedTrack || !parsedTrack.filePath) return;
         // Find matching download by filePath
         for (const [trackId, state] of this.downloadStates) {
-          if (
-            state._pendingFilePath &&
-            state._pendingFilePath === parsedTrack.filePath
-          ) {
-            const doneState = {
-              status: "done",
-              percent: 100,
-              track: parsedTrack,
-            };
+          if (state._pendingFilePath && state._pendingFilePath === parsedTrack.filePath) {
+            const doneState = { status: "done", percent: 100, track: parsedTrack };
             this.downloadStates.set(trackId, doneState);
             this._updateTrackDownloadUI(trackId, doneState);
             break;
@@ -132,7 +125,7 @@ class DiscoveryView {
             </span>
           </div>
           <p style="color: var(--text-muted); font-size: 14px; margin: 0 0 20px 0;">
-            Search any song, listen to instant previews, or download high-fidelity 320kbps MP3s directly to your library.
+            Search any song and download high-fidelity 320kbps MP3s directly to your library.
           </p>
 
           <div class="discovery-search-wrap" style="position: relative; width: 100%; max-width: none; display: flex; align-items: center;">
@@ -193,9 +186,7 @@ class DiscoveryView {
   async _performSearch(value) {
     const query = (value || "").trim();
     if (!query) {
-      this._renderEmpty(
-        "Type a song or artist above to start discovering music.",
-      );
+      this._renderEmpty("Type a song or artist above to start discovering music.");
       return;
     }
 
@@ -259,17 +250,6 @@ class DiscoveryView {
             <div style="display: flex; align-items: center; gap: 14px; min-width: 0; flex: 1; padding-right: 32px;">
               <div style="position: relative; width: 44px; height: 44px; flex-shrink: 0; border-radius: 4px; overflow: hidden; background: #222;">
                 <img src="${track.artworkThumbnail || track.artworkUrl}" alt="" style="width: 100%; height: 100%; object-fit: cover;" />
-                ${
-                  track.previewUrl
-                    ? `
-                  <button class="preview-btn" data-id="${track.id}" data-url="${track.previewUrl}" style="position: absolute; inset: 0; background: rgba(0,0,0,0.4); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: 1; transition: background 0.2s;" onmouseenter="this.style.background='rgba(0,0,0,0.7)'" onmouseleave="this.style.background='rgba(0,0,0,0.4)'">
-                    <svg viewBox="0 0 24 24" fill="#fff" style="width: 20px; height: 20px;">
-                      <polygon points="5,3 19,12 5,21" />
-                    </svg>
-                  </button>
-                `
-                    : ""
-                }
               </div>
 
               <div style="min-width: 0; flex: 1; overflow: hidden;">
@@ -380,11 +360,7 @@ class DiscoveryView {
       });
 
       row.addEventListener("click", (e) => {
-        if (
-          e.target.closest(".preview-btn") ||
-          e.target.closest(".action-download-btn")
-        )
-          return;
+        if (e.target.closest(".preview-btn") || e.target.closest(".action-download-btn")) return;
         const id = row.dataset.id;
         const state = this.downloadStates.get(id);
         if (state && state.status === "done" && state.track) {
@@ -401,25 +377,23 @@ class DiscoveryView {
     });
 
     // Play downloaded CTA
-    this.container
-      .querySelectorAll(".action-play-downloaded-btn")
-      .forEach((btn) => {
-        btn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          const id = btn.dataset.id;
-          const state = this.downloadStates.get(id);
-          if (state && state.status === "done" && state.track) {
-            if (this.currentPreviewAudio) {
-              this.currentPreviewAudio.pause();
-              this.currentPreviewAudio = null;
-              this.playingTrackId = null;
-            }
-            if (typeof this.onPlayTrack === "function") {
-              this.onPlayTrack(state.track);
-            }
+    this.container.querySelectorAll(".action-play-downloaded-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        const state = this.downloadStates.get(id);
+        if (state && state.status === "done" && state.track) {
+          if (this.currentPreviewAudio) {
+            this.currentPreviewAudio.pause();
+            this.currentPreviewAudio = null;
+            this.playingTrackId = null;
           }
-        });
+          if (typeof this.onPlayTrack === "function") {
+            this.onPlayTrack(state.track);
+          }
+        }
       });
+    });
   }
 
   _togglePreview(id, url, buttonEl) {
@@ -481,9 +455,7 @@ class DiscoveryView {
             artist: track.artistName,
             album: track.albumName,
             filePath: savedPath,
-            duration: track.durationMs
-              ? Math.round(track.durationMs / 1000)
-              : 0,
+            duration: track.durationMs ? Math.round(track.durationMs / 1000) : 0,
             coverArt: track.artworkUrl,
             _hasCoverArt: !!track.artworkUrl,
           },
@@ -496,17 +468,13 @@ class DiscoveryView {
         setTimeout(() => {
           const current = this.downloadStates.get(track.id);
           if (current && current.status === "verifying") {
-            const doneState = {
-              status: "done",
-              percent: 100,
-              track: current.track,
-            };
+            const doneState = { status: "done", percent: 100, track: current.track };
             this.downloadStates.set(track.id, doneState);
             this._updateTrackDownloadUI(track.id, doneState);
           }
         }, 4000);
       } else {
-        const msg = res?.error || "Unknown error";
+        const msg = (res?.error || "Unknown error");
         this._showToast("Download failed: " + msg);
         this.downloadStates.delete(track.id);
         this._updateTrackDownloadUI(track.id, { status: "idle" });
@@ -522,9 +490,7 @@ class DiscoveryView {
     const container = this.container.querySelector(`#dl-container-${trackId}`);
     if (container) {
       container.innerHTML = this._getDownloadButtonHtml(trackId, state);
-      const row = this.container.querySelector(
-        `.discovery-track-row[data-id="${trackId}"]`,
-      );
+      const row = this.container.querySelector(`.discovery-track-row[data-id="${trackId}"]`);
       if (row) {
         if (state.status === "done") {
           row.classList.add("is-downloaded");
