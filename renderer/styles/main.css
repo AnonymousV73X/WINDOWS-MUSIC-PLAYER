@@ -5064,7 +5064,7 @@ body.is-playing .ov-play svg,
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 8px 16px;
   background: var(--green);
   color: var(--btn-text-dark, #1e2420);
   border: none;
