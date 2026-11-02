@@ -851,12 +851,11 @@ class SquigglyProgress {
       ctx.beginPath();
       ctx.moveTo(greyStart, cy);
       ctx.lineTo(greyEnd, cy);
-      ctx.strokeStyle =
-        this.overlay && this.themeMode !== "light"
-          ? "rgba(255,255,255,0.18)"
-          : this.themeMode === "light"
-            ? "rgba(0,0,0,0.22)"
-            : "rgba(255,255,255,0.18)";
+      ctx.strokeStyle = (this.overlay && this.themeMode !== "light")
+        ? "rgba(255,255,255,0.18)"
+        : (this.themeMode === "light"
+          ? "rgba(0,0,0,0.22)"
+          : "rgba(255,255,255,0.18)");
       ctx.lineWidth = 2.3;
       ctx.lineCap = "round";
       ctx.stroke();
@@ -865,10 +864,7 @@ class SquigglyProgress {
     if (progress > 0 && totalProgressPx > leftInset + thumbR * 2) {
       ctx.beginPath();
       ctx.arc(leftInset, cy, this.strokeWidth / 2, 0, Math.PI * 2);
-      ctx.fillStyle =
-        this.overlay && this.themeMode !== "light"
-          ? "rgba(255,255,255,0.4)"
-          : this.waveColor;
+      ctx.fillStyle = (this.overlay && this.themeMode !== "light") ? "rgba(255,255,255,0.4)" : this.waveColor;
       ctx.fill();
     }
 
@@ -882,8 +878,7 @@ class SquigglyProgress {
       ctx.beginPath();
       ctx.moveTo(leftInset, cy);
       ctx.lineTo(waveEndPx, cy);
-      ctx.strokeStyle =
-        this.overlay && this.themeMode !== "light" ? "#fff" : this.waveColor;
+      ctx.strokeStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
       ctx.lineWidth = this.strokeWidth;
       ctx.lineCap = "round";
       ctx.stroke();
@@ -932,8 +927,7 @@ class SquigglyProgress {
       const envelope = computeAmp(waveEndPx);
       ctx.lineTo(waveEndPx, cy + Math.sin(k * waveEndPx + phase) * envelope);
     }
-    ctx.strokeStyle =
-      this.overlay && this.themeMode !== "light" ? "#fff" : this.waveColor;
+    ctx.strokeStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
     ctx.lineWidth = this.strokeWidth;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -1297,8 +1291,7 @@ class SquigglyProgress {
       const cr = this.overlay ? 3.5 : 4.5;
       ctx.arc(x, cy, cr, 0, Math.PI * 2);
     }
-    ctx.fillStyle =
-      this.overlay && this.themeMode !== "light" ? "#fff" : this.waveColor;
+    ctx.fillStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
     ctx.fill();
   }
 
@@ -3293,8 +3286,8 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     if (state.currentTrack) {
       const anchor = state.overlayOpen
-        ? $("ov-add-btn") || $("ov-more-btn") || $("ov-title")
-        : $("np-menu-btn") || $("np-title") || document.body;
+        ? ($("ov-add-btn") || $("ov-more-btn") || $("ov-title"))
+        : ($("np-menu-btn") || $("np-title") || document.body);
       if (anchor) openPlaylistMenu(anchor, state.currentTrack);
     }
     return;
@@ -3434,37 +3427,21 @@ document.addEventListener("keydown", (e) => {
   }
 
   // ─── 12. 1 or R → Repeat One (toggle) ─────────────────────────
-  if (
-    (e.key === "1" || e.code === "KeyR") &&
-    !e.ctrlKey &&
-    !e.metaKey &&
-    !e.altKey
-  ) {
+  if ((e.key === "1" || e.code === "KeyR") && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault();
     _setRepeatMode("one");
     return;
   }
 
   // ─── 13. 0 or O → Repeat All (toggle) ─────────────────────────
-  if (
-    (e.key === "0" || e.code === "KeyO") &&
-    !e.ctrlKey &&
-    !e.metaKey &&
-    !e.altKey
-  ) {
+  if ((e.key === "0" || e.code === "KeyO") && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault();
     _setRepeatMode("all");
     return;
   }
 
   // ─── 14. ArrowUp / ArrowDown → Volume Up / Down ──────────────
-  if (
-    e.code === "ArrowUp" &&
-    !e.ctrlKey &&
-    !e.metaKey &&
-    !e.altKey &&
-    !e.shiftKey
-  ) {
+  if (e.code === "ArrowUp" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
     e.preventDefault();
     state.volume = Math.max(0, Math.min(1, state.volume + 0.05));
     audioEngine.setVolume(state.volume);
@@ -3472,13 +3449,7 @@ document.addEventListener("keydown", (e) => {
     _persistVolumeDebounced();
     return;
   }
-  if (
-    e.code === "ArrowDown" &&
-    !e.ctrlKey &&
-    !e.metaKey &&
-    !e.altKey &&
-    !e.shiftKey
-  ) {
+  if (e.code === "ArrowDown" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
     e.preventDefault();
     state.volume = Math.max(0, Math.min(1, state.volume - 0.05));
     audioEngine.setVolume(state.volume);
@@ -3656,14 +3627,9 @@ function _wireSidebar() {
     window.novaAPI.on("library:track-added", async (newTrack) => {
       try {
         if (!newTrack || !newTrack.id) return;
-        console.log(
-          "[library:track-added] Ingesting downloaded track into renderer state:",
-          newTrack.title,
-        );
+        console.log("[library:track-added] Ingesting downloaded track into renderer state:", newTrack.title);
         // Avoid duplicate additions
-        const existingIdx = state.tracks.findIndex(
-          (t) => t.id === newTrack.id || t.filePath === newTrack.filePath,
-        );
+        const existingIdx = state.tracks.findIndex((t) => t.id === newTrack.id || t.filePath === newTrack.filePath);
         if (existingIdx !== -1) {
           state.tracks[existingIdx] = newTrack;
         } else {
@@ -3671,24 +3637,17 @@ function _wireSidebar() {
         }
         state.filteredTracks = [...state.tracks];
         if (state.sortKey) _sortTracks();
-        if (typeof invalidateSectionCache === "function")
-          invalidateSectionCache();
+        if (typeof invalidateSectionCache === "function") invalidateSectionCache();
         if (typeof buildSearchIndex === "function") buildSearchIndex();
         if (typeof _panelDirty !== "undefined") {
           _panelDirty["home"] = true;
           _panelDirty["albums"] = true;
           _panelDirty["artists"] = true;
         }
-        if (typeof _updateSidebarFolderInfo === "function")
-          _updateSidebarFolderInfo();
-        console.log(
-          `[library:track-added] Library updated! Total tracks: ${state.tracks.length}`,
-        );
+        if (typeof _updateSidebarFolderInfo === "function") _updateSidebarFolderInfo();
+        console.log(`[library:track-added] Library updated! Total tracks: ${state.tracks.length}`);
       } catch (err) {
-        console.warn(
-          "[library:track-added] Failed to update library state:",
-          err,
-        );
+        console.warn("[library:track-added] Failed to update library state:", err);
       }
     });
   }
@@ -3797,8 +3756,7 @@ function _updateToolbarVisibility(section) {
   const lyricsToggle = $("lyrics-toggle-btn");
   const playlistImportBtn = $("playlist-import-btn");
   if (playlistImportBtn) {
-    playlistImportBtn.style.display =
-      section === "playlists" ? "inline-flex" : "none";
+    playlistImportBtn.style.display = (section === "playlists") ? "inline-flex" : "none";
   }
   // Only show shuffle & play and sort-by in home and library sections
   const showShuffleAndSort = section === "home" || section === "library";
@@ -3837,6 +3795,9 @@ function _updateToolbarVisibility(section) {
 }
 
 function _navigateTo(section) {
+  const _dlB = $("sidebar-download-btn"), _hlB = $("sidebar-help-btn");
+  if (_dlB) _dlB.classList.toggle("active", section === "discovery");
+  if (_hlB) _hlB.classList.toggle("active", section === "help");
   const title = $("content-title");
   const area = $("track-area");
   // Reset scroll immediately for snappy feel
@@ -3859,7 +3820,7 @@ function _navigateTo(section) {
       title.textContent = "Music Downloader";
       _showCached("discovery", renderDiscovery);
       break;
-    case "library":
+      case "library":
       title.textContent = "Music";
       _showVirtual();
       renderTracks(state.filteredTracks, "library");
@@ -4455,13 +4416,7 @@ function _wireShufflePlay() {
 }
 
 // ─── Library Loading ─────────────────────────────────────────────
-const _NO_COL_HEADER_SECTIONS = [
-  "discovery",
-  "home",
-  "settings",
-  "equalizer",
-  "help",
-];
+const _NO_COL_HEADER_SECTIONS = ["discovery", "home", "settings", "equalizer", "help"];
 function _colHeadersAllowed() {
   return !_NO_COL_HEADER_SECTIONS.includes(state.activeNavSection);
 }
@@ -7777,24 +7732,11 @@ function renderSettings() {
           <span>Startup section</span>
           <div class="nova-dropdown" id="setting-start-section" data-value="${state.settings.startSection || "library"}" style="position:relative;min-width:220px;">
             <button type="button" class="nova-dropdown__trigger" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-2,var(--surface));color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;transition:border-color .15s;">
-              <span class="nova-dropdown__label">${{ library: "Music Library (Default)", artists: "Artists", albums: "Albums", playlists: "Playlists", home: "Home", queue: "Play Queue", equalizer: "Equalizer" }[state.settings.startSection || "library"]}</span>
+              <span class="nova-dropdown__label">${{"library":"Music Library (Default)","artists":"Artists","albums":"Albums","playlists":"Playlists","home":"Home","queue":"Play Queue","equalizer":"Equalizer"}[state.settings.startSection || "library"]}</span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.7;transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
             <ul class="nova-dropdown__menu" style="display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:100%;background:var(--surface-2,var(--surface));border:1px solid var(--border);border-radius:8px;padding:6px;margin:0;list-style:none;z-index:999;box-shadow:0 8px 24px rgba(0,0,0,.4);display:flex;flex-direction:column;gap:4px;">
-              ${[
-                ["library", "Music Library (Default)"],
-                ["artists", "Artists"],
-                ["albums", "Albums"],
-                ["playlists", "Playlists"],
-                ["home", "Home"],
-                ["queue", "Play Queue"],
-                ["equalizer", "Equalizer"],
-              ]
-                .map(
-                  ([v, l]) =>
-                    `<li data-value="${v}" style="padding:9px 12px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;color:var(--text-primary);transition:background .15s, color .15s;${(state.settings.startSection || "library") === v ? "background:color-mix(in srgb, var(--green, #1ed760) 14%, transparent);color:var(--green, #1ed760);font-weight:600;" : ""}">${(state.settings.startSection || "library") === v ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ""}<span>${l}</span></li>`,
-                )
-                .join("")}
+              ${[["library","Music Library (Default)"],["artists","Artists"],["albums","Albums"],["playlists","Playlists"],["home","Home"],["queue","Play Queue"],["equalizer","Equalizer"]].map(([v,l])=>`<li data-value="${v}" style="padding:9px 12px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;color:var(--text-primary);transition:background .15s, color .15s;${(state.settings.startSection||"library")===v?"background:color-mix(in srgb, var(--green, #1ed760) 14%, transparent);color:var(--green, #1ed760);font-weight:600;":""}">${(state.settings.startSection||"library")===v?'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>':''}<span>${l}</span></li>`).join("")}
             </ul>
           </div>
         </div>
@@ -7897,21 +7839,11 @@ function renderSettings() {
   const startSectionDropdown = $("setting-start-section");
 
   if (startSectionDropdown) {
-    const trigger = startSectionDropdown.querySelector(
-      ".nova-dropdown__trigger",
-    );
+    const trigger = startSectionDropdown.querySelector(".nova-dropdown__trigger");
     const menu = startSectionDropdown.querySelector(".nova-dropdown__menu");
     const label = startSectionDropdown.querySelector(".nova-dropdown__label");
     const chevron = trigger.querySelector("svg");
-    const LABELS = {
-      library: "Music Library (Default)",
-      artists: "Artists",
-      albums: "Albums",
-      playlists: "Playlists",
-      home: "Home",
-      queue: "Play Queue",
-      equalizer: "Equalizer",
-    };
+    const LABELS = { library:"Music Library (Default)", artists:"Artists", albums:"Albums", playlists:"Playlists", home:"Home", queue:"Play Queue", equalizer:"Equalizer" };
 
     const closeMenu = () => {
       menu.style.display = "none";
@@ -7922,9 +7854,7 @@ function renderSettings() {
     trigger.addEventListener("click", (e) => {
       e.stopPropagation();
       const open = menu.style.display === "flex";
-      if (open) {
-        closeMenu();
-      } else {
+      if (open) { closeMenu(); } else {
         menu.style.display = "flex";
         chevron.style.transform = "rotate(180deg)";
         trigger.style.borderColor = "var(--green, #1ed760)";
@@ -7940,21 +7870,14 @@ function renderSettings() {
       label.textContent = LABELS[val];
       startSectionDropdown.dataset.value = val;
       // Highlight selected item
-      menu.querySelectorAll("li").forEach((item) => {
+      menu.querySelectorAll("li").forEach(item => {
         const sel = item.dataset.value === val;
-        item.style.background = sel
-          ? "color-mix(in srgb, var(--green, #1ed760) 14%, transparent)"
-          : "";
-        item.style.color = sel
-          ? "var(--green, #1ed760)"
-          : "var(--text-primary)";
+        item.style.background = sel ? "color-mix(in srgb, var(--green, #1ed760) 14%, transparent)" : "";
+        item.style.color = sel ? "var(--green, #1ed760)" : "var(--text-primary)";
         item.style.fontWeight = sel ? "600" : "";
         let svg = item.querySelector("svg");
         if (sel && !svg) {
-          item.insertAdjacentHTML(
-            "afterbegin",
-            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
-          );
+          item.insertAdjacentHTML("afterbegin", '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>');
         } else if (!sel && svg) {
           svg.remove();
         }
@@ -10871,6 +10794,7 @@ function _makeAlbumCard(album) {
   });
   return card;
 }
+
 
 function renderDiscovery() {
   renderSectionSurface(`
@@ -13832,10 +13756,7 @@ async function playNext() {
         for (let i = 0; i < libTracks.length; i++) {
           if (libTracks[i].id !== curId) pool.push(libTracks[i]);
         }
-        state.queue =
-          pool.length > 0
-            ? _fastShuffle(pool)
-            : _fastShuffle(libTracks.slice());
+        state.queue = pool.length > 0 ? _fastShuffle(pool) : _fastShuffle(libTracks.slice());
         state.queueIndex = 0;
         state.queueSource = null;
       } else {
@@ -13849,9 +13770,7 @@ async function playNext() {
       } else {
         // Single-song queue: look up next song in library using active user sort logic
         if (libTracks.length > 1 && state.currentTrack) {
-          const curIdx = libTracks.findIndex(
-            (t) => t.id === state.currentTrack.id,
-          );
+          const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
           const nextIdx = curIdx >= 0 ? (curIdx + 1) % libTracks.length : 0;
           const after = libTracks.slice(nextIdx);
           const before = libTracks.slice(0, nextIdx);
@@ -13864,15 +13783,9 @@ async function playNext() {
       }
     } else {
       // Repeat is OFF & Shuffle is OFF:
-      if (
-        state.queue.length === 1 &&
-        state.currentTrack &&
-        libTracks.length > 1
-      ) {
+      if (state.queue.length === 1 && state.currentTrack && libTracks.length > 1) {
         // Queue was 1 song: continue with user's library sort order
-        const curIdx = libTracks.findIndex(
-          (t) => t.id === state.currentTrack.id,
-        );
+        const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
         if (curIdx >= 0 && curIdx + 1 < libTracks.length) {
           const after = libTracks.slice(curIdx + 1);
           const before = libTracks.slice(0, curIdx + 1);
@@ -13911,9 +13824,7 @@ async function playPrevious() {
       } else {
         const libTracks = _getSortedLibraryTracks();
         if (libTracks.length > 1 && state.currentTrack) {
-          const curIdx = libTracks.findIndex(
-            (t) => t.id === state.currentTrack.id,
-          );
+          const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
           const prevIdx = curIdx > 0 ? curIdx - 1 : libTracks.length - 1;
           const after = libTracks.slice(prevIdx);
           const before = libTracks.slice(0, prevIdx);
@@ -14017,7 +13928,9 @@ function _applyRepeatMode(mode) {
     const sorted = state.filteredTracks.length
       ? state.filteredTracks
       : state.tracks;
-    const currentIdx = sorted.findIndex((t) => t.id === state.currentTrack.id);
+    const currentIdx = sorted.findIndex(
+      (t) => t.id === state.currentTrack.id,
+    );
     if (currentIdx >= 0) {
       const after = sorted.slice(currentIdx);
       const before = sorted.slice(0, currentIdx);
@@ -14682,9 +14595,7 @@ function updateProgressText(cur, dur) {
   if (typeof cur === "number" && isFinite(cur)) _lastProgressCur = cur;
   if (typeof dur === "number" && isFinite(dur)) _lastProgressDur = dur;
 
-  const validCur = isFinite(_lastProgressCur)
-    ? Math.max(0, _lastProgressCur)
-    : 0;
+  const validCur = isFinite(_lastProgressCur) ? Math.max(0, _lastProgressCur) : 0;
   const validDur =
     isFinite(_lastProgressDur) && _lastProgressDur > 0 ? _lastProgressDur : 0;
 
@@ -16421,6 +16332,7 @@ function _openTagEditor(track) {
     const newGenre = overlay.querySelector("#tag-genre").value.trim();
     const newYear = overlay.querySelector("#tag-year").value.trim();
 
+
     saveBtn.disabled = true;
     saveBtn.textContent = "Saving...";
 
@@ -16467,7 +16379,7 @@ function _openTagEditor(track) {
             state.currentTrack._hasCoverArt = true;
           }
         }
-
+        
         // Re-render current section
         invalidateSectionCache();
         // Invalidate thumbnail cache for this track (cover art may have changed)
