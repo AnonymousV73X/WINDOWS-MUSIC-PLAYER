@@ -3569,6 +3569,10 @@ function _wireSidebar() {
   if (titlebarName)
     titlebarName.addEventListener("click", _toggleFloatingNavOrSidebar);
 
+  const playlistImport = $("playlist-import-btn");
+  if (playlistImport) {
+    playlistImport.addEventListener("click", importPlaylistFromFile);
+  }
   const lyricsToggle = $("lyrics-toggle-btn");
   if (lyricsToggle) {
     lyricsToggle.addEventListener("click", toggleLyricsPanel);
@@ -3750,6 +3754,10 @@ function _updateToolbarVisibility(section) {
   const shuffleBtn = $("shuffle-play-btn");
   const sortGroup = document.querySelector(".sort-group");
   const lyricsToggle = $("lyrics-toggle-btn");
+  const playlistImportBtn = $("playlist-import-btn");
+  if (playlistImportBtn) {
+    playlistImportBtn.style.display = (section === "playlists") ? "inline-flex" : "none";
+  }
   // Only show shuffle & play and sort-by in home and library sections
   const showShuffleAndSort = section === "home" || section === "library";
   if (shuffleBtn) shuffleBtn.style.display = showShuffleAndSort ? "" : "none";
@@ -8606,11 +8614,6 @@ function renderPlaylists() {
   $("col-headers").style.display = "none";
   container.className = "playlist-section";
   container.innerHTML = `
-    <div class="playlist-top-bar">
-      <button class="playlist-import-fab" type="button" id="playlist-import-btn" data-tooltip="Import Playlist">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      </button>
-    </div>
     <div class="playlist-grid" id="playlist-grid-inner"></div>
   `;
 
@@ -8653,15 +8656,9 @@ function renderPlaylists() {
 
   if (playlists.length === 0) {
     container.innerHTML = `
-      <div class="playlist-top-bar">
-        <button class="playlist-import-fab" type="button" id="playlist-import-btn" data-tooltip="Import Playlist">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        </button>
-      </div>
       <div class="playlist-empty-state">Like a song to create your Favorites playlist.</div>
     `;
     $("content-subtitle").textContent = "0 playlists";
-    $("playlist-import-btn")?.addEventListener("click", importPlaylistFromFile);
     _finishScrollRestore();
     return;
   }
@@ -8756,7 +8753,6 @@ function renderPlaylists() {
 
   $("content-subtitle").textContent =
     `${playlists.length} playlist${playlists.length === 1 ? "" : "s"}`;
-  $("playlist-import-btn")?.addEventListener("click", importPlaylistFromFile);
 
   // BUGFIX v3: Use event delegation for collage image load/error instead of
   // inline onload/onerror handlers (which are blocked by CSP). When a collage

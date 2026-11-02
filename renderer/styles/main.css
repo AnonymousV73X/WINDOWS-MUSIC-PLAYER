@@ -9293,3 +9293,27 @@ body.expanded-sidebar .sidebar-search {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06) !important;
   color: #ffffff !important; /* ← Add this */
 }
+.nav-lyrics-group #playlist-import-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  width: 32px;
+  padding: 0;
+  border: 1.5px solid #333;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.nav-lyrics-group #playlist-import-btn:hover {
+  background: var(--surface-hover);
+  border-color: #555;
+  color: var(--text-primary);
+}
+.nav-lyrics-group #playlist-import-btn svg {
+  width: 15px;
+  height: 15px;
+}

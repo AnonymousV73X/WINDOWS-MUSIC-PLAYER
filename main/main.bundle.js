@@ -42675,12 +42675,15 @@ ${items}
             id: trackId,
             filePath: savedPath,
             fileName,
-            title: meta?.title || trackInfo.trackName || path.basename(fileName, path.extname(fileName)),
-            artist: meta?.artist || trackInfo.artistName || "Unknown Artist",
-            album: meta?.album || trackInfo.albumName || "Unknown Album",
-            albumArtist: meta?.albumArtist || "",
-            genre: meta?.genre || trackInfo.genre || "",
-            year: Number(meta?.year || trackInfo.releaseYear) || 0,
+            // trackInfo always takes priority — it's from the search card the user clicked
+            // (Spotify/iTunes/Deezer/YTM rich metadata). meta has yt-dlp's YouTube tags
+            // (video title as track name, uploader as artist) which are often wrong.
+            title: trackInfo.trackName || meta?.title || path.basename(fileName, path.extname(fileName)),
+            artist: trackInfo.artistName && trackInfo.artistName !== "Unknown Artist" ? trackInfo.artistName : meta?.artist || "Unknown Artist",
+            album: trackInfo.albumName && trackInfo.albumName.trim() && trackInfo.albumName !== "Unknown Album" ? trackInfo.albumName : meta?.album || "",
+            albumArtist: meta?.albumArtist || trackInfo.artistName || "",
+            genre: trackInfo.genre && trackInfo.genre !== "Music" ? trackInfo.genre : meta?.genre || "",
+            year: Number(trackInfo.releaseYear || meta?.year) || 0,
             trackNumber: Number(meta?.trackNumber) || 0,
             discNumber: Number(meta?.discNumber) || 0,
             duration: Number(meta?.duration) || (trackInfo.durationMs ? Math.round(trackInfo.durationMs / 1e3) : 0),
@@ -42731,6 +42734,17 @@ ${items}
           const currentLibrary = getLibrary();
           const updatedLibrary = [parsedTrack, ...currentLibrary.filter((t) => t.id !== parsedTrack.id)];
           partialSaveLibrary(updatedLibrary, [parsedTrack], []);
+          if (ManifestIPC && typeof ManifestIPC.rebuildManifest === "function") {
+            setImmediate(async () => {
+              try {
+                const freshSettings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+                const fp = freshSettings._combinedFingerprint || "";
+                await ManifestIPC.rebuildManifest(updatedLibrary, fp);
+              } catch (mErr) {
+                console.warn("[IPC:download] Manifest rebuild failed:", mErr.message);
+              }
+            });
+          }
           BrowserWindow.getAllWindows().forEach((win) => {
             win.webContents.send("library:track-added", parsedTrack);
           });

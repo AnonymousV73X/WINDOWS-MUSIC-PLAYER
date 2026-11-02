@@ -6561,6 +6561,19 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
       const updatedLibrary = [parsedTrack, ...currentLibrary.filter((t) => t.id !== parsedTrack.id)];
       partialSaveLibrary(updatedLibrary, [parsedTrack], []);
 
+      // Invalidate & rebuild binary manifest cache so download persists across app restarts
+      if (ManifestIPC && typeof ManifestIPC.rebuildManifest === "function") {
+        setImmediate(async () => {
+          try {
+            const freshSettings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+            const fp = freshSettings._combinedFingerprint || "";
+            await ManifestIPC.rebuildManifest(updatedLibrary, fp);
+          } catch (mErr) {
+            console.warn("[IPC:download] Manifest rebuild failed:", mErr.message);
+          }
+        });
+      }
+
       // Notify all renderer windows so UI state updates immediately
       BrowserWindow.getAllWindows().forEach((win) => {
         win.webContents.send("library:track-added", parsedTrack);
