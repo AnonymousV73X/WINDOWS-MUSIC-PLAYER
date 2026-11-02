@@ -1907,7 +1907,7 @@ textarea {
   background: none;
   border: none;
   cursor: pointer;
-  padding: 2px;
+  padding: px;
   margin-left: auto;
   color: var(--text-muted);
   flex-shrink: 0;
