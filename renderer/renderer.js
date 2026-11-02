@@ -3778,7 +3778,7 @@ function _updateToolbarVisibility(section) {
       if (toolbar) toolbar.insertBefore(sectionLabel, toolbar.firstChild);
     }
     const sectionNames = {
-      discovery: "Music Downloader",
+      discovery: "Youtube Music",
       albums: "Albums",
       artists: "Artists",
       playlists: "Playlists",
