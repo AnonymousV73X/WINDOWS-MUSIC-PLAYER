@@ -1921,12 +1921,13 @@ textarea {
   color: var(--text-primary);
   background: var(--surface-active);
   border-radius: 8px;
-  padding: 6px;
+  box-shadow: 0 0 0 5px var(--surface-active);
 }
 
 [data-theme="light"] .sidebar-help-btn.active {
   color: #1a1c19;
   background: color-mix(in srgb, var(--green, #1ed760) 12%, #ffffff);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--green, #1ed760) 12%, #ffffff);
 }
 
 .sidebar-help-btn[data-tooltip]:hover::before,
