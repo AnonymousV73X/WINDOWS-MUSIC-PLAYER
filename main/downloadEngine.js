@@ -888,15 +888,28 @@ function downloadFileWithProgress(streamUrl, destPath, onProgress) {
 
 // ─── Download & Store Orchestration ───────────────────────────────────────────
 function getYtDlpPath() {
-  const localBin = path.join(__dirname, "../bin/yt-dlp.exe");
-  if (fs.existsSync(localBin)) return localBin;
+  // 1. Packaged app: electron-builder puts extraResources next to the exe
+  //    at <install>/Resources/bin/yt-dlp.exe (process.resourcesPath)
+  if (process.resourcesPath) {
+    const resourcesBin = path.join(process.resourcesPath, "bin", "yt-dlp.exe");
+    if (fs.existsSync(resourcesBin)) return resourcesBin;
+  }
+
+  // 2. Dev mode (npm start): binary lives in <repo>/bin/yt-dlp.exe
+  //    __dirname is main/ so we go up one level
+  const devBin = path.join(__dirname, "../bin/yt-dlp.exe");
+  if (fs.existsSync(devBin)) return devBin;
+
+  // 3. User-data fallback (auto-downloaded at runtime)
   try {
     const { app } = require("electron");
     if (app) {
-      const userBin = path.join(app.getPath("userData"), "bin/yt-dlp.exe");
+      const userBin = path.join(app.getPath("userData"), "bin", "yt-dlp.exe");
       if (fs.existsSync(userBin)) return userBin;
     }
   } catch (_) {}
+
+  // 4. Last resort: hope yt-dlp is on PATH
   return "yt-dlp";
 }
 

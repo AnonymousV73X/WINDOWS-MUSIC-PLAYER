@@ -37869,6 +37869,12 @@ var require_package = __commonJS({
           "renderer/**/*",
           "assets/**/*",
           "package.json"
+        ],
+        extraResources: [
+          {
+            from: "bin/yt-dlp.exe",
+            to: "bin/yt-dlp.exe"
+          }
         ]
       }
     };

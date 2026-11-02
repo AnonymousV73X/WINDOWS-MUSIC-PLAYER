@@ -69,6 +69,12 @@ module.exports = {
     {
       from: 'assets/icons/tray.png',
       to: 'tray.png'
+    },
+    {
+      // Bundle yt-dlp binary so the packaged exe can download music
+      // It lands at <install>/Resources/bin/yt-dlp.exe
+      from: 'bin/yt-dlp.exe',
+      to: 'bin/yt-dlp.exe'
     }
   ]
 };
