@@ -101,8 +101,15 @@ class DiscoveryView {
         if (!parsedTrack || !parsedTrack.filePath) return;
         // Find matching download by filePath
         for (const [trackId, state] of this.downloadStates) {
-          if (state._pendingFilePath && state._pendingFilePath === parsedTrack.filePath) {
-            const doneState = { status: "done", percent: 100, track: parsedTrack };
+          if (
+            state._pendingFilePath &&
+            state._pendingFilePath === parsedTrack.filePath
+          ) {
+            const doneState = {
+              status: "done",
+              percent: 100,
+              track: parsedTrack,
+            };
             this.downloadStates.set(trackId, doneState);
             this._updateTrackDownloadUI(trackId, doneState);
             break;
@@ -114,7 +121,7 @@ class DiscoveryView {
 
   render() {
     this.container.innerHTML = `
-      <div class="discovery-container" style="padding: 24px 32px; height: 100%; overflow-y: auto; color: var(--text-base); scrollbar-width: none; -ms-overflow-style: none;">
+      <div class="discovery-container" style="padding: 24px 32px; height: 100%; min-height: 100%; box-sizing: border-box; overflow-y: auto; color: var(--text-base); scrollbar-width: none; -ms-overflow-style: none;">
         <!-- Header & Search -->
         <div class="discovery-header" style="margin-bottom: 24px;">
           <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
@@ -128,7 +135,7 @@ class DiscoveryView {
             Search any song, listen to instant previews, or download high-fidelity 320kbps MP3s directly to your library.
           </p>
 
-          <div class="discovery-search-wrap" style="position: relative; max-width: 600px; display: flex; align-items: center;">
+          <div class="discovery-search-wrap" style="position: relative; width: 100%; max-width: none; display: flex; align-items: center;">
             <input 
               type="text" 
               id="discovery-search-input" 
@@ -142,17 +149,17 @@ class DiscoveryView {
               onmouseenter="this.style.opacity='0.85'; this.style.transform='scale(1.05)'"
               onmouseleave="this.style.opacity='1'; this.style.transform='scale(1)'"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;">
+              <svg id="discovery-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;">
                 <circle cx="11" cy="11" r="8" />
                 <line x1="21" y1="21" x2="16.65" y2="16.65" />
               </svg>
+              <div id="discovery-search-spinner" style="display: none; width: 18px; height: 18px; border: 2px solid rgba(0,0,0,0.25); border-top-color: #000; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
             </button>
-            <div id="discovery-search-spinner" style="display: none; position: absolute; right: 52px; top: 14px; width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.2); border-top-color: var(--green); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
           </div>
         </div>
 
         <!-- Search Results Grid / List -->
-        <div id="discovery-results" style="display: flex; flex-direction: column; gap: 8px;">
+        <div id="discovery-results" style="display: flex; flex-direction: column; gap: 8px; min-height: calc(100vh - 240px);">
           <div style="text-align: center; padding: 60px 0; color: var(--text-muted); font-size: 14px;">
             Type a song or artist above to start discovering music.
           </div>
@@ -186,16 +193,25 @@ class DiscoveryView {
   async _performSearch(value) {
     const query = (value || "").trim();
     if (!query) {
-      this._renderEmpty("Type a song or artist above to start discovering music.");
+      this._renderEmpty(
+        "Type a song or artist above to start discovering music.",
+      );
       return;
     }
 
     const spinner = this.container.querySelector("#discovery-search-spinner");
-    if (spinner) spinner.style.display = "block";
+    const icon = this.container.querySelector("#discovery-search-icon");
+    const btn = this.container.querySelector("#discovery-search-btn");
+    const setBusy = (b) => {
+      if (spinner) spinner.style.display = b ? "block" : "none";
+      if (icon) icon.style.display = b ? "none" : "";
+      if (btn) btn.style.pointerEvents = b ? "none" : "";
+    };
+    setBusy(true);
 
     try {
       const res = await this.novaAPI.invoke("discovery:search", query);
-      if (spinner) spinner.style.display = "none";
+      setBusy(false);
 
       if (res && res.success && Array.isArray(res.results)) {
         this.tracks = res.results;
@@ -204,7 +220,7 @@ class DiscoveryView {
         this._renderEmpty("No results found. Try another query.");
       }
     } catch (err) {
-      if (spinner) spinner.style.display = "none";
+      setBusy(false);
       this._renderEmpty("Error searching tracks: " + err.message);
     }
   }
@@ -364,7 +380,11 @@ class DiscoveryView {
       });
 
       row.addEventListener("click", (e) => {
-        if (e.target.closest(".preview-btn") || e.target.closest(".action-download-btn")) return;
+        if (
+          e.target.closest(".preview-btn") ||
+          e.target.closest(".action-download-btn")
+        )
+          return;
         const id = row.dataset.id;
         const state = this.downloadStates.get(id);
         if (state && state.status === "done" && state.track) {
@@ -381,23 +401,25 @@ class DiscoveryView {
     });
 
     // Play downloaded CTA
-    this.container.querySelectorAll(".action-play-downloaded-btn").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const id = btn.dataset.id;
-        const state = this.downloadStates.get(id);
-        if (state && state.status === "done" && state.track) {
-          if (this.currentPreviewAudio) {
-            this.currentPreviewAudio.pause();
-            this.currentPreviewAudio = null;
-            this.playingTrackId = null;
+    this.container
+      .querySelectorAll(".action-play-downloaded-btn")
+      .forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const id = btn.dataset.id;
+          const state = this.downloadStates.get(id);
+          if (state && state.status === "done" && state.track) {
+            if (this.currentPreviewAudio) {
+              this.currentPreviewAudio.pause();
+              this.currentPreviewAudio = null;
+              this.playingTrackId = null;
+            }
+            if (typeof this.onPlayTrack === "function") {
+              this.onPlayTrack(state.track);
+            }
           }
-          if (typeof this.onPlayTrack === "function") {
-            this.onPlayTrack(state.track);
-          }
-        }
+        });
       });
-    });
   }
 
   _togglePreview(id, url, buttonEl) {
@@ -459,7 +481,9 @@ class DiscoveryView {
             artist: track.artistName,
             album: track.albumName,
             filePath: savedPath,
-            duration: track.durationMs ? Math.round(track.durationMs / 1000) : 0,
+            duration: track.durationMs
+              ? Math.round(track.durationMs / 1000)
+              : 0,
             coverArt: track.artworkUrl,
             _hasCoverArt: !!track.artworkUrl,
           },
@@ -472,13 +496,17 @@ class DiscoveryView {
         setTimeout(() => {
           const current = this.downloadStates.get(track.id);
           if (current && current.status === "verifying") {
-            const doneState = { status: "done", percent: 100, track: current.track };
+            const doneState = {
+              status: "done",
+              percent: 100,
+              track: current.track,
+            };
             this.downloadStates.set(track.id, doneState);
             this._updateTrackDownloadUI(track.id, doneState);
           }
         }, 4000);
       } else {
-        const msg = (res?.error || "Unknown error");
+        const msg = res?.error || "Unknown error";
         this._showToast("Download failed: " + msg);
         this.downloadStates.delete(track.id);
         this._updateTrackDownloadUI(track.id, { status: "idle" });
@@ -494,7 +522,9 @@ class DiscoveryView {
     const container = this.container.querySelector(`#dl-container-${trackId}`);
     if (container) {
       container.innerHTML = this._getDownloadButtonHtml(trackId, state);
-      const row = this.container.querySelector(`.discovery-track-row[data-id="${trackId}"]`);
+      const row = this.container.querySelector(
+        `.discovery-track-row[data-id="${trackId}"]`,
+      );
       if (row) {
         if (state.status === "done") {
           row.classList.add("is-downloaded");
