@@ -5071,7 +5071,7 @@ body.is-playing .ov-play svg,
   font-weight: 600;
   font-size: 13px;
   font-family: "Outfit", sans-serif;
-  border-radius: 8px;
+  border-radius:8px;
   text-decoration: none;
   cursor: default;
   transition:
