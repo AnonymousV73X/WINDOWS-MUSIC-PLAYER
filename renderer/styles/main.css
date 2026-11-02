@@ -1940,7 +1940,7 @@ textarea {
   transform: translateX(-50%) translateY(-4px);
 }
 
-.sidebar-helpbtn-[data-tooltip]::after {
+.sidebar-help-btn[data-tooltip]::after {
   bottom: auto;
   top: calc(100% + 4px);
   border-top-color: transparent;
