@@ -101,15 +101,8 @@ class DiscoveryView {
         if (!parsedTrack || !parsedTrack.filePath) return;
         // Find matching download by filePath
         for (const [trackId, state] of this.downloadStates) {
-          if (
-            state._pendingFilePath &&
-            state._pendingFilePath === parsedTrack.filePath
-          ) {
-            const doneState = {
-              status: "done",
-              percent: 100,
-              track: parsedTrack,
-            };
+          if (state._pendingFilePath && state._pendingFilePath === parsedTrack.filePath) {
+            const doneState = { status: "done", percent: 100, track: parsedTrack };
             this.downloadStates.set(trackId, doneState);
             this._updateTrackDownloadUI(trackId, doneState);
             break;
@@ -193,9 +186,7 @@ class DiscoveryView {
   async _performSearch(value) {
     const query = (value || "").trim();
     if (!query) {
-      this._renderEmpty(
-        "Type a song or artist above to start discovering music.",
-      );
+      this._renderEmpty("Type a song or artist above to start discovering music.");
       return;
     }
 
@@ -256,13 +247,13 @@ class DiscoveryView {
         return `
           <div class="discovery-track-row ${isDownloaded ? "is-downloaded" : ""}" data-id="${track.id}" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-radius: 8px; background: rgba(255,255,255,0.03); transition: background 0.15s; cursor: ${isDownloaded ? "pointer" : "default"};">
             <!-- Left: Artwork & Info -->
-            <div style="display: flex; align-items: center; gap: 14px; min-width: 0; flex: 1;">
+            <div style="display: flex; align-items: center; gap: 14px; min-width: 0; flex: 1; padding-right: 32px;">
               <div style="position: relative; width: 44px; height: 44px; flex-shrink: 0; border-radius: 4px; overflow: hidden; background: #222;">
                 <img src="${track.artworkThumbnail || track.artworkUrl}" alt="" style="width: 100%; height: 100%; object-fit: cover;" />
                 ${
                   track.previewUrl
                     ? `
-                  <button class="preview-btn" data-id="${track.id}" data-url="${track.previewUrl}" style="position: absolute; inset: 0; background: rgba(0,0,0,0.55); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s;" onmouseenter="this.style.opacity=1" onmouseleave="if(!this.classList.contains('playing')) this.style.opacity=0">
+                  <button class="preview-btn" data-id="${track.id}" data-url="${track.previewUrl}" style="position: absolute; inset: 0; background: rgba(0,0,0,0.4); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: 1; transition: background 0.2s;" onmouseenter="this.style.background='rgba(0,0,0,0.7)'" onmouseleave="this.style.background='rgba(0,0,0,0.4)'">
                     <svg viewBox="0 0 24 24" fill="#fff" style="width: 20px; height: 20px;">
                       <polygon points="5,3 19,12 5,21" />
                     </svg>
@@ -272,7 +263,7 @@ class DiscoveryView {
                 }
               </div>
 
-              <div style="min-width: 0;">
+              <div style="min-width: 0; flex: 1; overflow: hidden;">
                 <div style="font-weight: 600; font-size: 14px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                   ${track.trackName}
                 </div>
@@ -380,11 +371,7 @@ class DiscoveryView {
       });
 
       row.addEventListener("click", (e) => {
-        if (
-          e.target.closest(".preview-btn") ||
-          e.target.closest(".action-download-btn")
-        )
-          return;
+        if (e.target.closest(".preview-btn") || e.target.closest(".action-download-btn")) return;
         const id = row.dataset.id;
         const state = this.downloadStates.get(id);
         if (state && state.status === "done" && state.track) {
@@ -401,25 +388,23 @@ class DiscoveryView {
     });
 
     // Play downloaded CTA
-    this.container
-      .querySelectorAll(".action-play-downloaded-btn")
-      .forEach((btn) => {
-        btn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          const id = btn.dataset.id;
-          const state = this.downloadStates.get(id);
-          if (state && state.status === "done" && state.track) {
-            if (this.currentPreviewAudio) {
-              this.currentPreviewAudio.pause();
-              this.currentPreviewAudio = null;
-              this.playingTrackId = null;
-            }
-            if (typeof this.onPlayTrack === "function") {
-              this.onPlayTrack(state.track);
-            }
+    this.container.querySelectorAll(".action-play-downloaded-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        const state = this.downloadStates.get(id);
+        if (state && state.status === "done" && state.track) {
+          if (this.currentPreviewAudio) {
+            this.currentPreviewAudio.pause();
+            this.currentPreviewAudio = null;
+            this.playingTrackId = null;
           }
-        });
+          if (typeof this.onPlayTrack === "function") {
+            this.onPlayTrack(state.track);
+          }
+        }
       });
+    });
   }
 
   _togglePreview(id, url, buttonEl) {
@@ -430,7 +415,7 @@ class DiscoveryView {
       }
       this.playingTrackId = null;
       buttonEl.classList.remove("playing");
-      buttonEl.style.opacity = "0";
+      buttonEl.style.opacity = "1";
       buttonEl.innerHTML = `<svg viewBox="0 0 24 24" fill="#fff" style="width: 20px; height: 20px;"><polygon points="5,3 19,12 5,21"/></svg>`;
       return;
     }
@@ -439,7 +424,7 @@ class DiscoveryView {
       this.currentPreviewAudio.pause();
       this.container.querySelectorAll(".preview-btn.playing").forEach((b) => {
         b.classList.remove("playing");
-        b.style.opacity = "0";
+        b.style.opacity = "1";
         b.innerHTML = `<svg viewBox="0 0 24 24" fill="#fff" style="width: 20px; height: 20px;"><polygon points="5,3 19,12 5,21"/></svg>`;
       });
     }
@@ -481,9 +466,7 @@ class DiscoveryView {
             artist: track.artistName,
             album: track.albumName,
             filePath: savedPath,
-            duration: track.durationMs
-              ? Math.round(track.durationMs / 1000)
-              : 0,
+            duration: track.durationMs ? Math.round(track.durationMs / 1000) : 0,
             coverArt: track.artworkUrl,
             _hasCoverArt: !!track.artworkUrl,
           },
@@ -496,17 +479,13 @@ class DiscoveryView {
         setTimeout(() => {
           const current = this.downloadStates.get(track.id);
           if (current && current.status === "verifying") {
-            const doneState = {
-              status: "done",
-              percent: 100,
-              track: current.track,
-            };
+            const doneState = { status: "done", percent: 100, track: current.track };
             this.downloadStates.set(track.id, doneState);
             this._updateTrackDownloadUI(track.id, doneState);
           }
         }, 4000);
       } else {
-        const msg = res?.error || "Unknown error";
+        const msg = (res?.error || "Unknown error");
         this._showToast("Download failed: " + msg);
         this.downloadStates.delete(track.id);
         this._updateTrackDownloadUI(track.id, { status: "idle" });
@@ -522,9 +501,7 @@ class DiscoveryView {
     const container = this.container.querySelector(`#dl-container-${trackId}`);
     if (container) {
       container.innerHTML = this._getDownloadButtonHtml(trackId, state);
-      const row = this.container.querySelector(
-        `.discovery-track-row[data-id="${trackId}"]`,
-      );
+      const row = this.container.querySelector(`.discovery-track-row[data-id="${trackId}"]`);
       if (row) {
         if (state.status === "done") {
           row.classList.add("is-downloaded");
