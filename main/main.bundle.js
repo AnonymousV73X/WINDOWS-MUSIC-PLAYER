@@ -39266,10 +39266,17 @@ var require_ipc = __commonJS({
           const existingLibrary = getLibrary();
           const existingPaths = new Set(existingLibrary.map((t) => t.filePath));
           const newFiles = files.filter((f) => !existingPaths.has(f.filePath));
-          if (newFiles.length === 0) {
+          const _norm = (x) => String(x || "").replace(/\\/g, "/").toLowerCase();
+          const _folderNorm = _norm(folderPath);
+          const _onDisk = new Set(files.map((f) => _norm(f.filePath)));
+          const removedIds = files.length === 0 ? [] : existingLibrary.filter(
+            (t) => t.filePath && _norm(t.filePath).startsWith(_folderNorm) && !_onDisk.has(_norm(t.filePath))
+          ).map((t) => t.id);
+          if (newFiles.length === 0 && removedIds.length === 0) {
             return {
               success: true,
               newTracks: 0,
+              removedIds: [],
               tracks: existingLibrary,
               elapsedMs: Date.now() - t0
             };
@@ -39280,10 +39287,11 @@ var require_ipc = __commonJS({
           const coverCacheDir = path.join(app.getPath("userData"), "cached_covers");
           let worker = null;
           try {
+            if (newFiles.length === 0) throw new Error("no new files");
             worker = new MetadataWorker();
             worker.setCoverCacheDir(coverCacheDir);
           } catch (err) {
-            console.warn(
+            if (newFiles.length > 0) console.warn(
               "[library:quick-scan] MetadataWorker unavailable, using main thread:",
               err.message
             );
@@ -39331,7 +39339,11 @@ var require_ipc = __commonJS({
             } catch (_) {
             }
           }
-          const mergedLibrary = [...newTracks, ...existingLibrary];
+          const _rmSet = new Set(removedIds);
+          const mergedLibrary = [
+            ...newTracks,
+            ...existingLibrary.filter((t) => !_rmSet.has(t.id))
+          ];
           saveLibrary(mergedLibrary);
           setImmediate(() => {
             ManifestIPC.rebuildManifest(mergedLibrary).catch((err) => {
@@ -39349,6 +39361,7 @@ var require_ipc = __commonJS({
             success: true,
             newTracks: newTracks.length,
             addedTracks: newTracks,
+            removedIds,
             tracks: mergedLibrary,
             elapsedMs
           };
@@ -39787,13 +39800,10 @@ var require_ipc = __commonJS({
       });
       ipcMain.handle("library:update-tracks", async (event, updates) => {
         try {
-          if (!Array.isArray(updates) || updates.length === 0)
-            return { success: true, count: 0 };
+          if (!Array.isArray(updates) || updates.length === 0) return { success: true, count: 0 };
           if (db) {
             const selectStmt = db.prepare("SELECT data FROM tracks WHERE id = ?");
-            const updateStmt = db.prepare(
-              "UPDATE tracks SET title = ?, artist = ?, data = ? WHERE id = ?"
-            );
+            const updateStmt = db.prepare("UPDATE tracks SET title = ?, artist = ?, data = ? WHERE id = ?");
             const tx = db.transaction(() => {
               for (const u of updates) {
                 if (!u.id) continue;
@@ -39804,12 +39814,7 @@ var require_ipc = __commonJS({
                     if (u.artist !== void 0) track.artist = u.artist;
                     if (u.title !== void 0) track.title = u.title;
                     const artistStr = Array.isArray(track.artist) ? track.artist.join(", ") : track.artist || "";
-                    updateStmt.run(
-                      track.title || "",
-                      artistStr,
-                      JSON.stringify(track),
-                      u.id
-                    );
+                    updateStmt.run(track.title || "", artistStr, JSON.stringify(track), u.id);
                   } catch (_) {
                   }
                 }
@@ -40502,9 +40507,7 @@ var require_ipc = __commonJS({
                     if (tags.year !== void 0)
                       t.year = tags.year ? parseInt(tags.year, 10) || 0 : 0;
                     if (tags.coverArt) {
-                      const match = tags.coverArt.match(
-                        /^data:([^;]+);base64,(.+)$/
-                      );
+                      const match = tags.coverArt.match(/^data:([^;]+);base64,(.+)$/);
                       if (match) {
                         const mime = match[1];
                         const buf = Buffer.from(match[2], "base64");
@@ -42680,11 +42683,7 @@ ${items}
           } catch (_) {
           }
         };
-        const savedPath = await DownloadEngine.downloadAndTagTrack(
-          trackInfo,
-          targetFolder,
-          onProgress
-        );
+        const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress);
         let parsedTrack = null;
         try {
           const stats = fs.statSync(savedPath);
@@ -42748,45 +42747,29 @@ ${items}
                 console.log("[IPC:download] Saved sidecar cover art:", sidecarPath);
               }
             } catch (imgErr) {
-              console.warn(
-                "[IPC:download] Could not save sidecar cover art:",
-                imgErr.message
-              );
+              console.warn("[IPC:download] Could not save sidecar cover art:", imgErr.message);
             }
           }
           const currentLibrary = getLibrary();
-          const updatedLibrary = [
-            parsedTrack,
-            ...currentLibrary.filter((t) => t.id !== parsedTrack.id)
-          ];
+          const updatedLibrary = [parsedTrack, ...currentLibrary.filter((t) => t.id !== parsedTrack.id)];
           partialSaveLibrary(updatedLibrary, [parsedTrack], []);
           if (ManifestIPC && typeof ManifestIPC.rebuildManifest === "function") {
             setImmediate(async () => {
               try {
-                const freshSettings = readJSON(SETTINGS_FILE, {
-                  ...DEFAULT_SETTINGS
-                });
+                const freshSettings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
                 const fp = freshSettings._combinedFingerprint || "";
                 await ManifestIPC.rebuildManifest(updatedLibrary, fp);
               } catch (mErr) {
-                console.warn(
-                  "[IPC:download] Manifest rebuild failed:",
-                  mErr.message
-                );
+                console.warn("[IPC:download] Manifest rebuild failed:", mErr.message);
               }
             });
           }
           BrowserWindow.getAllWindows().forEach((win) => {
             win.webContents.send("library:track-added", parsedTrack);
           });
-          console.log(
-            `[IPC] Successfully saved & broadcasted downloaded track: "${parsedTrack.title}" (${parsedTrack.id})`
-          );
+          console.log(`[IPC] Successfully saved & broadcasted downloaded track: "${parsedTrack.title}" (${parsedTrack.id})`);
         } catch (trackParseErr) {
-          console.warn(
-            "[IPC] Failed to hot-append track to library:",
-            trackParseErr.message
-          );
+          console.warn("[IPC] Failed to hot-append track to library:", trackParseErr.message);
         }
         return { success: true, filePath: savedPath, track: parsedTrack };
       } catch (err) {
