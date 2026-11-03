@@ -1907,7 +1907,7 @@ textarea {
   background: none;
   border: none;
   cursor: pointer;
-  padding: 2px;
+  padding: 1px;
   margin-left: auto;
   color: var(--text-muted);
   flex-shrink: 0;
@@ -1915,6 +1915,19 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.sidebar-help-btn.active {
+  color: var(--text-primary);
+  background: var(--surface-active);
+  border-radius: 4px;
+  box-shadow: 0 0 0 5px var(--surface-active);
+}
+
+[data-theme="light"] .sidebar-help-btn.active {
+  color: #1a1c19;
+  background: color-mix(in srgb, var(--green, #1ed760) 12%, #ffffff);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--green, #1ed760) 12%, #ffffff);
 }
 
 .sidebar-help-btn[data-tooltip]:hover::before,
@@ -5058,7 +5071,7 @@ body.is-playing .ov-play svg,
   font-weight: 600;
   font-size: 13px;
   font-family: "Outfit", sans-serif;
-  border-radius: 8px;
+  border-radius: 4px;
   text-decoration: none;
   cursor: default;
   transition:

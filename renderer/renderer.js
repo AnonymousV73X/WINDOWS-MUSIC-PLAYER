@@ -851,11 +851,12 @@ class SquigglyProgress {
       ctx.beginPath();
       ctx.moveTo(greyStart, cy);
       ctx.lineTo(greyEnd, cy);
-      ctx.strokeStyle = (this.overlay && this.themeMode !== "light")
-        ? "rgba(255,255,255,0.18)"
-        : (this.themeMode === "light"
-          ? "rgba(0,0,0,0.22)"
-          : "rgba(255,255,255,0.18)");
+      ctx.strokeStyle =
+        this.overlay && this.themeMode !== "light"
+          ? "rgba(255,255,255,0.18)"
+          : this.themeMode === "light"
+            ? "rgba(0,0,0,0.22)"
+            : "rgba(255,255,255,0.18)";
       ctx.lineWidth = 2.3;
       ctx.lineCap = "round";
       ctx.stroke();
@@ -864,7 +865,10 @@ class SquigglyProgress {
     if (progress > 0 && totalProgressPx > leftInset + thumbR * 2) {
       ctx.beginPath();
       ctx.arc(leftInset, cy, this.strokeWidth / 2, 0, Math.PI * 2);
-      ctx.fillStyle = (this.overlay && this.themeMode !== "light") ? "rgba(255,255,255,0.4)" : this.waveColor;
+      ctx.fillStyle =
+        this.overlay && this.themeMode !== "light"
+          ? "rgba(255,255,255,0.4)"
+          : this.waveColor;
       ctx.fill();
     }
 
@@ -878,7 +882,8 @@ class SquigglyProgress {
       ctx.beginPath();
       ctx.moveTo(leftInset, cy);
       ctx.lineTo(waveEndPx, cy);
-      ctx.strokeStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
+      ctx.strokeStyle =
+        this.overlay && this.themeMode !== "light" ? "#fff" : this.waveColor;
       ctx.lineWidth = this.strokeWidth;
       ctx.lineCap = "round";
       ctx.stroke();
@@ -927,7 +932,8 @@ class SquigglyProgress {
       const envelope = computeAmp(waveEndPx);
       ctx.lineTo(waveEndPx, cy + Math.sin(k * waveEndPx + phase) * envelope);
     }
-    ctx.strokeStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
+    ctx.strokeStyle =
+      this.overlay && this.themeMode !== "light" ? "#fff" : this.waveColor;
     ctx.lineWidth = this.strokeWidth;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -1291,7 +1297,8 @@ class SquigglyProgress {
       const cr = this.overlay ? 3.5 : 4.5;
       ctx.arc(x, cy, cr, 0, Math.PI * 2);
     }
-    ctx.fillStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
+    ctx.fillStyle =
+      this.overlay && this.themeMode !== "light" ? "#fff" : this.waveColor;
     ctx.fill();
   }
 
@@ -3286,8 +3293,8 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     if (state.currentTrack) {
       const anchor = state.overlayOpen
-        ? ($("ov-add-btn") || $("ov-more-btn") || $("ov-title"))
-        : ($("np-menu-btn") || $("np-title") || document.body);
+        ? $("ov-add-btn") || $("ov-more-btn") || $("ov-title")
+        : $("np-menu-btn") || $("np-title") || document.body;
       if (anchor) openPlaylistMenu(anchor, state.currentTrack);
     }
     return;
@@ -3427,21 +3434,37 @@ document.addEventListener("keydown", (e) => {
   }
 
   // ─── 12. 1 or R → Repeat One (toggle) ─────────────────────────
-  if ((e.key === "1" || e.code === "KeyR") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  if (
+    (e.key === "1" || e.code === "KeyR") &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey
+  ) {
     e.preventDefault();
     _setRepeatMode("one");
     return;
   }
 
   // ─── 13. 0 or O → Repeat All (toggle) ─────────────────────────
-  if ((e.key === "0" || e.code === "KeyO") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  if (
+    (e.key === "0" || e.code === "KeyO") &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey
+  ) {
     e.preventDefault();
     _setRepeatMode("all");
     return;
   }
 
   // ─── 14. ArrowUp / ArrowDown → Volume Up / Down ──────────────
-  if (e.code === "ArrowUp" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+  if (
+    e.code === "ArrowUp" &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey &&
+    !e.shiftKey
+  ) {
     e.preventDefault();
     state.volume = Math.max(0, Math.min(1, state.volume + 0.05));
     audioEngine.setVolume(state.volume);
@@ -3449,7 +3472,13 @@ document.addEventListener("keydown", (e) => {
     _persistVolumeDebounced();
     return;
   }
-  if (e.code === "ArrowDown" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+  if (
+    e.code === "ArrowDown" &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey &&
+    !e.shiftKey
+  ) {
     e.preventDefault();
     state.volume = Math.max(0, Math.min(1, state.volume - 0.05));
     audioEngine.setVolume(state.volume);
@@ -3627,9 +3656,14 @@ function _wireSidebar() {
     window.novaAPI.on("library:track-added", async (newTrack) => {
       try {
         if (!newTrack || !newTrack.id) return;
-        console.log("[library:track-added] Ingesting downloaded track into renderer state:", newTrack.title);
+        console.log(
+          "[library:track-added] Ingesting downloaded track into renderer state:",
+          newTrack.title,
+        );
         // Avoid duplicate additions
-        const existingIdx = state.tracks.findIndex((t) => t.id === newTrack.id || t.filePath === newTrack.filePath);
+        const existingIdx = state.tracks.findIndex(
+          (t) => t.id === newTrack.id || t.filePath === newTrack.filePath,
+        );
         if (existingIdx !== -1) {
           state.tracks[existingIdx] = newTrack;
         } else {
@@ -3637,17 +3671,24 @@ function _wireSidebar() {
         }
         state.filteredTracks = [...state.tracks];
         if (state.sortKey) _sortTracks();
-        if (typeof invalidateSectionCache === "function") invalidateSectionCache();
+        if (typeof invalidateSectionCache === "function")
+          invalidateSectionCache();
         if (typeof buildSearchIndex === "function") buildSearchIndex();
         if (typeof _panelDirty !== "undefined") {
           _panelDirty["home"] = true;
           _panelDirty["albums"] = true;
           _panelDirty["artists"] = true;
         }
-        if (typeof _updateSidebarFolderInfo === "function") _updateSidebarFolderInfo();
-        console.log(`[library:track-added] Library updated! Total tracks: ${state.tracks.length}`);
+        if (typeof _updateSidebarFolderInfo === "function")
+          _updateSidebarFolderInfo();
+        console.log(
+          `[library:track-added] Library updated! Total tracks: ${state.tracks.length}`,
+        );
       } catch (err) {
-        console.warn("[library:track-added] Failed to update library state:", err);
+        console.warn(
+          "[library:track-added] Failed to update library state:",
+          err,
+        );
       }
     });
   }
@@ -3756,7 +3797,8 @@ function _updateToolbarVisibility(section) {
   const lyricsToggle = $("lyrics-toggle-btn");
   const playlistImportBtn = $("playlist-import-btn");
   if (playlistImportBtn) {
-    playlistImportBtn.style.display = (section === "playlists") ? "inline-flex" : "none";
+    playlistImportBtn.style.display =
+      section === "playlists" ? "inline-flex" : "none";
   }
   // Only show shuffle & play and sort-by in home and library sections
   const showShuffleAndSort = section === "home" || section === "library";
@@ -3778,7 +3820,7 @@ function _updateToolbarVisibility(section) {
       if (toolbar) toolbar.insertBefore(sectionLabel, toolbar.firstChild);
     }
     const sectionNames = {
-      discovery: "Music Downloader",
+      discovery: "Youtube Music",
       albums: "Albums",
       artists: "Artists",
       playlists: "Playlists",
@@ -3795,6 +3837,10 @@ function _updateToolbarVisibility(section) {
 }
 
 function _navigateTo(section) {
+  const _dlB = $("sidebar-download-btn"),
+    _hlB = $("sidebar-help-btn");
+  if (_dlB) _dlB.classList.toggle("active", section === "discovery");
+  if (_hlB) _hlB.classList.toggle("active", section === "help");
   const title = $("content-title");
   const area = $("track-area");
   // Reset scroll immediately for snappy feel
@@ -3817,7 +3863,7 @@ function _navigateTo(section) {
       title.textContent = "Music Downloader";
       _showCached("discovery", renderDiscovery);
       break;
-      case "library":
+    case "library":
       title.textContent = "Music";
       _showVirtual();
       renderTracks(state.filteredTracks, "library");
@@ -4285,6 +4331,7 @@ function _wireAddFolder() {
 
     let totalNew = 0;
     const allNewTracks = [];
+    const allRemovedIds = [];
     try {
       for (const folderPath of scanFolders) {
         const result = await window.novaAPI.invoke(
@@ -4293,6 +4340,9 @@ function _wireAddFolder() {
         );
         if (result && result.success) {
           totalNew += result.newTracks || 0;
+          if (Array.isArray(result.removedIds)) {
+            allRemovedIds.push(...result.removedIds);
+          }
           if (Array.isArray(result.addedTracks)) {
             allNewTracks.push(...result.addedTracks);
           }
@@ -4308,6 +4358,40 @@ function _wireAddFolder() {
     } finally {
       btn.classList.remove("spinning");
       btn.dataset.tooltip = "Quick refresh (new songs only)";
+    }
+
+    // Reconcile: drop ghost rows the UI holds (e.g. from a stale manifest)
+    // that the backend library no longer has.
+    try {
+      const sync = await window.novaAPI.invoke(
+        "library:partial-update",
+        state.tracks.map((t) => t.id),
+      );
+      if (sync && sync.success && Array.isArray(sync.removedIds)) {
+        for (const id of sync.removedIds) {
+          if (!allRemovedIds.includes(id)) allRemovedIds.push(id);
+        }
+      }
+    } catch (_) {}
+
+    if (allRemovedIds.length > 0) {
+      _purgeRemovedTracks(allRemovedIds);
+      state.filteredTracks = [...state.tracks];
+      invalidateSectionCache();
+      buildSearchIndex();
+      if (state.activeNavSection === "home") {
+        renderHome();
+      } else if (state.activeNavSection === "albums") {
+        _reRenderPanel("albums", renderAlbums);
+      } else if (state.activeNavSection === "artists") {
+        _reRenderPanel("artists", renderArtists);
+      } else if (state.activeNavSection === "playlists") {
+        _reRenderPanel("playlists", renderPlaylists);
+      } else {
+        renderTracks(state.filteredTracks, "library");
+      }
+      _updateSidebarFolderInfo();
+      console.log(`[QuickRefresh] Removed ${allRemovedIds.length} track(s)`);
     }
 
     if (totalNew > 0 && allNewTracks.length > 0) {
@@ -4413,11 +4497,21 @@ function _wireShufflePlay() {
 }
 
 // ─── Library Loading ─────────────────────────────────────────────
+const _NO_COL_HEADER_SECTIONS = [
+  "discovery",
+  "home",
+  "settings",
+  "equalizer",
+  "help",
+];
+function _colHeadersAllowed() {
+  return !_NO_COL_HEADER_SECTIONS.includes(state.activeNavSection);
+}
 function _showSkeletonRows(count = 12) {
   const container = $("track-list");
   const headers = $("col-headers");
   if (!container) return;
-  if (headers) headers.style.display = "";
+  if (headers) headers.style.display = _colHeadersAllowed() ? "" : "none";
   container.className = "";
   container.innerHTML = "";
   for (let i = 0; i < count; i++) {
@@ -6155,6 +6249,24 @@ async function _loadLibrary() {
  * Extracted from _loadLibrary to be reusable for progressive loading.
  * Task 4: Partial library update — avoids full reload for small changes
  */
+function _purgeRemovedTracks(removedIds) {
+  const rm = new Set(removedIds);
+  state.tracks = state.tracks.filter((t) => !rm.has(t.id));
+  state.filteredTracks = state.filteredTracks.filter((t) => !rm.has(t.id));
+  const rpLen = state.recentlyPlayed.length;
+  state.recentlyPlayed = state.recentlyPlayed.filter((t) => !rm.has(t.id));
+  if (state.recentlyPlayed.length !== rpLen) {
+    saveSetting(
+      "recentlyPlayed",
+      state.recentlyPlayed.map((t) => t.id),
+    );
+  }
+  for (const id of rm) {
+    TrackThumbHandler.invalidate(id);
+    _idbSet(`batch96::${id}`, null);
+  }
+}
+
 async function _partialLibraryUpdate() {
   try {
     const existingIds = state.tracks.map((t) => t.id);
@@ -6182,13 +6294,7 @@ async function _partialLibraryUpdate() {
     await _applyIDBThumbs(newTracks);
 
     // Remove deleted tracks
-    if (removedIds.length > 0) {
-      const removeSet = new Set(removedIds);
-      state.tracks = state.tracks.filter((t) => !removeSet.has(t.id));
-      state.filteredTracks = state.filteredTracks.filter(
-        (t) => !removeSet.has(t.id),
-      );
-    }
+    if (removedIds.length > 0) _purgeRemovedTracks(removedIds);
 
     // Add new tracks
     if (newTracks.length > 0) {
@@ -6203,7 +6309,9 @@ async function _partialLibraryUpdate() {
 
     // Re-render without full reload
     invalidateSectionCache();
-    if (virtualList.mode === "library" || virtualList.mode === "home") {
+    if (state.activeNavSection === "home") {
+      renderHome();
+    } else if (virtualList.mode === "library" || virtualList.mode === "home") {
       renderTracks(state.filteredTracks, "library");
     } else if (state.activeNavSection === "albums") {
       _reRenderPanel("albums", renderAlbums);
@@ -7725,11 +7833,24 @@ function renderSettings() {
           <span>Startup section</span>
           <div class="nova-dropdown" id="setting-start-section" data-value="${state.settings.startSection || "library"}" style="position:relative;min-width:220px;">
             <button type="button" class="nova-dropdown__trigger" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-2,var(--surface));color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;transition:border-color .15s;">
-              <span class="nova-dropdown__label">${{"library":"Music Library (Default)","artists":"Artists","albums":"Albums","playlists":"Playlists","home":"Home","queue":"Play Queue","equalizer":"Equalizer"}[state.settings.startSection || "library"]}</span>
+              <span class="nova-dropdown__label">${{ library: "Music Library (Default)", artists: "Artists", albums: "Albums", playlists: "Playlists", home: "Home", queue: "Play Queue", equalizer: "Equalizer" }[state.settings.startSection || "library"]}</span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.7;transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
             <ul class="nova-dropdown__menu" style="display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:100%;background:var(--surface-2,var(--surface));border:1px solid var(--border);border-radius:8px;padding:6px;margin:0;list-style:none;z-index:999;box-shadow:0 8px 24px rgba(0,0,0,.4);display:flex;flex-direction:column;gap:4px;">
-              ${[["library","Music Library (Default)"],["artists","Artists"],["albums","Albums"],["playlists","Playlists"],["home","Home"],["queue","Play Queue"],["equalizer","Equalizer"]].map(([v,l])=>`<li data-value="${v}" style="padding:9px 12px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;color:var(--text-primary);transition:background .15s, color .15s;${(state.settings.startSection||"library")===v?"background:color-mix(in srgb, var(--green, #1ed760) 14%, transparent);color:var(--green, #1ed760);font-weight:600;":""}">${(state.settings.startSection||"library")===v?'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>':''}<span>${l}</span></li>`).join("")}
+              ${[
+                ["library", "Music Library (Default)"],
+                ["artists", "Artists"],
+                ["albums", "Albums"],
+                ["playlists", "Playlists"],
+                ["home", "Home"],
+                ["queue", "Play Queue"],
+                ["equalizer", "Equalizer"],
+              ]
+                .map(
+                  ([v, l]) =>
+                    `<li data-value="${v}" style="padding:9px 12px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;color:var(--text-primary);transition:background .15s, color .15s;${(state.settings.startSection || "library") === v ? "background:color-mix(in srgb, var(--green, #1ed760) 14%, transparent);color:var(--green, #1ed760);font-weight:600;" : ""}">${(state.settings.startSection || "library") === v ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ""}<span>${l}</span></li>`,
+                )
+                .join("")}
             </ul>
           </div>
         </div>
@@ -7832,11 +7953,21 @@ function renderSettings() {
   const startSectionDropdown = $("setting-start-section");
 
   if (startSectionDropdown) {
-    const trigger = startSectionDropdown.querySelector(".nova-dropdown__trigger");
+    const trigger = startSectionDropdown.querySelector(
+      ".nova-dropdown__trigger",
+    );
     const menu = startSectionDropdown.querySelector(".nova-dropdown__menu");
     const label = startSectionDropdown.querySelector(".nova-dropdown__label");
     const chevron = trigger.querySelector("svg");
-    const LABELS = { library:"Music Library (Default)", artists:"Artists", albums:"Albums", playlists:"Playlists", home:"Home", queue:"Play Queue", equalizer:"Equalizer" };
+    const LABELS = {
+      library: "Music Library (Default)",
+      artists: "Artists",
+      albums: "Albums",
+      playlists: "Playlists",
+      home: "Home",
+      queue: "Play Queue",
+      equalizer: "Equalizer",
+    };
 
     const closeMenu = () => {
       menu.style.display = "none";
@@ -7847,7 +7978,9 @@ function renderSettings() {
     trigger.addEventListener("click", (e) => {
       e.stopPropagation();
       const open = menu.style.display === "flex";
-      if (open) { closeMenu(); } else {
+      if (open) {
+        closeMenu();
+      } else {
         menu.style.display = "flex";
         chevron.style.transform = "rotate(180deg)";
         trigger.style.borderColor = "var(--green, #1ed760)";
@@ -7863,14 +7996,21 @@ function renderSettings() {
       label.textContent = LABELS[val];
       startSectionDropdown.dataset.value = val;
       // Highlight selected item
-      menu.querySelectorAll("li").forEach(item => {
+      menu.querySelectorAll("li").forEach((item) => {
         const sel = item.dataset.value === val;
-        item.style.background = sel ? "color-mix(in srgb, var(--green, #1ed760) 14%, transparent)" : "";
-        item.style.color = sel ? "var(--green, #1ed760)" : "var(--text-primary)";
+        item.style.background = sel
+          ? "color-mix(in srgb, var(--green, #1ed760) 14%, transparent)"
+          : "";
+        item.style.color = sel
+          ? "var(--green, #1ed760)"
+          : "var(--text-primary)";
         item.style.fontWeight = sel ? "600" : "";
         let svg = item.querySelector("svg");
         if (sel && !svg) {
-          item.insertAdjacentHTML("afterbegin", '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>');
+          item.insertAdjacentHTML(
+            "afterbegin",
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+          );
         } else if (!sel && svg) {
           svg.remove();
         }
@@ -10788,6 +10928,65 @@ function _makeAlbumCard(album) {
   return card;
 }
 
+function _dupNormTitle(v) {
+  return String(v || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[(\[]([^)\]]*)[)\]]/g, (m, inner) =>
+      /remix|live|acoustic|instrumental|cover|sped|slowed|extended|demo|edit/.test(
+        inner,
+      )
+        ? " " + inner + " "
+        : " ",
+    )
+    .replace(/\b(feat|ft|featuring)\b.*$/, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+function _dupArtistSet(v) {
+  const raw = Array.isArray(v) ? v.join(",") : String(v || "");
+  return raw
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/,|&|;|\/|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bx\b|\band\b/)
+    .map((a) => a.replace(/[^\p{L}\p{N}]+/gu, " ").trim())
+    .filter(Boolean);
+}
+
+function _findLibraryDuplicate(info) {
+  const title = _dupNormTitle(info && info.trackName);
+  if (!title) return null;
+  const artists = _dupArtistSet(info.artistName);
+  for (const t of state.tracks) {
+    if (_dupNormTitle(t.title) !== title) continue;
+    const libArtists = _dupArtistSet(t.artist);
+    if (artists.length === 0 || libArtists.length === 0) return t;
+    if (
+      artists.some((a) =>
+        libArtists.some((b) => a === b || a.includes(b) || b.includes(a)),
+      )
+    ) {
+      return t;
+    }
+  }
+  return null;
+}
+
+async function _checkDiscoveryDuplicate(info) {
+  const dup = _findLibraryDuplicate(info);
+  if (!dup) return false;
+  const artist = Array.isArray(dup.artist) ? dup.artist.join(", ") : dup.artist;
+  await showAppDialog({
+    title: "Already in your library",
+    message: `"${dup.title}"${artist ? " by " + artist : ""} is already in your library, so it wasn't downloaded again.`,
+    confirmText: "Got it",
+    cancelText: null,
+  });
+  return true;
+}
 
 function renderDiscovery() {
   renderSectionSurface(`
@@ -10795,11 +10994,24 @@ function renderDiscovery() {
   `);
   const root = document.getElementById("discovery-root-container");
   if (root) {
-    const view = new DiscoveryView(root, window.novaAPI, (trackToPlay) => {
-      if (typeof playTrack === "function" && trackToPlay) {
-        playTrack(trackToPlay);
-      }
-    });
+    const view = new DiscoveryView(
+      root,
+      window.novaAPI,
+      (trackToPlay) => {
+        if (typeof playTrack === "function" && trackToPlay) {
+          playTrack(trackToPlay);
+        }
+      },
+      _checkDiscoveryDuplicate,
+      {
+        findLibraryTrack: _findLibraryDuplicate,
+        getPlayback: () => ({
+          trackId: state.currentTrack && state.currentTrack.id,
+          isPlaying: !!state.isPlaying,
+        }),
+        togglePlay: () => togglePlayPause(),
+      },
+    );
     view.render();
   }
 }
@@ -12705,7 +12917,7 @@ function getArtIndex(track) {
 function renderTracks(list, mode = "library") {
   const container = $("track-list");
   const headers = $("col-headers");
-  if (headers) headers.style.display = "";
+  if (headers) headers.style.display = _colHeadersAllowed() ? "" : "none";
   container.className = "virtual-track-list";
   container.innerHTML = "";
   virtualList.items = Array.isArray(list) ? list : [];
@@ -13749,7 +13961,10 @@ async function playNext() {
         for (let i = 0; i < libTracks.length; i++) {
           if (libTracks[i].id !== curId) pool.push(libTracks[i]);
         }
-        state.queue = pool.length > 0 ? _fastShuffle(pool) : _fastShuffle(libTracks.slice());
+        state.queue =
+          pool.length > 0
+            ? _fastShuffle(pool)
+            : _fastShuffle(libTracks.slice());
         state.queueIndex = 0;
         state.queueSource = null;
       } else {
@@ -13763,7 +13978,9 @@ async function playNext() {
       } else {
         // Single-song queue: look up next song in library using active user sort logic
         if (libTracks.length > 1 && state.currentTrack) {
-          const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
+          const curIdx = libTracks.findIndex(
+            (t) => t.id === state.currentTrack.id,
+          );
           const nextIdx = curIdx >= 0 ? (curIdx + 1) % libTracks.length : 0;
           const after = libTracks.slice(nextIdx);
           const before = libTracks.slice(0, nextIdx);
@@ -13776,9 +13993,15 @@ async function playNext() {
       }
     } else {
       // Repeat is OFF & Shuffle is OFF:
-      if (state.queue.length === 1 && state.currentTrack && libTracks.length > 1) {
+      if (
+        state.queue.length === 1 &&
+        state.currentTrack &&
+        libTracks.length > 1
+      ) {
         // Queue was 1 song: continue with user's library sort order
-        const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
+        const curIdx = libTracks.findIndex(
+          (t) => t.id === state.currentTrack.id,
+        );
         if (curIdx >= 0 && curIdx + 1 < libTracks.length) {
           const after = libTracks.slice(curIdx + 1);
           const before = libTracks.slice(0, curIdx + 1);
@@ -13817,7 +14040,9 @@ async function playPrevious() {
       } else {
         const libTracks = _getSortedLibraryTracks();
         if (libTracks.length > 1 && state.currentTrack) {
-          const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
+          const curIdx = libTracks.findIndex(
+            (t) => t.id === state.currentTrack.id,
+          );
           const prevIdx = curIdx > 0 ? curIdx - 1 : libTracks.length - 1;
           const after = libTracks.slice(prevIdx);
           const before = libTracks.slice(0, prevIdx);
@@ -13921,9 +14146,7 @@ function _applyRepeatMode(mode) {
     const sorted = state.filteredTracks.length
       ? state.filteredTracks
       : state.tracks;
-    const currentIdx = sorted.findIndex(
-      (t) => t.id === state.currentTrack.id,
-    );
+    const currentIdx = sorted.findIndex((t) => t.id === state.currentTrack.id);
     if (currentIdx >= 0) {
       const after = sorted.slice(currentIdx);
       const before = sorted.slice(0, currentIdx);
@@ -14588,7 +14811,9 @@ function updateProgressText(cur, dur) {
   if (typeof cur === "number" && isFinite(cur)) _lastProgressCur = cur;
   if (typeof dur === "number" && isFinite(dur)) _lastProgressDur = dur;
 
-  const validCur = isFinite(_lastProgressCur) ? Math.max(0, _lastProgressCur) : 0;
+  const validCur = isFinite(_lastProgressCur)
+    ? Math.max(0, _lastProgressCur)
+    : 0;
   const validDur =
     isFinite(_lastProgressDur) && _lastProgressDur > 0 ? _lastProgressDur : 0;
 
@@ -15843,33 +16068,29 @@ function _createFloatingNavCard() {
     },
     {
       id: "library",
-      label: "Library",
-      icon: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
-    },
-    {
-      id: "discovery",
-      label: "Music Downloader",
-      icon: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+      label: "Music library",
+      icon: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
     },
     {
       id: "albums",
       label: "Albums",
-      icon: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/>',
+      icon: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="12" r="3"/>',
     },
     {
       id: "artists",
       label: "Artists",
-      icon: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+      icon: '<path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/>',
+    },
+    {
+      id: "queue",
+      label: "Play queue",
+      sw: "1.8",
+      icon: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="4" x2="21" y2="4"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="15" x2="21" y2="15"/><line x1="14" y1="20" x2="18" y2="20"/>',
     },
     {
       id: "playlists",
       label: "Playlists",
-      icon: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
-    },
-    {
-      id: "queue",
-      label: "Queue",
-      icon: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="4" x2="21" y2="4"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="15" x2="21" y2="15"/><line x1="14" y1="20" x2="18" y2="20"/>',
+      icon: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/>',
     },
     {
       id: "settings",
@@ -15897,7 +16118,7 @@ function _createFloatingNavCard() {
   // Having two X buttons was redundant and confusing.
   sections.forEach((s) => {
     html += `<button class="fn-btn${s.id === activeSection ? " active" : ""}" data-section="${s.id}" data-label="${s.label}" aria-label="${s.label}">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${s.icon}</svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${s.sw || 2}" stroke-linecap="round" stroke-linejoin="round">${s.icon}</svg>
     </button>`;
   });
   html += `<div class="fn-divider"></div>`;
@@ -15907,6 +16128,9 @@ function _createFloatingNavCard() {
     </button>
     <input type="text" class="fn-search-input" id="fn-search-input" placeholder="Search…" spellcheck="false">
   </div>`;
+  html += `<button class="fn-btn" id="fn-download-btn" data-section="discovery" data-label="Music Downloader" aria-label="Music Downloader">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12.0001L12 16.0001M12 16.0001L16 12.0001M12 16.0001V6.80006C12 5.40935 12 4.714 11.4495 3.93546C11.0837 3.41818 10.0306 2.77974 9.40278 2.69468C8.45789 2.56666 8.09907 2.75384 7.38143 3.1282C4.18333 4.79649 2 8.14331 2 12.0001C2 17.5229 6.47715 22.0001 12 22.0001C17.5228 22.0001 22 17.5229 22 12.0001C22 8.29865 19.989 5.06693 17 3.33788"/></svg>
+  </button>`;
   html += `<button class="fn-btn fn-help-btn" id="fn-help-btn" data-section="help" data-label="Help" aria-label="Help">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
   </button>`;
@@ -16325,7 +16549,6 @@ function _openTagEditor(track) {
     const newGenre = overlay.querySelector("#tag-genre").value.trim();
     const newYear = overlay.querySelector("#tag-year").value.trim();
 
-
     saveBtn.disabled = true;
     saveBtn.textContent = "Saving...";
 
@@ -16372,7 +16595,7 @@ function _openTagEditor(track) {
             state.currentTrack._hasCoverArt = true;
           }
         }
-        
+
         // Re-render current section
         invalidateSectionCache();
         // Invalidate thumbnail cache for this track (cover art may have changed)

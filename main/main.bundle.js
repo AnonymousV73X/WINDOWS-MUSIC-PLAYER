@@ -37869,6 +37869,12 @@ var require_package = __commonJS({
           "renderer/**/*",
           "assets/**/*",
           "package.json"
+        ],
+        extraResources: [
+          {
+            from: "bin/yt-dlp.exe",
+            to: "bin/yt-dlp.exe"
+          }
         ]
       }
     };
@@ -38291,10 +38297,10 @@ var require_ipc = __commonJS({
       }
       return track;
     }
-    function saveLibrary(library2) {
-      libraryCache = library2;
-      _libraryJsonCache = library2;
-      libraryById = new Map(library2.map((track) => [track.id, track]));
+    function saveLibrary(library) {
+      libraryCache = library;
+      _libraryJsonCache = library;
+      libraryById = new Map(library.map((track) => [track.id, track]));
       const tx = db.transaction((tracks) => {
         db.prepare("DELETE FROM tracks").run();
         db.prepare("DELETE FROM track_covers").run();
@@ -38336,13 +38342,13 @@ var require_ipc = __commonJS({
       } catch (_) {
         preExistingCovers = /* @__PURE__ */ new Map();
       }
-      tx(library2);
+      tx(library);
       if (preExistingCovers.size > 0) {
         const restoreInsert = db.prepare(
           "INSERT OR IGNORE INTO track_covers (trackId, coverArt) VALUES (?, ?)"
         );
         const restoreTx = db.transaction(() => {
-          for (const track of library2) {
+          for (const track of library) {
             if (!track.coverArt && track._hasCoverArt) {
               const oldArt = preExistingCovers.get(track.id);
               if (oldArt) restoreInsert.run(track.id, oldArt);
@@ -38586,14 +38592,14 @@ var require_ipc = __commonJS({
               console.log(
                 "[manifest] missing on startup \u2014 building from SQLite library..."
               );
-              const library2 = getLibrary();
-              if (library2 && library2.length > 0) {
+              const library = getLibrary();
+              if (library && library.length > 0) {
                 const settings = readJSON(SETTINGS_FILE, {
                   ...DEFAULT_SETTINGS
                 });
                 const existingFp = settings._combinedFingerprint || "";
                 const result = await ManifestIPC.rebuildManifest(
-                  library2,
+                  library,
                   existingFp
                 );
                 if (result.ok) {
@@ -38621,7 +38627,7 @@ var require_ipc = __commonJS({
                       console.log(
                         "[manifest] fingerprints persisted \u2014 next launch will skip fingerprint check"
                       );
-                      await ManifestIPC.rebuildManifest(library2, combined);
+                      await ManifestIPC.rebuildManifest(library, combined);
                     } catch (fpErr) {
                       console.warn(
                         "[manifest] fingerprint computation failed:",
@@ -39260,10 +39266,17 @@ var require_ipc = __commonJS({
           const existingLibrary = getLibrary();
           const existingPaths = new Set(existingLibrary.map((t) => t.filePath));
           const newFiles = files.filter((f) => !existingPaths.has(f.filePath));
-          if (newFiles.length === 0) {
+          const _norm = (x) => String(x || "").replace(/\\/g, "/").toLowerCase();
+          const _folderNorm = _norm(folderPath);
+          const _onDisk = new Set(files.map((f) => _norm(f.filePath)));
+          const removedIds = files.length === 0 ? [] : existingLibrary.filter(
+            (t) => t.filePath && _norm(t.filePath).startsWith(_folderNorm) && !_onDisk.has(_norm(t.filePath))
+          ).map((t) => t.id);
+          if (newFiles.length === 0 && removedIds.length === 0) {
             return {
               success: true,
               newTracks: 0,
+              removedIds: [],
               tracks: existingLibrary,
               elapsedMs: Date.now() - t0
             };
@@ -39274,10 +39287,11 @@ var require_ipc = __commonJS({
           const coverCacheDir = path.join(app.getPath("userData"), "cached_covers");
           let worker = null;
           try {
+            if (newFiles.length === 0) throw new Error("no new files");
             worker = new MetadataWorker();
             worker.setCoverCacheDir(coverCacheDir);
           } catch (err) {
-            console.warn(
+            if (newFiles.length > 0) console.warn(
               "[library:quick-scan] MetadataWorker unavailable, using main thread:",
               err.message
             );
@@ -39325,7 +39339,11 @@ var require_ipc = __commonJS({
             } catch (_) {
             }
           }
-          const mergedLibrary = [...newTracks, ...existingLibrary];
+          const _rmSet = new Set(removedIds);
+          const mergedLibrary = [
+            ...newTracks,
+            ...existingLibrary.filter((t) => !_rmSet.has(t.id))
+          ];
           saveLibrary(mergedLibrary);
           setImmediate(() => {
             ManifestIPC.rebuildManifest(mergedLibrary).catch((err) => {
@@ -39343,6 +39361,7 @@ var require_ipc = __commonJS({
             success: true,
             newTracks: newTracks.length,
             addedTracks: newTracks,
+            removedIds,
             tracks: mergedLibrary,
             elapsedMs
           };
@@ -39369,8 +39388,8 @@ var require_ipc = __commonJS({
       });
       ipcMain.handle("library:get-all", async () => {
         try {
-          const library2 = getLibrary();
-          return { success: true, tracks: library2 };
+          const library = getLibrary();
+          return { success: true, tracks: library };
         } catch (err) {
           return { success: false, error: err.message };
         }
@@ -39445,8 +39464,8 @@ var require_ipc = __commonJS({
                 url: `nova-media://thumb/${trackId}/${targetSize}`
               };
             }
-            const library2 = getLibrary();
-            const track = library2.find((t) => t.id === trackId);
+            const library = getLibrary();
+            const track = library.find((t) => t.id === trackId);
             if (!track || !track.coverArt && !track._hasCoverArt) {
               return { success: false, error: "No cover art for track" };
             }
@@ -39486,7 +39505,7 @@ var require_ipc = __commonJS({
       ipcMain.handle("coverart:get-all-thumbs", async (event, { size } = {}) => {
         try {
           const sharp = require("sharp");
-          const library2 = getLibrary();
+          const library = getLibrary();
           const targetSize = size || 128;
           const thumbDir = path.join(
             app.getPath("userData"),
@@ -39498,7 +39517,7 @@ var require_ipc = __commonJS({
           const thumbs = {};
           const thumbHashes = {};
           const BATCH = 8;
-          const tracks = library2.filter(
+          const tracks = library.filter(
             (t) => (t.coverArt || t._hasCoverArt) && t.id
           );
           for (let i = 0; i < tracks.length; i += BATCH) {
@@ -39727,7 +39746,7 @@ var require_ipc = __commonJS({
       });
       ipcMain.handle("library:partial-update", async (event, existingIds) => {
         try {
-          getLibrary();
+          const library = getLibrary();
           const currentIds = new Set(library.map((t) => t.id));
           const existingSet = new Set(
             Array.isArray(existingIds) ? existingIds : []
@@ -39758,10 +39777,10 @@ var require_ipc = __commonJS({
       });
       ipcMain.handle("library:remove-track", async (event, trackId) => {
         try {
-          const library2 = getLibrary();
-          const track = library2.find((t) => t.id === trackId);
+          const library = getLibrary();
+          const track = library.find((t) => t.id === trackId);
           if (!track) return { success: true, removed: false };
-          const filtered = library2.filter((t) => t.id !== trackId);
+          const filtered = library.filter((t) => t.id !== trackId);
           saveLibrary(filtered);
           if (track.filePath && fs.existsSync(track.filePath)) {
             try {
@@ -39803,17 +39822,17 @@ var require_ipc = __commonJS({
             });
             tx();
           }
-          const library2 = getLibrary ? getLibrary() : null;
-          if (Array.isArray(library2)) {
+          const library = getLibrary ? getLibrary() : null;
+          if (Array.isArray(library)) {
             const map = new Map(updates.map((u) => [u.id, u]));
-            for (const t of library2) {
+            for (const t of library) {
               const u = map.get(t.id);
               if (u) {
                 if (u.artist !== void 0) t.artist = u.artist;
                 if (u.title !== void 0) t.title = u.title;
               }
             }
-            if (saveLibrary) saveLibrary(library2);
+            if (saveLibrary) saveLibrary(library);
           }
           if (ManifestIPC.isFeatureFlagEnabled()) {
             setImmediate(() => {
@@ -40920,18 +40939,18 @@ var require_ipc = __commonJS({
               const raw = Array.isArray(data) ? data : Array.isArray(data.tracks) ? data.tracks : [];
               entries = raw.map((t) => ({ filePath: t.filePath || t.path || t.file || "" })).filter((e) => e.filePath);
               if (entries.length === 0 && Array.isArray(data.trackIds)) {
-                const library3 = getLibrary();
+                const library2 = getLibrary();
                 const idSet = new Set(data.trackIds);
-                entries = library3.filter((t) => idSet.has(t.id)).map((t) => ({ filePath: t.filePath, resolvedId: t.id }));
+                entries = library2.filter((t) => idSet.has(t.id)).map((t) => ({ filePath: t.filePath, resolvedId: t.id }));
               }
             } catch (_) {
             }
           }
           if (entries.length === 0)
             return { success: false, error: "No tracks found in playlist file" };
-          const library2 = getLibrary();
+          const library = getLibrary();
           const pathToId = new Map(
-            library2.filter((t) => t?.filePath).map((t) => [t.filePath, t.id])
+            library.filter((t) => t?.filePath).map((t) => [t.filePath, t.id])
           );
           const crossBasename = (fp) => {
             const posix = String(fp || "").replace(/\\/g, "/");
@@ -40940,7 +40959,7 @@ var require_ipc = __commonJS({
           };
           const fileNameToTrack = /* @__PURE__ */ new Map();
           const fileNameNoExtToTrack = /* @__PURE__ */ new Map();
-          for (const t of library2) {
+          for (const t of library) {
             if (!t?.filePath) continue;
             const fname = crossBasename(t.filePath).toLowerCase();
             if (!fileNameToTrack.has(fname)) fileNameToTrack.set(fname, t);
@@ -41020,8 +41039,8 @@ var require_ipc = __commonJS({
             return { success: false, canceled: true };
           const filePath = saveResult.filePath;
           const ext = path.extname(filePath).toLowerCase().replace(".", "");
-          const library2 = getLibrary();
-          const libMap = new Map(library2.map((t) => [t.id, t]));
+          const library = getLibrary();
+          const libMap = new Map(library.map((t) => [t.id, t]));
           const tracks = playlist.tracks.map((id) => libMap.get(id)).filter(Boolean);
           let content = "";
           if (ext === "m3u" || ext === "m3u8") {
@@ -42514,8 +42533,8 @@ ${items}
           }
           const thumbs = {};
           const missing = [];
-          const library2 = getLibrary();
-          const libById = new Map(library2.map((t) => [t.id, t]));
+          const library = getLibrary();
+          const libById = new Map(library.map((t) => [t.id, t]));
           const BATCH = 8;
           for (let i = 0; i < trackIds.length; i += BATCH) {
             const batch = trackIds.slice(i, i + BATCH);
@@ -42576,13 +42595,13 @@ ${items}
     ipcMain.handle("coverart:sibling-cover", async (event, { trackId } = {}) => {
       try {
         if (!trackId) return { success: false, error: "trackId required" };
-        const library2 = getLibrary();
-        const track = library2.find((t) => t.id === trackId);
+        const library = getLibrary();
+        const track = library.find((t) => t.id === trackId);
         if (!track || !track.filePath) {
           return { success: true, coverArt: null };
         }
         const dir = path.dirname(track.filePath);
-        const siblings = library2.filter(
+        const siblings = library.filter(
           (t) => t.id !== trackId && t.filePath && path.dirname(t.filePath) === dir && (t.coverArt || t._hasCoverArt)
         );
         if (siblings.length === 0) {

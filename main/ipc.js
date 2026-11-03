@@ -2026,10 +2026,28 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
 
       const newFiles = files.filter((f) => !existingPaths.has(f.filePath));
 
-      if (newFiles.length === 0) {
+      // Detect songs deleted from disk (only when the scan actually saw files,
+      // so an unreadable/disconnected folder never wipes the library).
+      const _norm = (x) => String(x || "").replace(/\\/g, "/").toLowerCase();
+      const _folderNorm = _norm(folderPath);
+      const _onDisk = new Set(files.map((f) => _norm(f.filePath)));
+      const removedIds =
+        files.length === 0
+          ? []
+          : existingLibrary
+              .filter(
+                (t) =>
+                  t.filePath &&
+                  _norm(t.filePath).startsWith(_folderNorm) &&
+                  !_onDisk.has(_norm(t.filePath)),
+              )
+              .map((t) => t.id);
+
+      if (newFiles.length === 0 && removedIds.length === 0) {
         return {
           success: true,
           newTracks: 0,
+          removedIds: [],
           tracks: existingLibrary,
           elapsedMs: Date.now() - t0,
         };
@@ -2042,10 +2060,11 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       const coverCacheDir = path.join(app.getPath("userData"), "cached_covers");
       let worker = null;
       try {
+        if (newFiles.length === 0) throw new Error("no new files");
         worker = new MetadataWorker();
         worker.setCoverCacheDir(coverCacheDir);
       } catch (err) {
-        console.warn(
+        if (newFiles.length > 0) console.warn(
           "[library:quick-scan] MetadataWorker unavailable, using main thread:",
           err.message,
         );
@@ -2102,7 +2121,11 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         } catch (_) {}
       }
 
-      const mergedLibrary = [...newTracks, ...existingLibrary];
+      const _rmSet = new Set(removedIds);
+      const mergedLibrary = [
+        ...newTracks,
+        ...existingLibrary.filter((t) => !_rmSet.has(t.id)),
+      ];
       saveLibrary(mergedLibrary);
 
       // Rebuild the binary manifest in the background so fast-startup
@@ -2125,6 +2148,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         success: true,
         newTracks: newTracks.length,
         addedTracks: newTracks,
+        removedIds,
         tracks: mergedLibrary,
         elapsedMs,
       };
@@ -2679,7 +2703,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   // Avoids full library reload when adding a few songs
   ipcMain.handle("library:partial-update", async (event, existingIds) => {
     try {
-      getLibrary();
+      const library = getLibrary();
       const currentIds = new Set(library.map((t) => t.id));
       const existingSet = new Set(
         Array.isArray(existingIds) ? existingIds : [],
