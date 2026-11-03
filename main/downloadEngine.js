@@ -1189,7 +1189,7 @@ async function ensureYtDlpAvailable(onProgress) {
   return targetPath;
 }
 
-async function downloadWithYtDlp(urlOrQuery, destBase, onProgress) {
+async function downloadWithYtDlp(urlOrQuery, destBase, onProgress, trackId) {
   const ytDlpBinary = await ensureYtDlpAvailable(onProgress);
 
   return new Promise((resolve, reject) => {
@@ -1211,6 +1211,7 @@ async function downloadWithYtDlp(urlOrQuery, destBase, onProgress) {
 
     try {
       proc = spawn(ytDlpBinary, args, { windowsHide: true });
+      if (trackId) registerDownload(trackId, proc, destBase);
     } catch (err) {
       return reject(err);
     }
@@ -1334,7 +1335,7 @@ function injectTrackInfoTags(filePath, trackInfo, artBuf) {
   }
 }
 
-async function downloadAndTagTrack(trackInfo, targetFolder, onProgress) {
+async function downloadAndTagTrack(trackInfo, targetFolder, onProgress, trackId) {
   onProgress({ status: "resolving", percent: 5, message: "Resolving audio with yt-dlp…" });
 
   const sanitize = (name) => name.replace(/[<>:"/\\|?*]/g, "").trim();
@@ -1352,7 +1353,7 @@ async function downloadAndTagTrack(trackInfo, targetFolder, onProgress) {
     try {
       onProgress({ status: "downloading", percent: 10, message: "Downloading audio via yt-dlp…" });
       const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      const downloadedPath = await downloadWithYtDlp(targetUrl, destBase, onProgress);
+      const downloadedPath = await downloadWithYtDlp(targetUrl, destBase, onProgress, trackId);
       injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
       onProgress({ status: "done", percent: 100, message: "Done!", filePath: downloadedPath });
       return downloadedPath;
@@ -1364,10 +1365,34 @@ async function downloadAndTagTrack(trackInfo, targetFolder, onProgress) {
   // Strategy 2: Accurate search query with yt-dlp
   const searchQuery = `ytsearch1:${trackInfo.artistName} - ${trackInfo.trackName} audio`;
   onProgress({ status: "downloading", percent: 10, message: "Searching and downloading via yt-dlp…" });
-  const downloadedPath = await downloadWithYtDlp(searchQuery, destBase, onProgress);
+  const downloadedPath = await downloadWithYtDlp(searchQuery, destBase, onProgress, trackId);
   injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
   onProgress({ status: "done", percent: 100, message: "Done!", filePath: downloadedPath });
   return downloadedPath;
 }
 
-module.exports = { searchITunes, downloadAndTagTrack, getYtDlpPath, ensureYtDlpAvailable };
+// ─── Active download registry (trackId → spawned yt-dlp process) ──────────────
+const _activeDownloads = new Map(); // trackId → { proc, destBase }
+
+function registerDownload(trackId, proc, destBase) {
+  _activeDownloads.set(trackId, { proc, destBase });
+  proc.on("close", () => _activeDownloads.delete(trackId));
+  proc.on("error", () => _activeDownloads.delete(trackId));
+}
+
+function cancelDownload(trackId) {
+  const entry = _activeDownloads.get(trackId);
+  if (!entry) return false;
+  const { proc, destBase } = entry;
+  try { proc.kill("SIGKILL"); } catch (_) {}
+  _activeDownloads.delete(trackId);
+  // Clean up partial files left by yt-dlp
+  if (destBase) {
+    [destBase + ".mp3.part", destBase + ".m4a.part", destBase + ".webm.part"].forEach((f) => {
+      try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch (_) {}
+    });
+  }
+  return true;
+}
+
+module.exports = { searchITunes, downloadAndTagTrack, getYtDlpPath, ensureYtDlpAvailable, cancelDownload };

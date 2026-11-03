@@ -42709,7 +42709,7 @@ ${items}
           } catch (_) {
           }
         };
-        const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress);
+        const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress, trackInfo.id);
         let parsedTrack = null;
         try {
           const stats = fs.statSync(savedPath);
@@ -42800,6 +42800,16 @@ ${items}
         return { success: true, filePath: savedPath, track: parsedTrack };
       } catch (err) {
         console.error("[IPC] discovery:download error:", err);
+        return { success: false, error: err.message };
+      }
+    });
+    ipcMain.handle("discovery:cancel", async (event, { trackId }) => {
+      try {
+        const cancelled = DownloadEngine.cancelDownload(trackId);
+        console.log(`[IPC] discovery:cancel trackId=${trackId} cancelled=${cancelled}`);
+        return { success: cancelled };
+      } catch (err) {
+        console.error("[IPC] discovery:cancel error:", err);
         return { success: false, error: err.message };
       }
     });
