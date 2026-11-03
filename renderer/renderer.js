@@ -11003,6 +11003,14 @@ function renderDiscovery() {
         }
       },
       _checkDiscoveryDuplicate,
+      {
+        findLibraryTrack: _findLibraryDuplicate,
+        getPlayback: () => ({
+          trackId: state.currentTrack && state.currentTrack.id,
+          isPlaying: !!state.isPlaying,
+        }),
+        togglePlay: () => togglePlayPause(),
+      },
     );
     view.render();
   }
