@@ -389,7 +389,7 @@ class DiscoveryView {
         <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--green); font-weight: 500;">
           <div style="width: 14px; height: 14px; border: 2px solid color-mix(in srgb, var(--green) 30%, transparent); border-top-color: var(--green); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
           <span>${state.percent || 10}%</span>
-          <button class="action-cancel-btn" data-id="${trackId}" style="background: none; border: none; padding: 2px 6px; cursor: pointer; color: rgba(255,255,255,0.45); font-size: 15px; line-height: 1; transition: color 0.15s;" title="Cancel download" onmouseover="this.style.color='rgba(255,80,80,0.9)'" onmouseout="this.style.color='rgba(255,255,255,0.45)'">✕</button>
+          <button class="action-cancel-btn" data-id="${trackId}" style="width: 20px; height: 20px; border-radius: 50%; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; color: rgba(255,255,255,0.6); font-size: 11px; line-height: 1; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);" title="Cancel download" onmouseover="this.style.background='rgba(239,68,68,0.2)'; this.style.borderColor='rgba(239,68,68,0.5)'; this.style.color='#ef4444';" onmouseout="this.style.background='rgba(255,255,255,0.08)'; this.style.borderColor='rgba(255,255,255,0.15)'; this.style.color='rgba(255,255,255,0.6)';">✕</button>
         </div>
       `;
     }
