@@ -6162,6 +6162,24 @@ async function _loadLibrary() {
  * Extracted from _loadLibrary to be reusable for progressive loading.
  * Task 4: Partial library update — avoids full reload for small changes
  */
+function _purgeRemovedTracks(removedIds) {
+  const rm = new Set(removedIds);
+  state.tracks = state.tracks.filter((t) => !rm.has(t.id));
+  state.filteredTracks = state.filteredTracks.filter((t) => !rm.has(t.id));
+  const rpLen = state.recentlyPlayed.length;
+  state.recentlyPlayed = state.recentlyPlayed.filter((t) => !rm.has(t.id));
+  if (state.recentlyPlayed.length !== rpLen) {
+    saveSetting(
+      "recentlyPlayed",
+      state.recentlyPlayed.map((t) => t.id),
+    );
+  }
+  for (const id of rm) {
+    TrackThumbHandler.invalidate(id);
+    _idbSet(`batch96::${id}`, null);
+  }
+}
+
 async function _partialLibraryUpdate() {
   try {
     const existingIds = state.tracks.map((t) => t.id);
@@ -6189,13 +6207,7 @@ async function _partialLibraryUpdate() {
     await _applyIDBThumbs(newTracks);
 
     // Remove deleted tracks
-    if (removedIds.length > 0) {
-      const removeSet = new Set(removedIds);
-      state.tracks = state.tracks.filter((t) => !removeSet.has(t.id));
-      state.filteredTracks = state.filteredTracks.filter(
-        (t) => !removeSet.has(t.id),
-      );
-    }
+    if (removedIds.length > 0) _purgeRemovedTracks(removedIds);
 
     // Add new tracks
     if (newTracks.length > 0) {
@@ -6210,7 +6222,9 @@ async function _partialLibraryUpdate() {
 
     // Re-render without full reload
     invalidateSectionCache();
-    if (virtualList.mode === "library" || virtualList.mode === "home") {
+    if (state.activeNavSection === "home") {
+      renderHome();
+    } else if (virtualList.mode === "library" || virtualList.mode === "home") {
       renderTracks(state.filteredTracks, "library");
     } else if (state.activeNavSection === "albums") {
       _reRenderPanel("albums", renderAlbums);
@@ -15910,7 +15924,6 @@ function _createFloatingNavCard() {
     </button>
     <input type="text" class="fn-search-input" id="fn-search-input" placeholder="Search…" spellcheck="false">
   </div>`;
-  
   html += `<button class="fn-btn" id="fn-download-btn" data-section="discovery" data-label="Music Downloader" aria-label="Music Downloader">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12.0001L12 16.0001M12 16.0001L16 12.0001M12 16.0001V6.80006C12 5.40935 12 4.714 11.4495 3.93546C11.0837 3.41818 10.0306 2.77974 9.40278 2.69468C8.45789 2.56666 8.09907 2.75384 7.38143 3.1282C4.18333 4.79649 2 8.14331 2 12.0001C2 17.5229 6.47715 22.0001 12 22.0001C17.5228 22.0001 22 17.5229 22 12.0001C22 8.29865 19.989 5.06693 17 3.33788"/></svg>
   </button>`;
