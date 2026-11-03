@@ -1596,9 +1596,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                 _hasCoverArt: !!metadata.coverArt,
                 dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                 dateModified: file.modifiedTime || Date.now(),
-                ...(existingMap.get(file.filePath)?._userEdited
-                  ? { _userEdited: true }
-                  : {}),
+                ...(existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}),
               });
             }
           } else {
@@ -1646,9 +1644,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   _hasCoverArt: false,
                   dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                   dateModified: file.modifiedTime || Date.now(),
-                  ...(existingMap.get(file.filePath)?._userEdited
-                    ? { _userEdited: true }
-                    : {}),
+                  ...(existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}),
                 });
               } else {
                 // v1.1.0 EXHAUSTIVE SCANNER FIX: Even when quickInfo also
@@ -1740,9 +1736,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   _hasCoverArt: !!fallback.coverArt,
                   dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                   dateModified: file.modifiedTime || Date.now(),
-                  ...(existingMap.get(file.filePath)?._userEdited
-                    ? { _userEdited: true }
-                    : {}),
+                  ...(existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}),
                 });
               } else {
                 failedCount++;
@@ -2032,10 +2026,28 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
 
       const newFiles = files.filter((f) => !existingPaths.has(f.filePath));
 
-      if (newFiles.length === 0) {
+      // Detect songs deleted from disk (only when the scan actually saw files,
+      // so an unreadable/disconnected folder never wipes the library).
+      const _norm = (x) => String(x || "").replace(/\\/g, "/").toLowerCase();
+      const _folderNorm = _norm(folderPath);
+      const _onDisk = new Set(files.map((f) => _norm(f.filePath)));
+      const removedIds =
+        files.length === 0
+          ? []
+          : existingLibrary
+              .filter(
+                (t) =>
+                  t.filePath &&
+                  _norm(t.filePath).startsWith(_folderNorm) &&
+                  !_onDisk.has(_norm(t.filePath)),
+              )
+              .map((t) => t.id);
+
+      if (newFiles.length === 0 && removedIds.length === 0) {
         return {
           success: true,
           newTracks: 0,
+          removedIds: [],
           tracks: existingLibrary,
           elapsedMs: Date.now() - t0,
         };
@@ -2048,10 +2060,11 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       const coverCacheDir = path.join(app.getPath("userData"), "cached_covers");
       let worker = null;
       try {
+        if (newFiles.length === 0) throw new Error("no new files");
         worker = new MetadataWorker();
         worker.setCoverCacheDir(coverCacheDir);
       } catch (err) {
-        console.warn(
+        if (newFiles.length > 0) console.warn(
           "[library:quick-scan] MetadataWorker unavailable, using main thread:",
           err.message,
         );
@@ -2108,7 +2121,11 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         } catch (_) {}
       }
 
-      const mergedLibrary = [...newTracks, ...existingLibrary];
+      const _rmSet = new Set(removedIds);
+      const mergedLibrary = [
+        ...newTracks,
+        ...existingLibrary.filter((t) => !_rmSet.has(t.id)),
+      ];
       saveLibrary(mergedLibrary);
 
       // Rebuild the binary manifest in the background so fast-startup
@@ -2131,6 +2148,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         success: true,
         newTracks: newTracks.length,
         addedTracks: newTracks,
+        removedIds,
         tracks: mergedLibrary,
         elapsedMs,
       };
@@ -2749,14 +2767,11 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   // ─── Library: batch update tracks (e.g. background unknown artist resolution) ──
   ipcMain.handle("library:update-tracks", async (event, updates) => {
     try {
-      if (!Array.isArray(updates) || updates.length === 0)
-        return { success: true, count: 0 };
+      if (!Array.isArray(updates) || updates.length === 0) return { success: true, count: 0 };
       // db is the module-level SQLite handle (let db = null; at top of file)
       if (db) {
         const selectStmt = db.prepare("SELECT data FROM tracks WHERE id = ?");
-        const updateStmt = db.prepare(
-          "UPDATE tracks SET title = ?, artist = ?, data = ? WHERE id = ?",
-        );
+        const updateStmt = db.prepare("UPDATE tracks SET title = ?, artist = ?, data = ? WHERE id = ?");
         const tx = db.transaction(() => {
           for (const u of updates) {
             if (!u.id) continue;
@@ -2765,16 +2780,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
               try {
                 const track = JSON.parse(row.data);
                 if (u.artist !== undefined) track.artist = u.artist;
-                if (u.title !== undefined) track.title = u.title;
-                const artistStr = Array.isArray(track.artist)
-                  ? track.artist.join(", ")
-                  : track.artist || "";
-                updateStmt.run(
-                  track.title || "",
-                  artistStr,
-                  JSON.stringify(track),
-                  u.id,
-                );
+                if (u.title  !== undefined) track.title  = u.title;
+                const artistStr = Array.isArray(track.artist) ? track.artist.join(", ") : (track.artist || "");
+                updateStmt.run(track.title || "", artistStr, JSON.stringify(track), u.id);
               } catch (_) {}
             }
           }
@@ -2784,12 +2792,12 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       // Also patch the JSON manifest cache if it's loaded
       const library = getLibrary ? getLibrary() : null;
       if (Array.isArray(library)) {
-        const map = new Map(updates.map((u) => [u.id, u]));
+        const map = new Map(updates.map(u => [u.id, u]));
         for (const t of library) {
           const u = map.get(t.id);
           if (u) {
             if (u.artist !== undefined) t.artist = u.artist;
-            if (u.title !== undefined) t.title = u.title;
+            if (u.title  !== undefined) t.title  = u.title;
           }
         }
         if (saveLibrary) saveLibrary(library);
@@ -2802,9 +2810,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             const tracksForManifest =
               typeof module.exports.getLibraryForManifest === "function"
                 ? module.exports.getLibraryForManifest()
-                : getLibrary
-                  ? getLibrary()
-                  : null;
+                : (getLibrary ? getLibrary() : null);
             if (tracksForManifest) {
               ManifestIPC.rebuildManifest(tracksForManifest).catch((err) => {
                 console.warn(
@@ -2828,6 +2834,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       return { success: false, error: err.message };
     }
   });
+
 
   // ─── Cover Art: find sidecar cover art in the audio file's directory ──
   // Revolutionary: This handler was MISSING — the renderer called it via
@@ -3644,9 +3651,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   t.year = tags.year ? parseInt(tags.year, 10) || 0 : 0;
 
                 if (tags.coverArt) {
-                  const match = tags.coverArt.match(
-                    /^data:([^;]+);base64,(.+)$/,
-                  );
+                  const match = tags.coverArt.match(/^data:([^;]+);base64,(.+)$/);
                   if (match) {
                     const mime = match[1];
                     const buf = Buffer.from(match[2], "base64");
@@ -6483,8 +6488,7 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
       return { success: false, error: "Invalid track data" };
     }
 
-    const musicDir =
-      app.getPath("music") || path.join(app.getPath("userData"), "Downloads");
+    const musicDir = app.getPath("music") || path.join(app.getPath("userData"), "Downloads");
     const targetFolder = path.join(musicDir, "NovaTune Downloads");
 
     const onProgress = (prog) => {
@@ -6496,11 +6500,7 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
       } catch (_) {}
     };
 
-    const savedPath = await DownloadEngine.downloadAndTagTrack(
-      trackInfo,
-      targetFolder,
-      onProgress,
-    );
+    const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress);
 
     // ── Task 4.1: Instant Single-Track Hot-Reload into Library ────────
     let parsedTrack = null;
@@ -6517,31 +6517,21 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
         // trackInfo always takes priority — it's from the search card the user clicked
         // (Spotify/iTunes/Deezer/YTM rich metadata). meta has yt-dlp's YouTube tags
         // (video title as track name, uploader as artist) which are often wrong.
-        title:
-          trackInfo.trackName ||
-          meta?.title ||
-          path.basename(fileName, path.extname(fileName)),
-        artist:
-          trackInfo.artistName && trackInfo.artistName !== "Unknown Artist"
-            ? trackInfo.artistName
-            : meta?.artist || "Unknown Artist",
-        album:
-          trackInfo.albumName &&
-          trackInfo.albumName.trim() &&
-          trackInfo.albumName !== "Unknown Album"
-            ? trackInfo.albumName
-            : meta?.album || "",
+        title: trackInfo.trackName || meta?.title || path.basename(fileName, path.extname(fileName)),
+        artist: (trackInfo.artistName && trackInfo.artistName !== "Unknown Artist")
+          ? trackInfo.artistName
+          : (meta?.artist || "Unknown Artist"),
+        album: (trackInfo.albumName && trackInfo.albumName.trim() && trackInfo.albumName !== "Unknown Album")
+          ? trackInfo.albumName
+          : (meta?.album || ""),
         albumArtist: meta?.albumArtist || trackInfo.artistName || "",
-        genre:
-          trackInfo.genre && trackInfo.genre !== "Music"
-            ? trackInfo.genre
-            : meta?.genre || "",
+        genre: (trackInfo.genre && trackInfo.genre !== "Music")
+          ? trackInfo.genre
+          : (meta?.genre || ""),
         year: Number(trackInfo.releaseYear || meta?.year) || 0,
         trackNumber: Number(meta?.trackNumber) || 0,
         discNumber: Number(meta?.discNumber) || 0,
-        duration:
-          Number(meta?.duration) ||
-          (trackInfo.durationMs ? Math.round(trackInfo.durationMs / 1000) : 0),
+        duration: Number(meta?.duration) || (trackInfo.durationMs ? Math.round(trackInfo.durationMs / 1000) : 0),
         bitrate: Number(meta?.bitrate) || 320,
         sampleRate: Number(meta?.sampleRate) || 44100,
         channels: Number(meta?.channels) || 2,
@@ -6556,9 +6546,7 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
       // Add folder to scanFolders if not already there so it persists across full re-scans
       try {
         await withSettingsFile((settings) => {
-          const scanFolders = Array.isArray(settings.scanFolders)
-            ? settings.scanFolders
-            : [];
+          const scanFolders = Array.isArray(settings.scanFolders) ? settings.scanFolders : [];
           if (!scanFolders.includes(targetFolder)) {
             scanFolders.push(targetFolder);
             settings.scanFolders = scanFolders;
@@ -6588,35 +6576,24 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
             console.log("[IPC:download] Saved sidecar cover art:", sidecarPath);
           }
         } catch (imgErr) {
-          console.warn(
-            "[IPC:download] Could not save sidecar cover art:",
-            imgErr.message,
-          );
+          console.warn("[IPC:download] Could not save sidecar cover art:", imgErr.message);
         }
       }
 
       // Persist directly to SQLite database using partialSaveLibrary
       const currentLibrary = getLibrary();
-      const updatedLibrary = [
-        parsedTrack,
-        ...currentLibrary.filter((t) => t.id !== parsedTrack.id),
-      ];
+      const updatedLibrary = [parsedTrack, ...currentLibrary.filter((t) => t.id !== parsedTrack.id)];
       partialSaveLibrary(updatedLibrary, [parsedTrack], []);
 
       // Invalidate & rebuild binary manifest cache so download persists across app restarts
       if (ManifestIPC && typeof ManifestIPC.rebuildManifest === "function") {
         setImmediate(async () => {
           try {
-            const freshSettings = readJSON(SETTINGS_FILE, {
-              ...DEFAULT_SETTINGS,
-            });
+            const freshSettings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
             const fp = freshSettings._combinedFingerprint || "";
             await ManifestIPC.rebuildManifest(updatedLibrary, fp);
           } catch (mErr) {
-            console.warn(
-              "[IPC:download] Manifest rebuild failed:",
-              mErr.message,
-            );
+            console.warn("[IPC:download] Manifest rebuild failed:", mErr.message);
           }
         });
       }
@@ -6625,14 +6602,9 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
       BrowserWindow.getAllWindows().forEach((win) => {
         win.webContents.send("library:track-added", parsedTrack);
       });
-      console.log(
-        `[IPC] Successfully saved & broadcasted downloaded track: "${parsedTrack.title}" (${parsedTrack.id})`,
-      );
+      console.log(`[IPC] Successfully saved & broadcasted downloaded track: "${parsedTrack.title}" (${parsedTrack.id})`);
     } catch (trackParseErr) {
-      console.warn(
-        "[IPC] Failed to hot-append track to library:",
-        trackParseErr.message,
-      );
+      console.warn("[IPC] Failed to hot-append track to library:", trackParseErr.message);
     }
 
     return { success: true, filePath: savedPath, track: parsedTrack };

@@ -4331,6 +4331,7 @@ function _wireAddFolder() {
 
     let totalNew = 0;
     const allNewTracks = [];
+    const allRemovedIds = [];
     try {
       for (const folderPath of scanFolders) {
         const result = await window.novaAPI.invoke(
@@ -4339,6 +4340,9 @@ function _wireAddFolder() {
         );
         if (result && result.success) {
           totalNew += result.newTracks || 0;
+          if (Array.isArray(result.removedIds)) {
+            allRemovedIds.push(...result.removedIds);
+          }
           if (Array.isArray(result.addedTracks)) {
             allNewTracks.push(...result.addedTracks);
           }
@@ -4354,6 +4358,26 @@ function _wireAddFolder() {
     } finally {
       btn.classList.remove("spinning");
       btn.dataset.tooltip = "Quick refresh (new songs only)";
+    }
+
+    if (allRemovedIds.length > 0) {
+      _purgeRemovedTracks(allRemovedIds);
+      state.filteredTracks = [...state.tracks];
+      invalidateSectionCache();
+      buildSearchIndex();
+      if (state.activeNavSection === "home") {
+        renderHome();
+      } else if (state.activeNavSection === "albums") {
+        _reRenderPanel("albums", renderAlbums);
+      } else if (state.activeNavSection === "artists") {
+        _reRenderPanel("artists", renderArtists);
+      } else if (state.activeNavSection === "playlists") {
+        _reRenderPanel("playlists", renderPlaylists);
+      } else {
+        renderTracks(state.filteredTracks, "library");
+      }
+      _updateSidebarFolderInfo();
+      console.log(`[QuickRefresh] Removed ${allRemovedIds.length} track(s)`);
     }
 
     if (totalNew > 0 && allNewTracks.length > 0) {
