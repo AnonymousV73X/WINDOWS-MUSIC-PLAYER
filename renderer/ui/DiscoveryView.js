@@ -5,11 +5,14 @@
  */
 
 class DiscoveryView {
-  constructor(container, novaAPI, onPlayTrack, onCheckDuplicate) {
+  constructor(container, novaAPI, onPlayTrack, onCheckDuplicate, hooks = {}) {
     this.container = container;
     this.novaAPI = novaAPI;
     this.onPlayTrack = onPlayTrack;
     this.onCheckDuplicate = onCheckDuplicate;
+    this.hooks = hooks || {};
+    this._syncTimer = null;
+    this._lastPbSig = "";
     this.tracks = [];
     this.currentPreviewAudio = null;
     this.playingTrackId = null;
@@ -120,7 +123,75 @@ class DiscoveryView {
     }
   }
 
+  _getPlayback() {
+    try {
+      return this.hooks.getPlayback ? this.hooks.getPlayback() : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Songs already in the library show Play/Pause instead of the download CTA.
+  _applyLibraryMatches(tracks) {
+    if (typeof this.hooks.findLibraryTrack !== "function") return;
+    for (const t of tracks) {
+      const cur = this.downloadStates.get(t.id);
+      if (cur && cur.status && cur.status !== "idle") continue;
+      let lib = null;
+      try {
+        lib = this.hooks.findLibraryTrack(t);
+      } catch (_) {}
+      if (lib) {
+        this.downloadStates.set(t.id, {
+          status: "done",
+          percent: 100,
+          track: lib,
+          fromLibrary: true,
+        });
+      }
+    }
+  }
+
+  _onPlayClick(id) {
+    const state = this.downloadStates.get(id);
+    if (!state || state.status !== "done" || !state.track) return;
+    if (this.currentPreviewAudio) {
+      this.currentPreviewAudio.pause();
+      this.currentPreviewAudio = null;
+      this.playingTrackId = null;
+    }
+    const pb = this._getPlayback();
+    if (
+      pb &&
+      pb.trackId === state.track.id &&
+      typeof this.hooks.togglePlay === "function"
+    ) {
+      this.hooks.togglePlay();
+    } else if (typeof this.onPlayTrack === "function") {
+      this.onPlayTrack(state.track);
+    }
+    setTimeout(() => this._syncPlaybackButtons(true), 120);
+  }
+
+  _syncPlaybackButtons(force = false) {
+    if (!this.container.isConnected) {
+      clearInterval(this._syncTimer);
+      this._syncTimer = null;
+      return;
+    }
+    const pb = this._getPlayback();
+    const sig = pb ? `${pb.trackId}|${pb.isPlaying}` : "";
+    if (!force && sig === this._lastPbSig) return;
+    this._lastPbSig = sig;
+    for (const [id, st] of this.downloadStates) {
+      if (st.status === "done" && st.track) this._updateTrackDownloadUI(id, st);
+    }
+  }
+
   render() {
+    if (!this._syncTimer) {
+      this._syncTimer = setInterval(() => this._syncPlaybackButtons(), 400);
+    }
     this.container.innerHTML = `
       <div class="discovery-container" style="padding: 24px 32px 48px; box-sizing: border-box; color: var(--text-base); scrollbar-width: none; -ms-overflow-style: none;">
         <!-- Header & Search -->
@@ -239,6 +310,7 @@ class DiscoveryView {
   _renderResults(tracks) {
     const list = this.container.querySelector("#discovery-results");
     if (!list) return;
+    this._applyLibraryMatches(tracks);
 
     if (tracks.length === 0) {
       this._renderEmpty("No matching songs found.");
@@ -315,12 +387,16 @@ class DiscoveryView {
     }
 
     if (state.status === "done") {
+      const pb = this._getPlayback();
+      const isPlaying =
+        !!(pb && state.track && pb.trackId === state.track.id && pb.isPlaying);
+      const icon = isPlaying
+        ? `<svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`
+        : `<svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;"><polygon points="5 3 19 12 5 21" /></svg>`;
       return `
         <button class="action-play-downloaded-btn" data-id="${trackId}" style="background: none; border: none; padding: 4px 8px; cursor: pointer; display: flex; align-items: center; gap: 6px; color: var(--green); font-size: 12px; font-weight: 600; transition: transform 0.15s ease;">
-          <svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;">
-            <polygon points="5 3 19 12 5 21" />
-          </svg>
-          <span>Play</span>
+          ${icon}
+          <span>${isPlaying ? "Pause" : "Play"}</span>
         </button>
       `;
     }
@@ -375,18 +451,7 @@ class DiscoveryView {
           e.target.closest(".action-download-btn")
         )
           return;
-        const id = row.dataset.id;
-        const state = this.downloadStates.get(id);
-        if (state && state.status === "done" && state.track) {
-          if (this.currentPreviewAudio) {
-            this.currentPreviewAudio.pause();
-            this.currentPreviewAudio = null;
-            this.playingTrackId = null;
-          }
-          if (typeof this.onPlayTrack === "function") {
-            this.onPlayTrack(state.track);
-          }
-        }
+        this._onPlayClick(row.dataset.id);
       });
     });
 
@@ -396,18 +461,7 @@ class DiscoveryView {
       .forEach((btn) => {
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
-          const id = btn.dataset.id;
-          const state = this.downloadStates.get(id);
-          if (state && state.status === "done" && state.track) {
-            if (this.currentPreviewAudio) {
-              this.currentPreviewAudio.pause();
-              this.currentPreviewAudio = null;
-              this.playingTrackId = null;
-            }
-            if (typeof this.onPlayTrack === "function") {
-              this.onPlayTrack(state.track);
-            }
-          }
+          this._onPlayClick(btn.dataset.id);
         });
       });
   }
@@ -549,16 +603,7 @@ class DiscoveryView {
         if (playBtn) {
           playBtn.addEventListener("click", (e) => {
             e.stopPropagation();
-            if (state.track) {
-              if (this.currentPreviewAudio) {
-                this.currentPreviewAudio.pause();
-                this.currentPreviewAudio = null;
-                this.playingTrackId = null;
-              }
-              if (typeof this.onPlayTrack === "function") {
-                this.onPlayTrack(state.track);
-              }
-            }
+            this._onPlayClick(trackId);
           });
         }
       }
