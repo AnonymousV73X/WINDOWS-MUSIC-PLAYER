@@ -61,28 +61,74 @@ const TEMPS = path.join(ROOT, 'temps');
 
 /** Find an existing NovaTune.*.zip in the root dir */
 function findExistingZip() {
+  // Matches NovaTune.Golf.zip  OR  NovaTune.Golf-II.zip  OR  NovaTune.Golf-III.zip
   return fs.readdirSync(ROOT)
-    .filter(f => /^NovaTune\.\w+\.zip$/i.test(f))
+    .filter(f => /^NovaTune\.[A-Za-z]+(-[IVX]+)?\.zip$/i.test(f))
     .map(f => path.join(ROOT, f))[0] || null;
 }
 
-/** Extract the NATO name from a zip filename like NovaTune.Foxtrot.zip */
-function extractNatoName(zipPath) {
-  const base  = path.basename(zipPath, '.zip');           // NovaTune.Foxtrot
-  const parts = base.split('.');
-  return parts[1] || null;                                // Foxtrot
+/**
+ * Parse a zip filename into { name, cycle }.
+ *   NovaTune.Golf.zip      → { name: 'Golf',  cycle: 1 }
+ *   NovaTune.Golf-II.zip   → { name: 'Golf',  cycle: 2 }
+ *   NovaTune.Zulu-III.zip  → { name: 'Zulu',  cycle: 3 }
+ */
+function parseNatoToken(zipPath) {
+  const base  = path.basename(zipPath, '.zip');         // e.g. NovaTune.Golf-II
+  const token = base.split('.')[1] || '';               // e.g. Golf-II
+  const [name, suffix] = token.split('-');              // ['Golf', 'II'] or ['Golf', undefined]
+  const cycle = suffix ? fromRoman(suffix) : 1;
+  return { name, cycle };
 }
 
-/** Given the current NATO name, return the next one */
-function nextNatoName(current) {
-  if (!current) return NATO[0];
-  const idx = NATO.findIndex(n => n.toLowerCase() === current.toLowerCase());
-  if (idx === -1) return NATO[0];                         // unknown → restart
-  if (idx + 1 >= NATO.length) {
-    console.error('✖  Exhausted all NATO names (Zulu was the last)!');
-    process.exit(1);
+/** Build a zip filename token from { name, cycle } */
+function formatNatoToken({ name, cycle }) {
+  return cycle === 1 ? name : `${name}-${toRoman(cycle)}`;
+}
+
+/** Given the current NATO token, return the next one (cycles forever) */
+function nextNatoToken(current) {
+  if (!current) return { name: NATO[0], cycle: 1 };
+
+  const { name, cycle } = current;
+  const idx = NATO.findIndex(n => n.toLowerCase() === name.toLowerCase());
+
+  if (idx === -1) return { name: NATO[0], cycle: 1 };   // unknown → restart
+
+  if (idx + 1 < NATO.length) {
+    // Still letters left in this cycle
+    return { name: NATO[idx + 1], cycle };
+  } else {
+    // Finished Zulu — start next cycle: Alpha-II, Bravo-II, …
+    return { name: NATO[0], cycle: cycle + 1 };
   }
-  return NATO[idx + 1];
+}
+
+// ─── Roman numeral helpers (supports up to ~40 cycles, way more than enough) ──
+
+const ROMAN_MAP = [
+  [1000,'M'],[900,'CM'],[500,'D'],[400,'CD'],
+  [100,'C'], [90,'XC'], [50,'L'], [40,'XL'],
+  [10,'X'],  [9,'IX'],  [5,'V'],  [4,'IV'],  [1,'I'],
+];
+
+function toRoman(n) {
+  let result = '';
+  for (const [val, sym] of ROMAN_MAP) {
+    while (n >= val) { result += sym; n -= val; }
+  }
+  return result;
+}
+
+function fromRoman(s) {
+  const vals = { I:1, V:5, X:10, L:50, C:100, D:500, M:1000 };
+  let total = 0;
+  for (let i = 0; i < s.length; i++) {
+    const cur  = vals[s[i].toUpperCase()] || 0;
+    const next = vals[(s[i+1] || '').toUpperCase()] || 0;
+    total += cur < next ? -cur : cur;
+  }
+  return total || 1;
 }
 
 /** Walk a directory recursively, yielding absolute file paths */
@@ -225,36 +271,46 @@ function main() {
 
   // 2. Move any existing zip to temps/
   const existingZip = findExistingZip();
-  let currentNatoName = null;
+  let currentToken = null;
 
   if (existingZip) {
-    currentNatoName = extractNatoName(existingZip);
+    currentToken = parseNatoToken(existingZip);
     const destInTemps = path.join(TEMPS, path.basename(existingZip));
     fs.renameSync(existingZip, destInTemps);
     console.log(`  📦  Archived existing zip → temps/${path.basename(existingZip)}`);
   } else {
-    // Peek at temps/ to figure out the last used NATO name
+    // Peek at temps/ to figure out the last used NATO token
     const archived = fs.readdirSync(TEMPS)
-      .filter(f => /^NovaTune\.\w+\.zip$/i.test(f))
+      .filter(f => /^NovaTune\.[A-Za-z]+(-[IVX]+)?\.zip$/i.test(f))
       .sort((a, b) => {
-        const ai = NATO.findIndex(n => a.toLowerCase().includes(n.toLowerCase()));
-        const bi = NATO.findIndex(n => b.toLowerCase().includes(n.toLowerCase()));
+        const ta = parseNatoToken(path.join(TEMPS, a));
+        const tb = parseNatoToken(path.join(TEMPS, b));
+        // Sort by cycle first, then by NATO index within that cycle
+        if (ta.cycle !== tb.cycle) return ta.cycle - tb.cycle;
+        const ai = NATO.findIndex(n => n.toLowerCase() === ta.name.toLowerCase());
+        const bi = NATO.findIndex(n => n.toLowerCase() === tb.name.toLowerCase());
         return ai - bi;
       });
     if (archived.length > 0) {
-      currentNatoName = extractNatoName(archived[archived.length - 1]);
-      console.log(`  ℹ  No zip in root; last archived was: ${path.basename(archived[archived.length - 1])}`);
+      currentToken = parseNatoToken(path.join(TEMPS, archived[archived.length - 1]));
+      console.log(`  ℹ  No zip in root; last archived was: ${archived[archived.length - 1]}`);
     } else {
       console.log('  ℹ  No existing zip found — starting fresh from Alpha');
     }
   }
 
-  // 3. Determine next NATO name
-  const natoName = nextNatoName(currentNatoName);
-  const destZipName = `NovaTune.${natoName}.zip`;
+  // 3. Determine next NATO token
+  const nextToken   = nextNatoToken(currentToken);
+  const natoLabel   = formatNatoToken(nextToken);
+  const destZipName = `NovaTune.${natoLabel}.zip`;
   const destZip     = path.join(ROOT, destZipName);
 
-  console.log(`  🔤  Next release name: ${natoName}`);
+  // Human-friendly cycle description
+  const cycleDesc = nextToken.cycle === 1
+    ? ''
+    : `  (cycle ${toRoman(nextToken.cycle)} — wrapped past Zulu ${nextToken.cycle - 1} time${nextToken.cycle > 2 ? 's' : ''})`;
+
+  console.log(`  🔤  Next release name: ${natoLabel}${cycleDesc}`);
   console.log(`  📁  Output: ${destZipName}\n`);
 
   // 4. Collect files
