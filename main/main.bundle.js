@@ -37819,7 +37819,8 @@ var require_package = __commonJS({
         dev: "electron .",
         build: "npm run build:main && electron-builder --win --config electron.config.js",
         "build:portable": "npm run build:main && electron-builder --win portable",
-        test: "jest NovaTune.Tests/"
+        test: "jest NovaTune.Tests/",
+        zip: "node zip.js"
       },
       author: "NovaTune",
       license: "MIT",
@@ -39782,15 +39783,33 @@ var require_ipc = __commonJS({
           if (!track) return { success: true, removed: false };
           const filtered = library.filter((t) => t.id !== trackId);
           saveLibrary(filtered);
-          if (track.filePath && fs.existsSync(track.filePath)) {
+          try {
+            const st = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+            await ManifestIPC.rebuildManifest(filtered, st._combinedFingerprint || "");
+          } catch (mErr) {
+            console.warn("[library:remove-track] Manifest rebuild failed:", mErr.message);
             try {
-              await fs.promises.unlink(track.filePath);
-              console.log(`[library] Deleted file from storage: ${track.filePath}`);
-            } catch (e) {
-              console.warn(
-                `[library] Failed to delete file ${track.filePath} from storage:`,
-                e.message
-              );
+              ManifestIPC.deleteManifest();
+            } catch (_) {
+            }
+          }
+          if (track.filePath && fs.existsSync(track.filePath)) {
+            for (let i = 0; i < 6; i++) {
+              try {
+                await fs.promises.unlink(track.filePath);
+                console.log(`[library] Deleted file from storage: ${track.filePath}`);
+                break;
+              } catch (e) {
+                if (e.code === "ENOENT") break;
+                if (i === 5) {
+                  console.warn(
+                    `[library] Failed to delete file ${track.filePath} from storage:`,
+                    e.message
+                  );
+                } else {
+                  await new Promise((r) => setTimeout(r, 250 * (i + 1)));
+                }
+              }
             }
           }
           return { success: true, removed: true };
@@ -42657,11 +42676,18 @@ ${items}
         return { success: false, error: err.message };
       }
     });
-    ipcMain.handle("discovery:search", async (_event, query) => {
+    ipcMain.handle("discovery:search", async (event, query, searchId) => {
       try {
         if (!query || !query.trim()) return { success: true, results: [] };
-        const results = await DownloadEngine.searchITunes(query);
-        return { success: true, results };
+        let streamed = false;
+        const results = await DownloadEngine.searchITunes(query, 80, (r) => {
+          streamed = true;
+          try {
+            event.sender.send("discovery:search-update", { searchId, results: r });
+          } catch (_) {
+          }
+        });
+        return { success: true, results, streamed };
       } catch (err) {
         console.error("[IPC] discovery:search error:", err);
         return { success: false, error: err.message, results: [] };

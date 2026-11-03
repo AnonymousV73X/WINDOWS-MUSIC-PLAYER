@@ -19,6 +19,9 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
+const HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 24, keepAliveMsecs: 15000 });
+const UA_DESKTOP = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
 // ─── Pure-JS DES-ECB Decryption ───────────────────────────────────────────────
 const _DES_PC1_C = [57,49,41,33,25,17,9,1,58,50,42,34,26,18,10,2,59,51,43,35,27,19,11,3,60,52,44,36];
 const _DES_PC1_D = [63,55,47,39,31,23,15,7,62,54,46,38,30,22,14,6,61,53,45,37,29,21,13,5,28,20,12,4];
@@ -128,6 +131,7 @@ function fetchJson(url, timeoutMs = 8000) {
           Referer: "https://www.jiosaavn.com/",
         },
         timeout: timeoutMs,
+        agent: parsedUrl.protocol === "https:" ? HTTPS_AGENT : undefined,
       },
       (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
@@ -217,7 +221,8 @@ function callYtmEndpoint(body, timeoutMs = 8000) {
         "Origin": "https://music.youtube.com",
         "Referer": "https://music.youtube.com/"
       },
-      timeout: timeoutMs
+      timeout: timeoutMs,
+      agent: HTTPS_AGENT
     }, (res) => {
       let data = "";
       res.on("data", (c) => (data += c));
@@ -246,6 +251,7 @@ function scrapeWatchDuration(videoId, timeoutMs = 2500) {
           "Accept-Language": "en-US,en;q=0.9",
         },
         timeout: timeoutMs,
+        agent: HTTPS_AGENT,
       },
       (res) => {
         let d = "";
@@ -518,19 +524,6 @@ async function searchYouTubeMusic(query, limit = 40) {
 
   const slice = tracks.slice(0, limit);
 
-  // Background enrich tracks with durationMs === 0 (e.g. unreleased leaks/videos)
-  const zeroDurTracks = slice.filter((t) => (!t.durationMs || t.durationMs === 0) && t.videoId);
-  if (zeroDurTracks.length > 0) {
-    await Promise.all(
-      zeroDurTracks.map(async (t) => {
-        try {
-          const scraped = await scrapeWatchDuration(t.videoId, 2000);
-          if (scraped > 0) t.durationMs = scraped;
-        } catch (_) {}
-      })
-    );
-  }
-
   return slice;
 }
 
@@ -545,7 +538,8 @@ function searchJioSaavn(query, limit = 15) {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         Referer: "https://www.jiosaavn.com/"
       },
-      timeout: 8000
+      timeout: 8000,
+      agent: HTTPS_AGENT
     }, (res) => {
       let data = "";
       res.on("data", c => data += c);
@@ -680,48 +674,211 @@ async function resolveUrlMetadata(inputUrl) {
   return null;
 }
 
+// ─── Normalisation / Merge / Relevance ────────────────────────────────────────
+const _norm = (s) =>
+  (s || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+
+function _titleCore(title) {
+  return _norm(
+    (title || "")
+      .replace(/[\(\[]\s*(feat|ft|featuring|with|prod)\b[^\)\]]*[\)\]]/gi, "")
+      .replace(/\s[-–]\s*(feat|ft|featuring)\.?\s.*$/i, "")
+  ).replace(/\s/g, "");
+}
+
+const _FLAG_RE = /\b(remix|live|acoustic|instrumental|karaoke|cover|slowed|sped|reverb|nightcore|8d|demo|tribute|lofi|cappella)\b/g;
+function _flags(title, album) {
+  const found = new Set((_norm(title + " " + album).match(_FLAG_RE)) || []);
+  return [...found].sort().join(",");
+}
+
+function _artistTokens(name) {
+  return (name || "")
+    .replace(/\s-\s*topic$/i, "")
+    .split(/,|&|;|\/|\bfeat\.?\b|\bft\.?\b|\bx\b|\band\b/i)
+    .map(_norm).filter((x) => x && x !== "unknown artist");
+}
+
+function _dice(a, b) {
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+  const bg = new Map();
+  for (let i = 0; i < a.length - 1; i++) { const k = a.substr(i, 2); bg.set(k, (bg.get(k) || 0) + 1); }
+  let hit = 0;
+  for (let i = 0; i < b.length - 1; i++) {
+    const k = b.substr(i, 2); const c = bg.get(k) || 0;
+    if (c > 0) { bg.set(k, c - 1); hit++; }
+  }
+  return (2 * hit) / (a.length + b.length - 2);
+}
+
+function _info(t) {
+  return { core: _titleCore(t.trackName), flags: _flags(t.trackName || "", t.albumName || ""), artists: _artistTokens(t.artistName) };
+}
+
+function _sameSong(g, info, dur) {
+  if (g.info.flags !== info.flags) return false;
+  if (!g.info.core || !info.core) return false;
+  const ao = g.info.artists.some((x) => info.artists.some((y) => x === y || (x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x)))));
+  if (!ao) return false;
+  const gd = g.primary.durationMs || 0;
+  if (gd && dur && Math.abs(gd - dur) > 4000) return false;
+  if (g.info.core === info.core) return true;
+  return g.info.core.length >= 4 && _dice(g.info.core, info.core) >= 0.9;
+}
+
+const _PENALTIES = [
+  ["karaoke", /\b(karaoke|originally performed|tribute)\b/],
+  ["live", /\blive\b/],
+  ["cover", /\bcover\b/],
+  ["remix", /\bremix\b/],
+  ["instrumental", /\binstrumental\b/],
+  ["slowed", /\b(slowed|sped up|reverb|nightcore|8d)\b/],
+];
+
+function _score(t, qn, qWords, srcCount, idx) {
+  const title = _norm(t.trackName), artist = _norm(t.artistName), album = _norm(t.albumName);
+  const hayWords = (title + " " + artist + " " + album).split(" ");
+  let s = 0;
+  if (title && title === qn) s += 50;
+  else if (title.length >= 3 && qn.includes(title)) s += 30;
+  else if (qn && title.includes(qn)) s += 28;
+  if (qWords.length) {
+    let hit = 0;
+    for (const w of qWords) if (hayWords.some((h) => h === w || (w.length >= 3 && h.startsWith(w)))) hit++;
+    s += 40 * (hit / qWords.length);
+  }
+  if (qn === `${artist} ${title}` || qn === `${title} ${artist}`) s += 20;
+  if (artist.split(" ").some((w) => w.length > 2 && qWords.includes(w))) s += 10;
+
+  if (t.source === "ytmusic" && t.albumName) s += 6;
+  if (/\bofficial (audio|music video|video)\b/.test(title) || /\stopic$/.test(artist)) s += 5;
+  if (t.source === "itunes" || t.source === "deezer") s += 4;
+  s += Math.min(srcCount - 1, 2) * 4;
+
+  const tx = title + " " + album;
+  for (const [word, re] of _PENALTIES) {
+    if (re.test(tx) && !(word === "karaoke" ? /\b(karaoke|tribute)\b/.test(qn) : re.test(qn))) s -= 30;
+  }
+
+  const d = t.durationMs || 0;
+  if (d > 0) {
+    if (d >= 60000 && d <= 600000) s += 3;
+    else if (d > 900000) s -= 8;
+  }
+  return s - idx * 0.05;
+}
+
+function rankAndMerge(tracks, query) {
+  const groups = [];
+  for (const t of tracks) {
+    if (!t || !_norm(t.trackName)) continue;
+    const info = _info(t);
+    const g = groups.find((x) => _sameSong(x, info, t.durationMs || 0));
+    if (!g) { groups.push({ primary: t, info, sources: new Set([t.source]) }); continue; }
+    g.sources.add(t.source);
+    if (!g.primary.durationMs && t.durationMs) g.primary.durationMs = t.durationMs;
+    if (!g.primary.videoId && t.videoId) g.primary.videoId = t.videoId;
+  }
+  const qn = _norm(query);
+  const qWords = qn.split(" ").filter(Boolean);
+  return groups
+    .map((g, i) => ({ t: g.primary, sc: _score(g.primary, qn, qWords, g.sources.size, i) }))
+    .sort((a, b) => b.sc - a.sc)
+    .map((x) => x.t);
+}
+
 // ─── Main Universal Search Aggregator ─────────────────────────────────────────
-async function searchITunes(query, limit = 80) {
+const SEARCH_CACHE = new Map();
+const SEARCH_CACHE_TTL = 7 * 60 * 1000;
+const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function searchITunes(query, limit = 80, onUpdate) {
   let effectiveQuery = query.trim();
   if (effectiveQuery.startsWith("http://") || effectiveQuery.startsWith("https://")) {
     const resolvedTitle = await resolveUrlMetadata(effectiveQuery);
     if (resolvedTitle) effectiveQuery = resolvedTitle;
   }
 
-  // Execute providers: YouTube Music gets primary high priority (35 items), Saavn, iTunes & Deezer get secondary
-  const [ytmResults, saavnResults, itunesResults, deezerResults] = await Promise.all([
-    searchYouTubeMusic(effectiveQuery, 40),
-    searchJioSaavn(effectiveQuery, 15),
-    searchITunesInternal(effectiveQuery, 20),
-    searchDeezerInternal(effectiveQuery, 15),
-  ]);
+  const key = effectiveQuery.toLowerCase();
+  const hit = SEARCH_CACHE.get(key);
+  if (hit && Date.now() - hit.t < SEARCH_CACHE_TTL) return hit.results.slice(0, limit);
 
-  const results = [];
-  const seenSignatures = new Set();
+  const buckets = { ytm: [], itunes: [], deezer: [], saavn: [] };
+  const scraped = new Map();
+  let done = false;
 
-  const addTrack = (track) => {
-    if (!track) return;
-    const cleanTitle = (track.trackName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    const cleanArtist = (track.artistName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    const sig = `${cleanTitle}__${cleanArtist}`;
-    if (!seenSignatures.has(sig) && cleanTitle.length > 0) {
-      seenSignatures.add(sig);
-      results.push(track);
+  const build = () => {
+    const others = [];
+    const maxLen = Math.max(buckets.itunes.length, buckets.deezer.length, buckets.saavn.length);
+    for (let i = 0; i < maxLen; i++) {
+      if (buckets.itunes[i]) others.push(buckets.itunes[i]);
+      if (buckets.deezer[i]) others.push(buckets.deezer[i]);
+      if (buckets.saavn[i]) others.push(buckets.saavn[i]);
     }
+    const ordered = [...buckets.ytm, ...others];
+    for (const t of ordered) {
+      if (t.videoId && !t.durationMs && scraped.has(t.videoId)) t.durationMs = scraped.get(t.videoId);
+    }
+    return rankAndMerge(ordered, effectiveQuery).slice(0, limit);
   };
 
-  // Give top priority to YouTube Music hits first (so rare/leaked/unreleased songs are immediately front and center)
-  for (const t of ytmResults) addTrack(t);
+  const emit = () => {
+    const r = build();
+    if (done) {
+      SEARCH_CACHE.set(key, { t: Date.now(), results: r });
+      if (SEARCH_CACHE.size > 60) SEARCH_CACHE.delete(SEARCH_CACHE.keys().next().value);
+    }
+    if (onUpdate) { try { onUpdate(r); } catch (_) {} }
+    return r;
+  };
 
-  // Then add other providers for variety
-  const maxLen = Math.max(saavnResults.length, itunesResults.length, deezerResults.length);
-  for (let i = 0; i < maxLen; i++) {
-    if (itunesResults[i]) addTrack(itunesResults[i]);
-    if (deezerResults[i]) addTrack(deezerResults[i]);
-    if (saavnResults[i]) addTrack(saavnResults[i]);
+  const run = (fn, name) =>
+    fn().catch(() => []).then((res) => {
+      buckets[name] = Array.isArray(res) ? res : [];
+      if (buckets[name].length) emit();
+    });
+
+  const all = Promise.all([
+    run(() => searchYouTubeMusic(effectiveQuery, 40), "ytm"),
+    run(() => searchJioSaavn(effectiveQuery, 15), "saavn"),
+    run(() => searchITunesInternal(effectiveQuery, 20), "itunes"),
+    run(() => searchDeezerInternal(effectiveQuery, 15), "deezer"),
+  ]);
+  const hasAny = () => Object.values(buckets).some((b) => b.length);
+
+  await Promise.race([all, _sleep(3000)]);
+  if (!hasAny()) await Promise.race([all, _sleep(5000)]);
+
+  done = true;
+  const final = emit();
+
+  // Fill missing durations afterwards (non-blocking)
+  const need = final.filter((t) => t.videoId && !t.durationMs).slice(0, 24);
+  if (need.length) {
+    (async () => {
+      let timer = null;
+      const queue = [...need];
+      const worker = async () => {
+        while (queue.length) {
+          const t = queue.shift();
+          try {
+            const ms = await scrapeWatchDuration(t.videoId, 2500);
+            if (ms > 0) {
+              scraped.set(t.videoId, ms);
+              if (!timer) timer = setTimeout(() => { timer = null; emit(); }, 400);
+            }
+          } catch (_) {}
+        }
+      };
+      await Promise.all(Array.from({ length: 6 }, worker));
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (scraped.size) emit();
+    })();
   }
 
-  return results.slice(0, limit);
+  return final;
 }
 
 // ─── Stream Resolution & Match Scoring ────────────────────────────────────────
@@ -889,7 +1046,7 @@ function downloadFileWithProgress(streamUrl, destPath, onProgress) {
 // ─── Download & Store Orchestration ───────────────────────────────────────────
 function getYtDlpPath() {
   // 1. Packaged app: electron-builder puts extraResources next to the exe
-  //    at <install>/Resources/bin/yt-dlp.exe (process.resourcesPath)
+  //    at <install>/resources/bin/yt-dlp.exe (process.resourcesPath)
   if (process.resourcesPath) {
     const resourcesBin = path.join(process.resourcesPath, "bin", "yt-dlp.exe");
     if (fs.existsSync(resourcesBin)) return resourcesBin;
@@ -900,7 +1057,7 @@ function getYtDlpPath() {
   const devBin = path.join(__dirname, "../bin/yt-dlp.exe");
   if (fs.existsSync(devBin)) return devBin;
 
-  // 3. User-data fallback (auto-downloaded at runtime)
+  // 3. User-data fallback (auto-downloaded at runtime if missing from both)
   try {
     const { app } = require("electron");
     if (app) {
@@ -909,20 +1066,140 @@ function getYtDlpPath() {
     }
   } catch (_) {}
 
-  // 4. Last resort: hope yt-dlp is on PATH
+  // 4. PATH lookup
   return "yt-dlp";
 }
 
-function downloadWithYtDlp(urlOrQuery, destBase, onProgress) {
+/**
+ * Downloads yt-dlp binary from GitHub release if not found locally.
+ * Guarantees that any released app has a fully functioning engine even on clean machines.
+ */
+function downloadYtDlpBinary(targetPath, onProgress) {
   return new Promise((resolve, reject) => {
-    const ytDlpBinary = getYtDlpPath();
+    const url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
+
+    function fetchWithRedirects(currentUrl, hops = 0) {
+      if (hops > 5) return reject(new Error("Too many redirects downloading yt-dlp"));
+      const parsed = new URL(currentUrl);
+      const client = parsed.protocol === "https:" ? https : http;
+
+      const req = client.get(currentUrl, {
+        headers: { "User-Agent": "Mozilla/5.0 NovaTune Downloader" }
+      }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          const nextUrl = new URL(res.headers.location, currentUrl).href;
+          return fetchWithRedirects(nextUrl, hops + 1);
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`Failed to download yt-dlp: HTTP ${res.statusCode}`));
+        }
+
+        const totalBytes = parseInt(res.headers["content-length"] || "0", 10);
+        let downloaded = 0;
+        const dir = path.dirname(targetPath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+        const tmpFile = `${targetPath}.tmp`;
+        const fileStream = fs.createWriteStream(tmpFile);
+
+        res.on("data", (chunk) => {
+          downloaded += chunk.length;
+          if (totalBytes > 0 && onProgress) {
+            const pct = Math.round((downloaded / totalBytes) * 100);
+            onProgress({ percent: pct, downloaded, total: totalBytes });
+          }
+        });
+
+        res.pipe(fileStream);
+
+        fileStream.on("finish", () => {
+          fileStream.close(() => {
+            try {
+              if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+              fs.renameSync(tmpFile, targetPath);
+              resolve(targetPath);
+            } catch (err) { reject(err); }
+          });
+        });
+
+        fileStream.on("error", (err) => {
+          try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (_) {}
+          reject(err);
+        });
+      });
+
+      req.on("error", reject);
+      req.setTimeout(60000, () => {
+        req.destroy();
+        reject(new Error("yt-dlp download timed out"));
+      });
+    }
+
+    fetchWithRedirects(url);
+  });
+}
+
+/**
+ * Ensures yt-dlp.exe exists and is executable.
+ * If completely missing from resources and local bin, downloads it to userData/bin/yt-dlp.exe.
+ */
+async function ensureYtDlpAvailable(onProgress) {
+  const currentPath = getYtDlpPath();
+  if (currentPath !== "yt-dlp" && fs.existsSync(currentPath)) {
+    return currentPath;
+  }
+
+  // If "yt-dlp" is on system PATH, verify it works
+  if (currentPath === "yt-dlp") {
+    try {
+      const { execSync } = require("child_process");
+      execSync("yt-dlp --version", { stdio: "ignore", windowsHide: true });
+      return "yt-dlp";
+    } catch (_) {}
+  }
+
+  // Not found anywhere! Automatically download to userData/bin/yt-dlp.exe
+  let targetPath = null;
+  try {
+    const { app } = require("electron");
+    if (app) {
+      targetPath = path.join(app.getPath("userData"), "bin", "yt-dlp.exe");
+    }
+  } catch (_) {}
+
+  if (!targetPath) {
+    targetPath = path.join(__dirname, "../bin/yt-dlp.exe");
+  }
+
+  if (onProgress) {
+    onProgress({ status: "installing", percent: 0, message: "Setting up downloader components (one-time)…" });
+  }
+
+  console.log("[DownloadEngine] yt-dlp binary missing! Auto-installing to:", targetPath);
+  await downloadYtDlpBinary(targetPath, (prog) => {
+    if (onProgress) {
+      onProgress({
+        status: "installing",
+        percent: Math.round(prog.percent * 0.9),
+        message: `Setting up downloader components… ${prog.percent}%`
+      });
+    }
+  });
+
+  return targetPath;
+}
+
+async function downloadWithYtDlp(urlOrQuery, destBase, onProgress) {
+  const ytDlpBinary = await ensureYtDlpAvailable(onProgress);
+
+  return new Promise((resolve, reject) => {
     const args = [
       urlOrQuery,
       "-x",
       "--audio-format", "mp3",
       "--audio-quality", "0",
-      "--embed-thumbnail",
       "--add-metadata",
+      "--concurrent-fragments", "4",
       "-o", `${destBase}.%(ext)s`,
       "--no-playlist",
       "--newline"
@@ -930,6 +1207,8 @@ function downloadWithYtDlp(urlOrQuery, destBase, onProgress) {
 
     let finalFile = null;
     let proc = null;
+    let errorOutput = "";
+
     try {
       proc = spawn(ytDlpBinary, args, { windowsHide: true });
     } catch (err) {
@@ -952,7 +1231,9 @@ function downloadWithYtDlp(urlOrQuery, destBase, onProgress) {
       }
     });
 
-    proc.stderr.on("data", () => {});
+    proc.stderr.on("data", (data) => {
+      errorOutput += data.toString();
+    });
 
     proc.on("close", (code) => {
       if (code === 0) {
@@ -966,49 +1247,81 @@ function downloadWithYtDlp(urlOrQuery, destBase, onProgress) {
         if (matched) return resolve(path.join(dir, matched));
         resolve(expectedMp3);
       } else {
-        reject(new Error(`yt-dlp process exited with code ${code}`));
+        const cleanErr = errorOutput.trim() || `Process exited with code ${code}`;
+        reject(new Error(`Download failed: ${cleanErr}`));
       }
     });
 
-    proc.on("error", reject);
+    proc.on("error", (err) => {
+      reject(new Error(`Failed to launch downloader: ${err.message}`));
+    });
   });
 }
 
+function fetchArtworkBuffer(url, timeoutMs = 6000, hops = 0) {
+  return new Promise((resolve) => {
+    if (!url || hops > 3) return resolve(null);
+    try {
+      const u = new URL(url);
+      const isHttps = u.protocol === "https:";
+      const req = (isHttps ? https : http).get(
+        url,
+        { headers: { "User-Agent": UA_DESKTOP, Accept: "image/jpeg,image/png,image/*" }, agent: isHttps ? HTTPS_AGENT : undefined, timeout: timeoutMs },
+        (res) => {
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            res.resume();
+            return resolve(fetchArtworkBuffer(new URL(res.headers.location, url).href, timeoutMs, hops + 1));
+          }
+          if (res.statusCode !== 200) { res.resume(); return resolve(null); }
+          const chunks = [];
+          res.on("data", (c) => chunks.push(c));
+          res.on("end", () => { const b = Buffer.concat(chunks); resolve(b.length > 1000 ? b : null); });
+          res.on("error", () => resolve(null));
+        }
+      );
+      req.on("error", () => resolve(null));
+      req.on("timeout", () => { req.destroy(); resolve(null); });
+    } catch (_) { resolve(null); }
+  });
+}
+
+function _artImage(buf) {
+  if (!buf) return null;
+  let mime = null;
+  if (buf[0] === 0xff && buf[1] === 0xd8) mime = "image/jpeg";
+  else if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) mime = "image/png";
+  return mime ? { mime, type: { id: 3, name: "front cover" }, description: "Cover", imageBuffer: buf } : null;
+}
+
 // ─── Post-download metadata injection ─────────────────────────────────────────
-// After yt-dlp embeds YouTube metadata (often wrong: uploader name as artist,
-// video title as track name), overwrite with the rich trackInfo the user clicked.
-function injectTrackInfoTags(filePath, trackInfo) {
+function injectTrackInfoTags(filePath, trackInfo, artBuf) {
   try {
-    if (!filePath.endsWith(".mp3")) return; // Only ID3 on MP3s
+    if (!filePath.endsWith(".mp3")) return;
     const cleanTags = {};
 
-    // Title: trackInfo always wins — yt-dlp uses the YouTube video title
     if (trackInfo.trackName && trackInfo.trackName.trim())
       cleanTags.title = trackInfo.trackName.trim();
 
-    // Artist: trackInfo always wins — yt-dlp uses the uploader channel name
     if (trackInfo.artistName && trackInfo.artistName !== "Unknown Artist" && trackInfo.artistName.trim())
       cleanTags.artist = trackInfo.artistName.trim();
 
-    // Album artist: same as artist if not separately specified
     if (cleanTags.artist)
       cleanTags.performerInfo = cleanTags.artist;
 
-    // Album: only if we have a real name (not empty/unknown)
     if (trackInfo.albumName && trackInfo.albumName.trim() && trackInfo.albumName !== "Unknown Album")
       cleanTags.album = trackInfo.albumName.trim();
 
-    // Year: only if plausible
     const yr = Number(trackInfo.releaseYear);
     if (yr > 1900 && yr <= new Date().getFullYear() + 1)
       cleanTags.year = String(yr);
 
-    // Genre: skip the generic "Music" placeholder
     if (trackInfo.genre && trackInfo.genre !== "Music" && trackInfo.genre.trim())
       cleanTags.genre = trackInfo.genre.trim();
 
+    const img = _artImage(artBuf);
+    if (img) cleanTags.image = img;
+
     if (Object.keys(cleanTags).length > 0) {
-      // NodeID3.update() preserves existing APIC (embedded thumbnail) frames
       const result = NodeID3.update(cleanTags, filePath);
       if (result === true) {
         console.log(`[DownloadEngine] Tags injected for "${trackInfo.trackName}" →`, Object.keys(cleanTags).join(", "));
@@ -1022,7 +1335,7 @@ function injectTrackInfoTags(filePath, trackInfo) {
 }
 
 async function downloadAndTagTrack(trackInfo, targetFolder, onProgress) {
-  onProgress({ status: "resolving", percent: 5, message: "Resolving audio stream…" });
+  onProgress({ status: "resolving", percent: 5, message: "Resolving audio with yt-dlp…" });
 
   const sanitize = (name) => name.replace(/[<>:"/\\|?*]/g, "").trim();
   const safeArtist = sanitize(trackInfo.artistName || "Unknown Artist");
@@ -1031,55 +1344,30 @@ async function downloadAndTagTrack(trackInfo, targetFolder, onProgress) {
 
   if (!fs.existsSync(targetFolder)) fs.mkdirSync(targetFolder, { recursive: true });
 
-  // Priority 1: Direct YouTube Music download if videoId is known
+  const artPromise = fetchArtworkBuffer(trackInfo.artworkUrl);
+
+  // Strategy 1: Direct YouTube video download if videoId is present
   const videoId = trackInfo.videoId || (trackInfo.id && trackInfo.id.startsWith("ytm_") ? trackInfo.id.replace("ytm_", "") : null);
   if (videoId && videoId.length >= 5) {
     try {
-      onProgress({ status: "downloading", percent: 10, message: "Downloading high quality audio via yt-dlp…" });
+      onProgress({ status: "downloading", percent: 10, message: "Downloading audio via yt-dlp…" });
       const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
       const downloadedPath = await downloadWithYtDlp(targetUrl, destBase, onProgress);
-      // Overwrite yt-dlp's auto-tags with rich metadata from the search card
-      injectTrackInfoTags(downloadedPath, trackInfo);
+      injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
       onProgress({ status: "done", percent: 100, message: "Done!", filePath: downloadedPath });
       return downloadedPath;
     } catch (ytdlpErr) {
-      console.warn("[DownloadEngine] Direct yt-dlp videoId failed, falling back:", ytdlpErr.message);
+      console.warn("[DownloadEngine] Direct videoId failed, trying ytsearch1 with yt-dlp:", ytdlpErr.message);
     }
   }
 
-  // Priority 2: High accuracy yt-dlp query search (for Spotify, iTunes, Deezer items)
-  try {
-    const searchQuery = `ytsearch1:${trackInfo.artistName} - ${trackInfo.trackName} official audio`;
-    onProgress({ status: "downloading", percent: 10, message: "Searching and downloading via yt-dlp…" });
-    const downloadedPath = await downloadWithYtDlp(searchQuery, destBase, onProgress);
-    // Overwrite yt-dlp's auto-tags with rich metadata from the search card
-    injectTrackInfoTags(downloadedPath, trackInfo);
-    onProgress({ status: "done", percent: 100, message: "Done!", filePath: downloadedPath });
-    return downloadedPath;
-  } catch (ytdlpSearchErr) {
-    console.warn("[DownloadEngine] ytsearch1 failed, checking Saavn fallback:", ytdlpSearchErr.message);
-  }
-
-  // Priority 3: JioSaavn fallback (strictly checked with scoreMatch) — M4A, no ID3 injection needed
-  const resolved = await resolveSaavnStream(trackInfo.trackName, trackInfo.artistName);
-  if (resolved && resolved.streamUrl) {
-    const destPath = `${destBase}.m4a`;
-    onProgress({ status: "downloading", percent: 15, message: `Downloading (${resolved.quality})…` });
-    await downloadFileWithProgress(resolved.streamUrl, destPath, (prog) => {
-      const scaledPercent = 15 + Math.round((prog.percent * 80) / 100);
-      onProgress({
-        status: "downloading",
-        percent: scaledPercent,
-        downloadedBytes: prog.downloadedBytes,
-        totalBytes: prog.totalBytes,
-        message: `Downloading… ${prog.percent}%`,
-      });
-    });
-    onProgress({ status: "done", percent: 100, message: "Done!", filePath: destPath });
-    return destPath;
-  }
-
-  throw new Error("Could not find an authentic audio stream for this track.");
+  // Strategy 2: Accurate search query with yt-dlp
+  const searchQuery = `ytsearch1:${trackInfo.artistName} - ${trackInfo.trackName} audio`;
+  onProgress({ status: "downloading", percent: 10, message: "Searching and downloading via yt-dlp…" });
+  const downloadedPath = await downloadWithYtDlp(searchQuery, destBase, onProgress);
+  injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
+  onProgress({ status: "done", percent: 100, message: "Done!", filePath: downloadedPath });
+  return downloadedPath;
 }
 
-module.exports = { searchITunes, resolveSaavnStream, downloadAndTagTrack, getYtDlpPath };
+module.exports = { searchITunes, downloadAndTagTrack, getYtDlpPath, ensureYtDlpAvailable };
