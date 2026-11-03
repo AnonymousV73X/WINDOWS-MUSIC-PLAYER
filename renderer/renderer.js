@@ -15850,33 +15850,29 @@ function _createFloatingNavCard() {
     },
     {
       id: "library",
-      label: "Library",
-      icon: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
-    },
-    {
-      id: "discovery",
-      label: "Music Downloader",
-      icon: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+      label: "Music library",
+      icon: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
     },
     {
       id: "albums",
       label: "Albums",
-      icon: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/>',
+      icon: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="12" r="3"/>',
     },
     {
       id: "artists",
       label: "Artists",
-      icon: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+      icon: '<path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/>',
+    },
+    {
+      id: "queue",
+      label: "Play queue",
+      sw: "1.8",
+      icon: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="4" x2="21" y2="4"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="15" x2="21" y2="15"/><line x1="14" y1="20" x2="18" y2="20"/>',
     },
     {
       id: "playlists",
       label: "Playlists",
-      icon: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
-    },
-    {
-      id: "queue",
-      label: "Queue",
-      icon: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="4" x2="21" y2="4"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="15" x2="21" y2="15"/><line x1="14" y1="20" x2="18" y2="20"/>',
+      icon: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/>',
     },
     {
       id: "settings",
@@ -15904,7 +15900,7 @@ function _createFloatingNavCard() {
   // Having two X buttons was redundant and confusing.
   sections.forEach((s) => {
     html += `<button class="fn-btn${s.id === activeSection ? " active" : ""}" data-section="${s.id}" data-label="${s.label}" aria-label="${s.label}">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${s.icon}</svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${s.sw || 2}" stroke-linecap="round" stroke-linejoin="round">${s.icon}</svg>
     </button>`;
   });
   html += `<div class="fn-divider"></div>`;
@@ -15914,6 +15910,9 @@ function _createFloatingNavCard() {
     </button>
     <input type="text" class="fn-search-input" id="fn-search-input" placeholder="Search…" spellcheck="false">
   </div>`;
+  html += `<button class="fn-btn" id="fn-download-btn" data-section="discovery" data-label="Music Downloader" aria-label="Music Downloader">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12.0001L12 16.0001M12 16.0001L16 12.0001M12 16.0001V6.80006C12 5.40935 12 4.714 11.4495 3.93546C11.0837 3.41818 10.0306 2.77974 9.40278 2.69468C8.45789 2.56666 8.09907 2.75384 7.38143 3.1282C4.18333 4.79649 2 8.14331 2 12.0001C2 17.5229 6.47715 22.0001 12 22.0001C17.5228 22.0001 22 17.5229 22 12.0001C22 8.29865 19.989 5.06693 17 3.33788"/></svg>
+  </button>`;
   html += `<button class="fn-btn fn-help-btn" id="fn-help-btn" data-section="help" data-label="Help" aria-label="Help">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
   </button>`;
