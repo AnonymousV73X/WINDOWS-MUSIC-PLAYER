@@ -907,7 +907,7 @@ async function ensureYtDlpAvailable(onProgress) {
   return targetPath;
 }
 
-async function downloadWithYtDlp(urlOrQuery, destBase, onProgress, trackId) {
+async function downloadWithYtDlp(urlOrQuery, destBase, onProgress, trackId, ctx) {
   const ytDlpBinary = await ensureYtDlpAvailable(onProgress);
 
   return new Promise((resolve, reject) => {
@@ -927,7 +927,7 @@ async function downloadWithYtDlp(urlOrQuery, destBase, onProgress, trackId) {
     let proc = null;
     let errorOutput = "";
 
-    if (trackId && _cancelled.has(trackId)) {
+    if (ctx && ctx.cancelled) {
       const e = new Error("Download cancelled");
       e.cancelled = true;
       return reject(e);
@@ -935,7 +935,7 @@ async function downloadWithYtDlp(urlOrQuery, destBase, onProgress, trackId) {
 
     try {
       proc = spawn(ytDlpBinary, args, { windowsHide: true });
-      if (trackId) registerDownload(trackId, proc, destBase);
+      if (ctx) { ctx.proc = proc; ctx.destBase = destBase; }
     } catch (err) {
       return reject(err);
     }
@@ -961,7 +961,7 @@ async function downloadWithYtDlp(urlOrQuery, destBase, onProgress, trackId) {
     });
 
     proc.on("close", (code) => {
-      if (trackId && _cancelled.has(trackId)) {
+      if (ctx && ctx.cancelled) {
         setTimeout(() => _cleanupPartials(destBase), 600);
         const e = new Error("Download cancelled");
         e.cancelled = true;
@@ -1066,15 +1066,16 @@ function injectTrackInfoTags(filePath, trackInfo, artBuf) {
 }
 
 async function downloadAndTagTrack(trackInfo, targetFolder, onProgress, trackId) {
-  if (trackId) _cancelled.delete(trackId);
+  const ctx = { cancelled: false, proc: null, destBase: null };
+  if (trackId) _downloads.set(trackId, ctx);
   try {
-    return await _downloadAndTagTrackInner(trackInfo, targetFolder, onProgress, trackId);
+    return await _downloadAndTagTrackInner(trackInfo, targetFolder, onProgress, trackId, ctx);
   } finally {
-    if (trackId) _cancelled.delete(trackId);
+    if (trackId && _downloads.get(trackId) === ctx) _downloads.delete(trackId);
   }
 }
 
-async function _downloadAndTagTrackInner(trackInfo, targetFolder, onProgress, trackId) {
+async function _downloadAndTagTrackInner(trackInfo, targetFolder, onProgress, trackId, ctx) {
   onProgress({ status: "resolving", percent: 5, message: "Resolving audio with yt-dlp…" });
 
   const sanitize = (name) => name.replace(/[<>:"/\\|?*]/g, "").trim();
@@ -1092,12 +1093,12 @@ async function _downloadAndTagTrackInner(trackInfo, targetFolder, onProgress, tr
     try {
       onProgress({ status: "downloading", percent: 10, message: "Downloading audio via yt-dlp…" });
       const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      const downloadedPath = await downloadWithYtDlp(targetUrl, destBase, onProgress, trackId);
+      const downloadedPath = await downloadWithYtDlp(targetUrl, destBase, onProgress, trackId, ctx);
       injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
       onProgress({ status: "done", percent: 100, message: "Done!", filePath: downloadedPath });
       return downloadedPath;
     } catch (ytdlpErr) {
-      if (ytdlpErr.cancelled || (trackId && _cancelled.has(trackId))) throw ytdlpErr;
+      if (ytdlpErr.cancelled || ctx.cancelled) throw ytdlpErr;
       console.warn("[DownloadEngine] Direct videoId failed, trying ytsearch1 with yt-dlp:", ytdlpErr.message);
     }
   }
@@ -1105,21 +1106,14 @@ async function _downloadAndTagTrackInner(trackInfo, targetFolder, onProgress, tr
   // Strategy 2: Accurate search query with yt-dlp
   const searchQuery = `ytsearch1:${trackInfo.artistName} - ${trackInfo.trackName} audio`;
   onProgress({ status: "downloading", percent: 10, message: "Searching and downloading via yt-dlp…" });
-  const downloadedPath = await downloadWithYtDlp(searchQuery, destBase, onProgress, trackId);
+  const downloadedPath = await downloadWithYtDlp(searchQuery, destBase, onProgress, trackId, ctx);
   injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
   onProgress({ status: "done", percent: 100, message: "Done!", filePath: downloadedPath });
   return downloadedPath;
 }
 
-// ─── Active download registry (trackId → spawned yt-dlp process) ──────────────
-const _activeDownloads = new Map(); // trackId → { proc, destBase }
-const _cancelled = new Set();
-
-function registerDownload(trackId, proc, destBase) {
-  _activeDownloads.set(trackId, { proc, destBase });
-  proc.on("close", () => _activeDownloads.delete(trackId));
-  proc.on("error", () => _activeDownloads.delete(trackId));
-}
+// ─── Active download registry (trackId → per-attempt context) ─────────────────
+const _downloads = new Map(); // trackId → { cancelled, proc, destBase }
 
 function _cleanupPartials(destBase) {
   try {
@@ -1134,22 +1128,23 @@ function _cleanupPartials(destBase) {
 }
 
 function cancelDownload(trackId) {
-  _cancelled.add(trackId);
-  const entry = _activeDownloads.get(trackId);
-  if (!entry) return true; // flagged: will abort before/at spawn
-  const { proc, destBase } = entry;
-  try {
-    if (process.platform === "win32" && proc.pid) {
-      // Kill yt-dlp AND its ffmpeg children
-      spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-    } else {
-      proc.kill("SIGKILL");
+  const ctx = _downloads.get(trackId);
+  if (!ctx) return false;
+  ctx.cancelled = true;
+  const { proc, destBase } = ctx;
+  if (proc) {
+    try {
+      if (process.platform === "win32" && proc.pid) {
+        // Kill yt-dlp AND its ffmpeg children
+        spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      } else {
+        proc.kill("SIGKILL");
+      }
+    } catch (_) {
+      try { proc.kill("SIGKILL"); } catch (__) {}
     }
-  } catch (_) {
-    try { proc.kill("SIGKILL"); } catch (__) {}
+    if (destBase) setTimeout(() => _cleanupPartials(destBase), 800);
   }
-  _activeDownloads.delete(trackId);
-  setTimeout(() => _cleanupPartials(destBase), 800);
   return true;
 }
 
