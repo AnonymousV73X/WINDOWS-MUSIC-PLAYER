@@ -18,13 +18,8 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
-const HTTPS_AGENT = new https.Agent({
-  keepAlive: true,
-  maxSockets: 24,
-  keepAliveMsecs: 15000,
-});
-const UA_DESKTOP =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 24, keepAliveMsecs: 15000 });
+const UA_DESKTOP = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 // ─── Network Utilities ────────────────────────────────────────────────────────
 function fetchJson(url, timeoutMs = 8000) {
@@ -35,8 +30,7 @@ function fetchJson(url, timeoutMs = 8000) {
       url,
       {
         headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
           Accept: "application/json, text/plain, */*",
           Referer: "https://www.jiosaavn.com/",
         },
@@ -44,11 +38,7 @@ function fetchJson(url, timeoutMs = 8000) {
         agent: parsedUrl.protocol === "https:" ? HTTPS_AGENT : undefined,
       },
       (res) => {
-        if (
-          res.statusCode >= 300 &&
-          res.statusCode < 400 &&
-          res.headers.location
-        ) {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           return resolve(fetchJson(res.headers.location, timeoutMs));
         }
         if (res.statusCode < 200 || res.statusCode >= 300) {
@@ -56,23 +46,15 @@ function fetchJson(url, timeoutMs = 8000) {
         }
         let data = "";
         res.setEncoding("utf8");
-        res.on("data", (chunk) => {
-          data += chunk;
-        });
+        res.on("data", (chunk) => { data += chunk; });
         res.on("end", () => {
-          try {
-            resolve(JSON.parse(data));
-          } catch (err) {
-            reject(new Error(`JSON parse failed: ${err.message}`));
-          }
+          try { resolve(JSON.parse(data)); }
+          catch (err) { reject(new Error(`JSON parse failed: ${err.message}`)); }
         });
-      },
+      }
     );
     req.on("error", reject);
-    req.on("timeout", () => {
-      req.destroy();
-      reject(new Error("Request timed out"));
-    });
+    req.on("timeout", () => { req.destroy(); reject(new Error("Request timed out")); });
   });
 }
 
@@ -86,19 +68,15 @@ function probeStreamUrl(url, timeoutMs = 6000) {
         {
           method: "HEAD",
           headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             Referer: "https://www.jiosaavn.com/",
           },
           timeout: timeoutMs,
         },
-        (res) => resolve(res.statusCode === 200),
+        (res) => resolve(res.statusCode === 200)
       );
       req.on("error", () => resolve(false));
-      req.on("timeout", () => {
-        req.destroy();
-        resolve(false);
-      });
+      req.on("timeout", () => { req.destroy(); resolve(false); });
       req.end();
     } catch (_) {
       resolve(false);
@@ -112,43 +90,33 @@ function probeStreamUrl(url, timeoutMs = 6000) {
 function callYtmEndpoint(body, timeoutMs = 8000) {
   return new Promise((resolve) => {
     const postData = JSON.stringify(body);
-    const req = https.request(
-      {
-        hostname: "music.youtube.com",
-        path: "/youtubei/v1/search",
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(postData),
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Origin: "https://music.youtube.com",
-          Referer: "https://music.youtube.com/",
-        },
-        timeout: timeoutMs,
-        agent: HTTPS_AGENT,
+    const req = https.request({
+      hostname: "music.youtube.com",
+      path: "/youtubei/v1/search",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(postData),
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Origin": "https://music.youtube.com",
+        "Referer": "https://music.youtube.com/"
       },
-      (res) => {
-        let data = "";
-        res.on("data", (c) => (data += c));
-        res.on("end", () => {
-          try {
-            resolve(JSON.parse(data));
-          } catch (_) {
-            resolve(null);
-          }
-        });
-      },
-    );
-    req.on("error", () => resolve(null));
-    req.on("timeout", () => {
-      req.destroy();
-      resolve(null);
+      timeout: timeoutMs,
+      agent: HTTPS_AGENT
+    }, (res) => {
+      let data = "";
+      res.on("data", (c) => (data += c));
+      res.on("end", () => {
+        try { resolve(JSON.parse(data)); } catch (_) { resolve(null); }
+      });
     });
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => { req.destroy(); resolve(null); });
     req.write(postData);
     req.end();
   });
 }
+
 
 function scrapeWatchDuration(videoId, timeoutMs = 2500) {
   return new Promise((resolve) => {
@@ -170,9 +138,8 @@ function scrapeWatchDuration(videoId, timeoutMs = 2500) {
         res.on("data", (chunk) => {
           d += chunk;
           const m =
-            d.match(
-              /itemprop="duration"\s+content="PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?"/i,
-            ) || d.match(/approxDurationMs["\s:]+(\d+)/);
+            d.match(/itemprop="duration"\s+content="PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?"/i) ||
+            d.match(/approxDurationMs["\s:]+(\d+)/);
           if (m) {
             req.destroy();
             if (m[0].includes("approxDurationMs")) {
@@ -187,9 +154,8 @@ function scrapeWatchDuration(videoId, timeoutMs = 2500) {
         });
         res.on("end", () => {
           const m =
-            d.match(
-              /itemprop="duration"\s+content="PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?"/i,
-            ) || d.match(/approxDurationMs["\s:]+(\d+)/);
+            d.match(/itemprop="duration"\s+content="PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?"/i) ||
+            d.match(/approxDurationMs["\s:]+(\d+)/);
           if (m) {
             if (m[0].includes("approxDurationMs")) {
               resolve(parseInt(m[1], 10));
@@ -203,7 +169,7 @@ function scrapeWatchDuration(videoId, timeoutMs = 2500) {
             resolve(0);
           }
         });
-      },
+      }
     );
     req.on("error", () => resolve(0));
     req.on("timeout", () => {
@@ -219,32 +185,19 @@ async function searchYouTubeMusic(query, limit = 40) {
       clientName: "WEB_REMIX",
       clientVersion: "1.20240101.01.00",
       hl: "en",
-      gl: "US",
-    },
+      gl: "US"
+    }
   };
 
   // Run both Universal (for top hit card & unreleased/leaks) and Songs Filter (for exact track durations & albums) in parallel
   const [universalJson, songsJson] = await Promise.all([
     callYtmEndpoint({ context: baseClient, query: query.trim() }),
-    callYtmEndpoint({
-      context: baseClient,
-      query: query.trim(),
-      params: "EgWKAQIIAWoSEAQQBRADEAkQChAVEBAQDhAR",
-    }),
+    callYtmEndpoint({ context: baseClient, query: query.trim(), params: "EgWKAQIIAWoSEAQQBRADEAkQChAVEBAQDhAR" })
   ]);
 
   const tracks = [];
   const seenVideoIds = new Set();
-  const nonPlayableTypes = new Set([
-    "album",
-    "artist",
-    "playlist",
-    "single",
-    "ep",
-    "profile",
-    "podcast",
-    "episode",
-  ]);
+  const nonPlayableTypes = new Set(["album", "artist", "playlist", "single", "ep", "profile", "podcast", "episode"]);
 
   // Detect if a string is a duration (e.g. "3:45", "1:03:22")
   function parseDurationMs(str) {
@@ -253,8 +206,7 @@ async function searchYouTubeMusic(query, limit = 40) {
     const m2 = s.match(/^(\d+):(\d{2})$/);
     if (m2) return (Number(m2[1]) * 60 + Number(m2[2])) * 1000;
     const m3 = s.match(/^(\d+):(\d{2}):(\d{2})$/);
-    if (m3)
-      return (Number(m3[1]) * 3600 + Number(m3[2]) * 60 + Number(m3[3])) * 1000;
+    if (m3) return (Number(m3[1]) * 3600 + Number(m3[2]) * 60 + Number(m3[3])) * 1000;
     return 0;
   }
 
@@ -267,15 +219,12 @@ async function searchYouTubeMusic(query, limit = 40) {
     if (!r) return null;
     const title =
       r.title?.runs?.map((x) => x.text).join("") ||
-      r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs
-        ?.map((x) => x.text)
-        .join("");
+      r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.map((x) => x.text).join("");
     if (!title) return null;
 
     const subRuns =
       r.subtitle?.runs ||
-      r.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text
-        ?.runs ||
+      r.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs ||
       [];
 
     let artist = "Unknown Artist";
@@ -284,10 +233,7 @@ async function searchYouTubeMusic(query, limit = 40) {
 
     // Check fixedColumns first if present
     if (r.fixedColumns?.[0]) {
-      const fixedText =
-        r.fixedColumns[0].musicResponsiveListItemFixedColumnRenderer?.text?.runs
-          ?.map((x) => x.text)
-          .join("");
+      const fixedText = r.fixedColumns[0].musicResponsiveListItemFixedColumnRenderer?.text?.runs?.map((x) => x.text).join("");
       const d = parseDurationMs(fixedText);
       if (d > 0) durationMs = d;
     }
@@ -336,13 +282,11 @@ async function searchYouTubeMusic(query, limit = 40) {
     const videoId =
       r.playlistItemData?.videoId ||
       r.navigationEndpoint?.watchEndpoint?.videoId ||
-      r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text
-        ?.runs?.[0]?.navigationEndpoint?.watchEndpoint?.videoId;
+      r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.navigationEndpoint?.watchEndpoint?.videoId;
 
     if (!videoId || videoId.length < 5) return null;
 
-    const thumbs =
-      r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
+    const thumbs = r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
     const art = thumbs[thumbs.length - 1]?.url || "";
     const thumb = thumbs[0]?.url || art;
 
@@ -364,8 +308,7 @@ async function searchYouTubeMusic(query, limit = 40) {
 
   // 1. Process universal search top card (gives the exact best match first)
   const universalSections =
-    universalJson?.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer
-      ?.content?.sectionListRenderer?.contents || [];
+    universalJson?.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
 
   for (const sec of universalSections) {
     if (sec.musicCardShelfRenderer) {
@@ -387,20 +330,16 @@ async function searchYouTubeMusic(query, limit = 40) {
       if (!nonPlayableTypes.has(cardType)) {
         const cardLastPart = cardParts[cardParts.length - 1] || "";
         const cardDurationMs = parseDurationMs(cardLastPart);
-        const cardMeaningful = cardParts
-          .slice(1)
-          .filter((p) => !isViewsString(p) && parseDurationMs(p) === 0);
+        const cardMeaningful = cardParts.slice(1).filter((p) => !isViewsString(p) && parseDurationMs(p) === 0);
         const artist = cardMeaningful[0] || "Unknown Artist";
 
-        const thumbs =
-          card.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
+        const thumbs = card.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
         const art = thumbs[thumbs.length - 1]?.url || "";
         const thumb = thumbs[0]?.url || art;
         const videoId =
           card.onTap?.watchEndpoint?.videoId ||
-          card.buttons?.find(
-            (b) => b.buttonRenderer?.navigationEndpoint?.watchEndpoint,
-          )?.buttonRenderer?.navigationEndpoint?.watchEndpoint?.videoId;
+          card.buttons?.find((b) => b.buttonRenderer?.navigationEndpoint?.watchEndpoint)?.buttonRenderer
+            ?.navigationEndpoint?.watchEndpoint?.videoId;
 
         if (title && videoId && !seenVideoIds.has(videoId)) {
           seenVideoIds.add(videoId);
@@ -433,12 +372,10 @@ async function searchYouTubeMusic(query, limit = 40) {
 
   // 2. Process Songs-filter results (gives rich track info, official releases & accurate durations)
   const songsSections =
-    songsJson?.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer
-      ?.content?.sectionListRenderer?.contents || [];
+    songsJson?.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
 
   for (const sec of songsSections) {
-    const contents =
-      (sec.musicShelfRenderer || sec.itemSectionRenderer)?.contents || [];
+    const contents = (sec.musicShelfRenderer || sec.itemSectionRenderer)?.contents || [];
     for (const it of contents) {
       const parsed = parseItem(it.musicResponsiveListItemRenderer);
       if (parsed && !seenVideoIds.has(parsed.videoId)) {
@@ -453,8 +390,7 @@ async function searchYouTubeMusic(query, limit = 40) {
   // 3. Process remaining universal sections (leaks, remixes, live performances)
   for (const sec of universalSections) {
     if (sec.musicCardShelfRenderer) continue;
-    const contents =
-      (sec.musicShelfRenderer || sec.itemSectionRenderer)?.contents || [];
+    const contents = (sec.musicShelfRenderer || sec.itemSectionRenderer)?.contents || [];
     for (const it of contents) {
       const parsed = parseItem(it.musicResponsiveListItemRenderer);
       if (parsed && !seenVideoIds.has(parsed.videoId)) {
@@ -476,63 +412,45 @@ function searchJioSaavn(query, limit = 15) {
   return new Promise((resolve) => {
     const encoded = encodeURIComponent(query.trim());
     const url = `https://www.jiosaavn.com/api.php?p=1&q=${encoded}&_format=json&_marker=0&api_version=4&ctx=web6dot0&n=${limit}&__call=search.getResults`;
-
-    https
-      .get(
-        url,
-        {
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            Referer: "https://www.jiosaavn.com/",
-          },
-          timeout: 8000,
-          agent: HTTPS_AGENT,
-        },
-        (res) => {
-          let data = "";
-          res.on("data", (c) => (data += c));
-          res.on("end", () => {
-            try {
-              const json = JSON.parse(data);
-              const results = (json.results || []).map((r) => {
-                const rawImg = r.image || r.more_info?.image || "";
-                const highImg = rawImg.replace(/\d+x\d+\.jpg$/, "500x500.jpg");
-                const thumbImg = rawImg.replace(/\d+x\d+\.jpg$/, "150x150.jpg");
-                const dur =
-                  parseInt(r.duration || r.more_info?.duration || "0", 10) *
-                  1000;
-                return {
-                  id: `saavn_${r.id}`,
-                  source: "saavn",
-                  trackName: r.title || r.song || "Unknown Track",
-                  artistName:
-                    r.more_info?.primary_artists ||
-                    r.primary_artists ||
-                    r.more_info?.singers ||
-                    r.singers ||
-                    "Unknown Artist",
-                  albumName: r.more_info?.album || r.album || "",
-                  releaseYear: r.year || r.more_info?.year || "",
-                  durationMs: dur,
-                  previewUrl: r.more_info?.preview_url || "",
-                  artworkUrl: highImg || rawImg,
-                  artworkThumbnail: thumbImg || rawImg,
-                  genre: "Music",
-                };
-              });
-              resolve(results);
-            } catch (_) {
-              resolve([]);
-            }
+    
+    https.get(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Referer: "https://www.jiosaavn.com/"
+      },
+      timeout: 8000,
+      agent: HTTPS_AGENT
+    }, (res) => {
+      let data = "";
+      res.on("data", c => data += c);
+      res.on("end", () => {
+        try {
+          const json = JSON.parse(data);
+          const results = (json.results || []).map((r) => {
+            const rawImg = r.image || r.more_info?.image || "";
+            const highImg = rawImg.replace(/\d+x\d+\.jpg$/, "500x500.jpg");
+            const thumbImg = rawImg.replace(/\d+x\d+\.jpg$/, "150x150.jpg");
+            const dur = parseInt(r.duration || r.more_info?.duration || "0", 10) * 1000;
+            return {
+              id: `saavn_${r.id}`,
+              source: "saavn",
+              trackName: r.title || r.song || "Unknown Track",
+              artistName: r.more_info?.primary_artists || r.primary_artists || r.more_info?.singers || r.singers || "Unknown Artist",
+              albumName: r.more_info?.album || r.album || "",
+              releaseYear: r.year || r.more_info?.year || "",
+              durationMs: dur,
+              previewUrl: r.more_info?.preview_url || "",
+              artworkUrl: highImg || rawImg,
+              artworkThumbnail: thumbImg || rawImg,
+              genre: "Music"
+            };
           });
-        },
-      )
-      .on("error", () => resolve([]))
-      .on("timeout", function () {
-        this.destroy();
-        resolve([]);
+          resolve(results);
+        } catch (_) {
+          resolve([]);
+        }
       });
+    }).on("error", () => resolve([])).on("timeout", function() { this.destroy(); resolve([]); });
   });
 }
 
@@ -545,18 +463,14 @@ function searchITunesInternal(query, limit = 15) {
       .then((data) => {
         const results = (data?.results || []).map((item) => {
           const artwork100 = item.artworkUrl100 || "";
-          const artworkHigh = artwork100
-            ? artwork100.replace(/100x100/g, "600x600")
-            : "";
+          const artworkHigh = artwork100 ? artwork100.replace(/100x100/g, "600x600") : "";
           return {
             id: `itunes_${item.trackId}`,
             source: "itunes",
             trackName: item.trackName || "Unknown Track",
             artistName: item.artistName || "Unknown Artist",
             albumName: item.collectionName || "",
-            releaseYear: item.releaseDate
-              ? item.releaseDate.substring(0, 4)
-              : "",
+            releaseYear: item.releaseDate ? item.releaseDate.substring(0, 4) : "",
             durationMs: item.trackTimeMillis || 0,
             previewUrl: item.previewUrl || "",
             artworkUrl: artworkHigh || artwork100,
@@ -577,13 +491,8 @@ function searchDeezerInternal(query, limit = 15) {
     fetchJson(`https://api.deezer.com/search?q=${encoded}&limit=${limit}`, 6000)
       .then((data) => {
         const results = (data?.data || []).map((item) => {
-          const art =
-            item.album?.cover_xl ||
-            item.album?.cover_big ||
-            item.album?.cover_medium ||
-            "";
-          const thumb =
-            item.album?.cover_small || item.album?.cover_medium || "";
+          const art = item.album?.cover_xl || item.album?.cover_big || item.album?.cover_medium || "";
+          const thumb = item.album?.cover_small || item.album?.cover_medium || "";
           return {
             id: `deezer_${item.id}`,
             source: "deezer",
@@ -618,12 +527,7 @@ async function resolveUrlMetadata(inputUrl) {
       } else if (cleanYtUrl.includes("music.youtube.com")) {
         cleanYtUrl = cleanYtUrl.replace("music.youtube.com", "www.youtube.com");
       }
-      const data = await fetchJson(
-        "https://www.youtube.com/oembed?url=" +
-          encodeURIComponent(cleanYtUrl) +
-          "&format=json",
-        6000,
-      );
+      const data = await fetchJson("https://www.youtube.com/oembed?url=" + encodeURIComponent(cleanYtUrl) + "&format=json", 6000);
       if (data && data.title) {
         return data.title
           .replace(/\(Official\s*(Video|Audio|Music Video|Lyric Video)\)/gi, "")
@@ -640,11 +544,7 @@ async function resolveUrlMetadata(inputUrl) {
       const match = urlStr.match(/track\/([a-zA-Z0-9]+)/);
       if (match) {
         const cleanSpotifyUrl = `https://open.spotify.com/track/${match[1]}`;
-        const data = await fetchJson(
-          "https://open.spotify.com/oembed?url=" +
-            encodeURIComponent(cleanSpotifyUrl),
-          6000,
-        );
+        const data = await fetchJson("https://open.spotify.com/oembed?url=" + encodeURIComponent(cleanSpotifyUrl), 6000);
         if (data && data.title) return data.title.trim();
       }
     }
@@ -656,27 +556,20 @@ async function resolveUrlMetadata(inputUrl) {
 
 // ─── Normalisation / Merge / Relevance ────────────────────────────────────────
 const _norm = (s) =>
-  (s || "")
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/&/g, " and ")
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  (s || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
 
 function _titleCore(title) {
   return _norm(
     (title || "")
       .replace(/[\(\[]\s*(feat|ft|featuring|with|prod)\b[^\)\]]*[\)\]]/gi, "")
-      .replace(/\s[-–]\s*(feat|ft|featuring)\.?\s.*$/i, ""),
+      .replace(/\s[-–]\s*(feat|ft|featuring)\.?\s.*$/i, "")
   ).replace(/\s/g, "");
 }
 
-const _FLAG_RE =
-  /\b(remix|live|acoustic|instrumental|karaoke|cover|slowed|sped|reverb|nightcore|8d|demo|tribute|lofi|cappella)\b/g;
+const _FLAG_RE = /\b(remix|live|acoustic|instrumental|karaoke|cover|slowed|sped|reverb|nightcore|8d|demo|tribute|lofi|cappella)\b/g;
 function _flags(title, album) {
-  const found = new Set(_norm(title + " " + album).match(_FLAG_RE) || []);
+  const found = new Set((_norm(title + " " + album).match(_FLAG_RE)) || []);
   return [...found].sort().join(",");
 }
 
@@ -684,48 +577,30 @@ function _artistTokens(name) {
   return (name || "")
     .replace(/\s-\s*topic$/i, "")
     .split(/,|&|;|\/|\bfeat\.?\b|\bft\.?\b|\bx\b|\band\b/i)
-    .map(_norm)
-    .filter((x) => x && x !== "unknown artist");
+    .map(_norm).filter((x) => x && x !== "unknown artist");
 }
 
 function _dice(a, b) {
   if (a === b) return 1;
   if (a.length < 2 || b.length < 2) return 0;
   const bg = new Map();
-  for (let i = 0; i < a.length - 1; i++) {
-    const k = a.substr(i, 2);
-    bg.set(k, (bg.get(k) || 0) + 1);
-  }
+  for (let i = 0; i < a.length - 1; i++) { const k = a.substr(i, 2); bg.set(k, (bg.get(k) || 0) + 1); }
   let hit = 0;
   for (let i = 0; i < b.length - 1; i++) {
-    const k = b.substr(i, 2);
-    const c = bg.get(k) || 0;
-    if (c > 0) {
-      bg.set(k, c - 1);
-      hit++;
-    }
+    const k = b.substr(i, 2); const c = bg.get(k) || 0;
+    if (c > 0) { bg.set(k, c - 1); hit++; }
   }
   return (2 * hit) / (a.length + b.length - 2);
 }
 
 function _info(t) {
-  return {
-    core: _titleCore(t.trackName),
-    flags: _flags(t.trackName || "", t.albumName || ""),
-    artists: _artistTokens(t.artistName),
-  };
+  return { core: _titleCore(t.trackName), flags: _flags(t.trackName || "", t.albumName || ""), artists: _artistTokens(t.artistName) };
 }
 
 function _sameSong(g, info, dur) {
   if (g.info.flags !== info.flags) return false;
   if (!g.info.core || !info.core) return false;
-  const ao = g.info.artists.some((x) =>
-    info.artists.some(
-      (y) =>
-        x === y ||
-        (x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x))),
-    ),
-  );
+  const ao = g.info.artists.some((x) => info.artists.some((y) => x === y || (x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x)))));
   if (!ao) return false;
   const gd = g.primary.durationMs || 0;
   if (gd && dur && Math.abs(gd - dur) > 4000) return false;
@@ -743,9 +618,7 @@ const _PENALTIES = [
 ];
 
 function _score(t, qn, qWords, srcCount, idx) {
-  const title = _norm(t.trackName),
-    artist = _norm(t.artistName),
-    album = _norm(t.albumName);
+  const title = _norm(t.trackName), artist = _norm(t.artistName), album = _norm(t.albumName);
   const hayWords = (title + " " + artist + " " + album).split(" ");
   let s = 0;
   if (title && title === qn) s += 50;
@@ -753,31 +626,20 @@ function _score(t, qn, qWords, srcCount, idx) {
   else if (qn && title.includes(qn)) s += 28;
   if (qWords.length) {
     let hit = 0;
-    for (const w of qWords)
-      if (hayWords.some((h) => h === w || (w.length >= 3 && h.startsWith(w))))
-        hit++;
+    for (const w of qWords) if (hayWords.some((h) => h === w || (w.length >= 3 && h.startsWith(w)))) hit++;
     s += 40 * (hit / qWords.length);
   }
   if (qn === `${artist} ${title}` || qn === `${title} ${artist}`) s += 20;
-  if (artist.split(" ").some((w) => w.length > 2 && qWords.includes(w)))
-    s += 10;
+  if (artist.split(" ").some((w) => w.length > 2 && qWords.includes(w))) s += 10;
 
   if (t.source === "ytmusic" && t.albumName) s += 6;
-  if (
-    /\bofficial (audio|music video|video)\b/.test(title) ||
-    /\stopic$/.test(artist)
-  )
-    s += 5;
+  if (/\bofficial (audio|music video|video)\b/.test(title) || /\stopic$/.test(artist)) s += 5;
   if (t.source === "itunes" || t.source === "deezer") s += 4;
   s += Math.min(srcCount - 1, 2) * 4;
 
   const tx = title + " " + album;
   for (const [word, re] of _PENALTIES) {
-    if (
-      re.test(tx) &&
-      !(word === "karaoke" ? /\b(karaoke|tribute)\b/.test(qn) : re.test(qn))
-    )
-      s -= 30;
+    if (re.test(tx) && !(word === "karaoke" ? /\b(karaoke|tribute)\b/.test(qn) : re.test(qn))) s -= 30;
   }
 
   const d = t.durationMs || 0;
@@ -794,22 +656,15 @@ function rankAndMerge(tracks, query) {
     if (!t || !_norm(t.trackName)) continue;
     const info = _info(t);
     const g = groups.find((x) => _sameSong(x, info, t.durationMs || 0));
-    if (!g) {
-      groups.push({ primary: t, info, sources: new Set([t.source]) });
-      continue;
-    }
+    if (!g) { groups.push({ primary: t, info, sources: new Set([t.source]) }); continue; }
     g.sources.add(t.source);
-    if (!g.primary.durationMs && t.durationMs)
-      g.primary.durationMs = t.durationMs;
+    if (!g.primary.durationMs && t.durationMs) g.primary.durationMs = t.durationMs;
     if (!g.primary.videoId && t.videoId) g.primary.videoId = t.videoId;
   }
   const qn = _norm(query);
   const qWords = qn.split(" ").filter(Boolean);
   return groups
-    .map((g, i) => ({
-      t: g.primary,
-      sc: _score(g.primary, qn, qWords, g.sources.size, i),
-    }))
+    .map((g, i) => ({ t: g.primary, sc: _score(g.primary, qn, qWords, g.sources.size, i) }))
     .sort((a, b) => b.sc - a.sc)
     .map((x) => x.t);
 }
@@ -821,18 +676,14 @@ const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function searchITunes(query, limit = 80, onUpdate) {
   let effectiveQuery = query.trim();
-  if (
-    effectiveQuery.startsWith("http://") ||
-    effectiveQuery.startsWith("https://")
-  ) {
+  if (effectiveQuery.startsWith("http://") || effectiveQuery.startsWith("https://")) {
     const resolvedTitle = await resolveUrlMetadata(effectiveQuery);
     if (resolvedTitle) effectiveQuery = resolvedTitle;
   }
 
   const key = effectiveQuery.toLowerCase();
   const hit = SEARCH_CACHE.get(key);
-  if (hit && Date.now() - hit.t < SEARCH_CACHE_TTL)
-    return hit.results.slice(0, limit);
+  if (hit && Date.now() - hit.t < SEARCH_CACHE_TTL) return hit.results.slice(0, limit);
 
   const buckets = { ytm: [], itunes: [], deezer: [], saavn: [] };
   const scraped = new Map();
@@ -840,11 +691,7 @@ async function searchITunes(query, limit = 80, onUpdate) {
 
   const build = () => {
     const others = [];
-    const maxLen = Math.max(
-      buckets.itunes.length,
-      buckets.deezer.length,
-      buckets.saavn.length,
-    );
+    const maxLen = Math.max(buckets.itunes.length, buckets.deezer.length, buckets.saavn.length);
     for (let i = 0; i < maxLen; i++) {
       if (buckets.itunes[i]) others.push(buckets.itunes[i]);
       if (buckets.deezer[i]) others.push(buckets.deezer[i]);
@@ -852,8 +699,7 @@ async function searchITunes(query, limit = 80, onUpdate) {
     }
     const ordered = [...buckets.ytm, ...others];
     for (const t of ordered) {
-      if (t.videoId && !t.durationMs && scraped.has(t.videoId))
-        t.durationMs = scraped.get(t.videoId);
+      if (t.videoId && !t.durationMs && scraped.has(t.videoId)) t.durationMs = scraped.get(t.videoId);
     }
     return rankAndMerge(ordered, effectiveQuery).slice(0, limit);
   };
@@ -862,24 +708,17 @@ async function searchITunes(query, limit = 80, onUpdate) {
     const r = build();
     if (done) {
       SEARCH_CACHE.set(key, { t: Date.now(), results: r });
-      if (SEARCH_CACHE.size > 60)
-        SEARCH_CACHE.delete(SEARCH_CACHE.keys().next().value);
+      if (SEARCH_CACHE.size > 60) SEARCH_CACHE.delete(SEARCH_CACHE.keys().next().value);
     }
-    if (onUpdate) {
-      try {
-        onUpdate(r);
-      } catch (_) {}
-    }
+    if (onUpdate) { try { onUpdate(r); } catch (_) {} }
     return r;
   };
 
   const run = (fn, name) =>
-    fn()
-      .catch(() => [])
-      .then((res) => {
-        buckets[name] = Array.isArray(res) ? res : [];
-        if (buckets[name].length) emit();
-      });
+    fn().catch(() => []).then((res) => {
+      buckets[name] = Array.isArray(res) ? res : [];
+      if (buckets[name].length) emit();
+    });
 
   const all = Promise.all([
     run(() => searchYouTubeMusic(effectiveQuery, 40), "ytm"),
@@ -908,20 +747,13 @@ async function searchITunes(query, limit = 80, onUpdate) {
             const ms = await scrapeWatchDuration(t.videoId, 2500);
             if (ms > 0) {
               scraped.set(t.videoId, ms);
-              if (!timer)
-                timer = setTimeout(() => {
-                  timer = null;
-                  emit();
-                }, 400);
+              if (!timer) timer = setTimeout(() => { timer = null; emit(); }, 400);
             }
           } catch (_) {}
         }
       };
       await Promise.all(Array.from({ length: 6 }, worker));
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
+      if (timer) { clearTimeout(timer); timer = null; }
       if (scraped.size) emit();
     })();
   }
@@ -962,73 +794,57 @@ function getYtDlpPath() {
  */
 function downloadYtDlpBinary(targetPath, onProgress) {
   return new Promise((resolve, reject) => {
-    const url =
-      "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
+    const url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
 
     function fetchWithRedirects(currentUrl, hops = 0) {
-      if (hops > 5)
-        return reject(new Error("Too many redirects downloading yt-dlp"));
+      if (hops > 5) return reject(new Error("Too many redirects downloading yt-dlp"));
       const parsed = new URL(currentUrl);
       const client = parsed.protocol === "https:" ? https : http;
 
-      const req = client.get(
-        currentUrl,
-        {
-          headers: { "User-Agent": "Mozilla/5.0 NovaTune Downloader" },
-        },
-        (res) => {
-          if (
-            res.statusCode >= 300 &&
-            res.statusCode < 400 &&
-            res.headers.location
-          ) {
-            const nextUrl = new URL(res.headers.location, currentUrl).href;
-            return fetchWithRedirects(nextUrl, hops + 1);
+      const req = client.get(currentUrl, {
+        headers: { "User-Agent": "Mozilla/5.0 NovaTune Downloader" }
+      }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          const nextUrl = new URL(res.headers.location, currentUrl).href;
+          return fetchWithRedirects(nextUrl, hops + 1);
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`Failed to download yt-dlp: HTTP ${res.statusCode}`));
+        }
+
+        const totalBytes = parseInt(res.headers["content-length"] || "0", 10);
+        let downloaded = 0;
+        const dir = path.dirname(targetPath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+        const tmpFile = `${targetPath}.tmp`;
+        const fileStream = fs.createWriteStream(tmpFile);
+
+        res.on("data", (chunk) => {
+          downloaded += chunk.length;
+          if (totalBytes > 0 && onProgress) {
+            const pct = Math.round((downloaded / totalBytes) * 100);
+            onProgress({ percent: pct, downloaded, total: totalBytes });
           }
-          if (res.statusCode !== 200) {
-            return reject(
-              new Error(`Failed to download yt-dlp: HTTP ${res.statusCode}`),
-            );
-          }
+        });
 
-          const totalBytes = parseInt(res.headers["content-length"] || "0", 10);
-          let downloaded = 0;
-          const dir = path.dirname(targetPath);
-          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        res.pipe(fileStream);
 
-          const tmpFile = `${targetPath}.tmp`;
-          const fileStream = fs.createWriteStream(tmpFile);
-
-          res.on("data", (chunk) => {
-            downloaded += chunk.length;
-            if (totalBytes > 0 && onProgress) {
-              const pct = Math.round((downloaded / totalBytes) * 100);
-              onProgress({ percent: pct, downloaded, total: totalBytes });
-            }
-          });
-
-          res.pipe(fileStream);
-
-          fileStream.on("finish", () => {
-            fileStream.close(() => {
-              try {
-                if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
-                fs.renameSync(tmpFile, targetPath);
-                resolve(targetPath);
-              } catch (err) {
-                reject(err);
-              }
-            });
-          });
-
-          fileStream.on("error", (err) => {
+        fileStream.on("finish", () => {
+          fileStream.close(() => {
             try {
-              if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
-            } catch (_) {}
-            reject(err);
+              if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+              fs.renameSync(tmpFile, targetPath);
+              resolve(targetPath);
+            } catch (err) { reject(err); }
           });
-        },
-      );
+        });
+
+        fileStream.on("error", (err) => {
+          try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (_) {}
+          reject(err);
+        });
+      });
 
       req.on("error", reject);
       req.setTimeout(60000, () => {
@@ -1074,23 +890,16 @@ async function ensureYtDlpAvailable(onProgress) {
   }
 
   if (onProgress) {
-    onProgress({
-      status: "installing",
-      percent: 0,
-      message: "Setting up downloader components (one-time)…",
-    });
+    onProgress({ status: "installing", percent: 0, message: "Setting up downloader components (one-time)…" });
   }
 
-  console.log(
-    "[DownloadEngine] yt-dlp binary missing! Auto-installing to:",
-    targetPath,
-  );
+  console.log("[DownloadEngine] yt-dlp binary missing! Auto-installing to:", targetPath);
   await downloadYtDlpBinary(targetPath, (prog) => {
     if (onProgress) {
       onProgress({
         status: "installing",
         percent: Math.round(prog.percent * 0.9),
-        message: `Setting up downloader components… ${prog.percent}%`,
+        message: `Setting up downloader components… ${prog.percent}%`
       });
     }
   });
@@ -1105,22 +914,24 @@ async function downloadWithYtDlp(urlOrQuery, destBase, onProgress, trackId) {
     const args = [
       urlOrQuery,
       "-x",
-      "--audio-format",
-      "mp3",
-      "--audio-quality",
-      "0",
+      "--audio-format", "mp3",
+      "--audio-quality", "0",
       "--add-metadata",
-      "--concurrent-fragments",
-      "4",
-      "-o",
-      `${destBase}.%(ext)s`,
+      "--concurrent-fragments", "4",
+      "-o", `${destBase}.%(ext)s`,
       "--no-playlist",
-      "--newline",
+      "--newline"
     ];
 
     let finalFile = null;
     let proc = null;
     let errorOutput = "";
+
+    if (trackId && _cancelled.has(trackId)) {
+      const e = new Error("Download cancelled");
+      e.cancelled = true;
+      return reject(e);
+    }
 
     try {
       proc = spawn(ytDlpBinary, args, { windowsHide: true });
@@ -1136,16 +947,9 @@ async function downloadWithYtDlp(urlOrQuery, destBase, onProgress, trackId) {
         const pMatch = text.match(/\[download\]\s+([0-9.]+)%/);
         if (pMatch && onProgress) {
           const pct = Math.min(95, Math.round(parseFloat(pMatch[1])));
-          onProgress({
-            status: "downloading",
-            percent: 10 + Math.round((pct * 80) / 100),
-            message: `Downloading… ${pct}%`,
-          });
+          onProgress({ status: "downloading", percent: 10 + Math.round((pct * 80) / 100), message: `Downloading… ${pct}%` });
         }
-        if (
-          text.includes("[ExtractAudio] Destination:") ||
-          text.includes("[download] Destination:")
-        ) {
+        if (text.includes("[ExtractAudio] Destination:") || text.includes("[download] Destination:")) {
           const m = text.match(/Destination:\s*(.*)$/);
           if (m && m[1]) finalFile = m[1].trim();
         }
@@ -1157,6 +961,12 @@ async function downloadWithYtDlp(urlOrQuery, destBase, onProgress, trackId) {
     });
 
     proc.on("close", (code) => {
+      if (trackId && _cancelled.has(trackId)) {
+        setTimeout(() => _cleanupPartials(destBase), 600);
+        const e = new Error("Download cancelled");
+        e.cancelled = true;
+        return reject(e);
+      }
       if (code === 0) {
         const expectedMp3 = `${destBase}.mp3`;
         if (fs.existsSync(expectedMp3)) return resolve(expectedMp3);
@@ -1164,16 +974,11 @@ async function downloadWithYtDlp(urlOrQuery, destBase, onProgress, trackId) {
         const dir = path.dirname(destBase);
         const baseName = path.basename(destBase);
         const files = fs.readdirSync(dir);
-        const matched = files.find(
-          (f) =>
-            f.startsWith(baseName) &&
-            (f.endsWith(".mp3") || f.endsWith(".m4a")),
-        );
+        const matched = files.find(f => f.startsWith(baseName) && (f.endsWith(".mp3") || f.endsWith(".m4a")));
         if (matched) return resolve(path.join(dir, matched));
         resolve(expectedMp3);
       } else {
-        const cleanErr =
-          errorOutput.trim() || `Process exited with code ${code}`;
+        const cleanErr = errorOutput.trim() || `Process exited with code ${code}`;
         reject(new Error(`Download failed: ${cleanErr}`));
       }
     });
@@ -1192,50 +997,22 @@ function fetchArtworkBuffer(url, timeoutMs = 6000, hops = 0) {
       const isHttps = u.protocol === "https:";
       const req = (isHttps ? https : http).get(
         url,
-        {
-          headers: {
-            "User-Agent": UA_DESKTOP,
-            Accept: "image/jpeg,image/png,image/*",
-          },
-          agent: isHttps ? HTTPS_AGENT : undefined,
-          timeout: timeoutMs,
-        },
+        { headers: { "User-Agent": UA_DESKTOP, Accept: "image/jpeg,image/png,image/*" }, agent: isHttps ? HTTPS_AGENT : undefined, timeout: timeoutMs },
         (res) => {
-          if (
-            res.statusCode >= 300 &&
-            res.statusCode < 400 &&
-            res.headers.location
-          ) {
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             res.resume();
-            return resolve(
-              fetchArtworkBuffer(
-                new URL(res.headers.location, url).href,
-                timeoutMs,
-                hops + 1,
-              ),
-            );
+            return resolve(fetchArtworkBuffer(new URL(res.headers.location, url).href, timeoutMs, hops + 1));
           }
-          if (res.statusCode !== 200) {
-            res.resume();
-            return resolve(null);
-          }
+          if (res.statusCode !== 200) { res.resume(); return resolve(null); }
           const chunks = [];
           res.on("data", (c) => chunks.push(c));
-          res.on("end", () => {
-            const b = Buffer.concat(chunks);
-            resolve(b.length > 1000 ? b : null);
-          });
+          res.on("end", () => { const b = Buffer.concat(chunks); resolve(b.length > 1000 ? b : null); });
           res.on("error", () => resolve(null));
-        },
+        }
       );
       req.on("error", () => resolve(null));
-      req.on("timeout", () => {
-        req.destroy();
-        resolve(null);
-      });
-    } catch (_) {
-      resolve(null);
-    }
+      req.on("timeout", () => { req.destroy(); resolve(null); });
+    } catch (_) { resolve(null); }
   });
 }
 
@@ -1243,21 +1020,8 @@ function _artImage(buf) {
   if (!buf) return null;
   let mime = null;
   if (buf[0] === 0xff && buf[1] === 0xd8) mime = "image/jpeg";
-  else if (
-    buf[0] === 0x89 &&
-    buf[1] === 0x50 &&
-    buf[2] === 0x4e &&
-    buf[3] === 0x47
-  )
-    mime = "image/png";
-  return mime
-    ? {
-        mime,
-        type: { id: 3, name: "front cover" },
-        description: "Cover",
-        imageBuffer: buf,
-      }
-    : null;
+  else if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) mime = "image/png";
+  return mime ? { mime, type: { id: 3, name: "front cover" }, description: "Cover", imageBuffer: buf } : null;
 }
 
 // ─── Post-download metadata injection ─────────────────────────────────────────
@@ -1269,31 +1033,20 @@ function injectTrackInfoTags(filePath, trackInfo, artBuf) {
     if (trackInfo.trackName && trackInfo.trackName.trim())
       cleanTags.title = trackInfo.trackName.trim();
 
-    if (
-      trackInfo.artistName &&
-      trackInfo.artistName !== "Unknown Artist" &&
-      trackInfo.artistName.trim()
-    )
+    if (trackInfo.artistName && trackInfo.artistName !== "Unknown Artist" && trackInfo.artistName.trim())
       cleanTags.artist = trackInfo.artistName.trim();
 
-    if (cleanTags.artist) cleanTags.performerInfo = cleanTags.artist;
+    if (cleanTags.artist)
+      cleanTags.performerInfo = cleanTags.artist;
 
-    if (
-      trackInfo.albumName &&
-      trackInfo.albumName.trim() &&
-      trackInfo.albumName !== "Unknown Album"
-    )
+    if (trackInfo.albumName && trackInfo.albumName.trim() && trackInfo.albumName !== "Unknown Album")
       cleanTags.album = trackInfo.albumName.trim();
 
     const yr = Number(trackInfo.releaseYear);
     if (yr > 1900 && yr <= new Date().getFullYear() + 1)
       cleanTags.year = String(yr);
 
-    if (
-      trackInfo.genre &&
-      trackInfo.genre !== "Music" &&
-      trackInfo.genre.trim()
-    )
+    if (trackInfo.genre && trackInfo.genre !== "Music" && trackInfo.genre.trim())
       cleanTags.genre = trackInfo.genre.trim();
 
     const img = _artImage(artBuf);
@@ -1302,105 +1055,65 @@ function injectTrackInfoTags(filePath, trackInfo, artBuf) {
     if (Object.keys(cleanTags).length > 0) {
       const result = NodeID3.update(cleanTags, filePath);
       if (result === true) {
-        console.log(
-          `[DownloadEngine] Tags injected for "${trackInfo.trackName}" →`,
-          Object.keys(cleanTags).join(", "),
-        );
+        console.log(`[DownloadEngine] Tags injected for "${trackInfo.trackName}" →`, Object.keys(cleanTags).join(", "));
       } else {
         console.warn("[DownloadEngine] NodeID3.update returned:", result);
       }
     }
   } catch (tagErr) {
-    console.warn(
-      "[DownloadEngine] Failed to inject track tags:",
-      tagErr.message,
-    );
+    console.warn("[DownloadEngine] Failed to inject track tags:", tagErr.message);
   }
 }
 
-async function downloadAndTagTrack(
-  trackInfo,
-  targetFolder,
-  onProgress,
-  trackId,
-) {
-  onProgress({
-    status: "resolving",
-    percent: 5,
-    message: "Resolving audio with yt-dlp…",
-  });
+async function downloadAndTagTrack(trackInfo, targetFolder, onProgress, trackId) {
+  if (trackId) _cancelled.delete(trackId);
+  try {
+    return await _downloadAndTagTrackInner(trackInfo, targetFolder, onProgress, trackId);
+  } finally {
+    if (trackId) _cancelled.delete(trackId);
+  }
+}
+
+async function _downloadAndTagTrackInner(trackInfo, targetFolder, onProgress, trackId) {
+  onProgress({ status: "resolving", percent: 5, message: "Resolving audio with yt-dlp…" });
 
   const sanitize = (name) => name.replace(/[<>:"/\\|?*]/g, "").trim();
   const safeArtist = sanitize(trackInfo.artistName || "Unknown Artist");
   const safeTitle = sanitize(trackInfo.trackName || "Unknown Track");
   const destBase = path.join(targetFolder, `${safeArtist} - ${safeTitle}`);
 
-  if (!fs.existsSync(targetFolder))
-    fs.mkdirSync(targetFolder, { recursive: true });
+  if (!fs.existsSync(targetFolder)) fs.mkdirSync(targetFolder, { recursive: true });
 
   const artPromise = fetchArtworkBuffer(trackInfo.artworkUrl);
 
   // Strategy 1: Direct YouTube video download if videoId is present
-  const videoId =
-    trackInfo.videoId ||
-    (trackInfo.id && trackInfo.id.startsWith("ytm_")
-      ? trackInfo.id.replace("ytm_", "")
-      : null);
+  const videoId = trackInfo.videoId || (trackInfo.id && trackInfo.id.startsWith("ytm_") ? trackInfo.id.replace("ytm_", "") : null);
   if (videoId && videoId.length >= 5) {
     try {
-      onProgress({
-        status: "downloading",
-        percent: 10,
-        message: "Downloading audio via yt-dlp…",
-      });
+      onProgress({ status: "downloading", percent: 10, message: "Downloading audio via yt-dlp…" });
       const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      const downloadedPath = await downloadWithYtDlp(
-        targetUrl,
-        destBase,
-        onProgress,
-        trackId,
-      );
+      const downloadedPath = await downloadWithYtDlp(targetUrl, destBase, onProgress, trackId);
       injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
-      onProgress({
-        status: "done",
-        percent: 100,
-        message: "Done!",
-        filePath: downloadedPath,
-      });
+      onProgress({ status: "done", percent: 100, message: "Done!", filePath: downloadedPath });
       return downloadedPath;
     } catch (ytdlpErr) {
-      console.warn(
-        "[DownloadEngine] Direct videoId failed, trying ytsearch1 with yt-dlp:",
-        ytdlpErr.message,
-      );
+      if (ytdlpErr.cancelled || (trackId && _cancelled.has(trackId))) throw ytdlpErr;
+      console.warn("[DownloadEngine] Direct videoId failed, trying ytsearch1 with yt-dlp:", ytdlpErr.message);
     }
   }
 
   // Strategy 2: Accurate search query with yt-dlp
   const searchQuery = `ytsearch1:${trackInfo.artistName} - ${trackInfo.trackName} audio`;
-  onProgress({
-    status: "downloading",
-    percent: 10,
-    message: "Searching and downloading via yt-dlp…",
-  });
-  const downloadedPath = await downloadWithYtDlp(
-    searchQuery,
-    destBase,
-    onProgress,
-    trackId,
-  );
+  onProgress({ status: "downloading", percent: 10, message: "Searching and downloading via yt-dlp…" });
+  const downloadedPath = await downloadWithYtDlp(searchQuery, destBase, onProgress, trackId);
   injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
-  onProgress({
-    status: "done",
-    percent: 100,
-    message: "Done!",
-    filePath: downloadedPath,
-  });
+  onProgress({ status: "done", percent: 100, message: "Done!", filePath: downloadedPath });
   return downloadedPath;
 }
 
 // ─── Active download registry (trackId → spawned yt-dlp process) ──────────────
 const _activeDownloads = new Map(); // trackId → { proc, destBase }
+const _cancelled = new Set();
 
 function registerDownload(trackId, proc, destBase) {
   _activeDownloads.set(trackId, { proc, destBase });
@@ -1408,33 +1121,36 @@ function registerDownload(trackId, proc, destBase) {
   proc.on("error", () => _activeDownloads.delete(trackId));
 }
 
+function _cleanupPartials(destBase) {
+  try {
+    const dir = path.dirname(destBase);
+    const base = path.basename(destBase);
+    for (const f of fs.readdirSync(dir)) {
+      if (f.startsWith(base) && /\.(part|ytdl|temp|webm|m4a|opus)$|\.f\d+\.\w+$|\.part-Frag\d+$/i.test(f)) {
+        try { fs.unlinkSync(path.join(dir, f)); } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
+
 function cancelDownload(trackId) {
+  _cancelled.add(trackId);
   const entry = _activeDownloads.get(trackId);
-  if (!entry) return false;
+  if (!entry) return true; // flagged: will abort before/at spawn
   const { proc, destBase } = entry;
   try {
-    proc.kill("SIGKILL");
-  } catch (_) {}
-  _activeDownloads.delete(trackId);
-  // Clean up partial files left by yt-dlp
-  if (destBase) {
-    [
-      destBase + ".mp3.part",
-      destBase + ".m4a.part",
-      destBase + ".webm.part",
-    ].forEach((f) => {
-      try {
-        if (fs.existsSync(f)) fs.unlinkSync(f);
-      } catch (_) {}
-    });
+    if (process.platform === "win32" && proc.pid) {
+      // Kill yt-dlp AND its ffmpeg children
+      spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+    } else {
+      proc.kill("SIGKILL");
+    }
+  } catch (_) {
+    try { proc.kill("SIGKILL"); } catch (__) {}
   }
+  _activeDownloads.delete(trackId);
+  setTimeout(() => _cleanupPartials(destBase), 800);
   return true;
 }
 
-module.exports = {
-  searchITunes,
-  downloadAndTagTrack,
-  getYtDlpPath,
-  ensureYtDlpAvailable,
-  cancelDownload,
-};
+module.exports = { searchITunes, downloadAndTagTrack, getYtDlpPath, ensureYtDlpAvailable, cancelDownload };
