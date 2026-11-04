@@ -9400,3 +9400,58 @@ body.expanded-sidebar .sidebar-search {
   word-break: break-all;
   user-select: text;
 }
+
+/* ─── Custom window controls ─── */
+.win-controls {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 32px;
+  display: flex;
+  z-index: 100001;
+  -webkit-app-region: no-drag;
+}
+.win-btn {
+  width: 46px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.12s;
+  -webkit-app-region: no-drag;
+}
+.win-btn svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.win-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+.win-btn:active {
+  background: rgba(255, 255, 255, 0.24);
+}
+.win-btn.win-close:hover {
+  background: #e81123;
+}
+.win-btn.win-close:active {
+  background: #f1707a;
+}
+[data-theme="light"] .win-btn {
+  color: #1f211d;
+}
+[data-theme="light"] .win-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+[data-theme="light"] .win-btn.win-close:hover {
+  color: #fff;
+  background: #e81123;
+}
