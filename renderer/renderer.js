@@ -13832,6 +13832,10 @@ function _applyPlayingStateToDetailRows(container) {
 async function playTrack(track) {
   if (!track) return;
   const previousTrackId = state.currentTrack?.id || null;
+  if (state.currentTrack !== track) {
+    clearTimeout(_retryTimer);
+    _retryCount = 0;
+  }
   state.currentTrack = track;
   if (!state._playingFromPlaylistCard) {
     state.playingPlaylistId = null;
@@ -13988,6 +13992,8 @@ async function playTrack(track) {
     _updateMediaSession(track);
     // Reset consecutive failures on successful play
     state.consecutiveFailures = 0;
+    _retryCount = 0;
+    clearTimeout(_retryTimer);
     // Deferred IPC writes — now that audio is playing, disk IO can't block playback start.
     _persistQueue();
     saveSetting(
@@ -14015,23 +14021,38 @@ async function playTrack(track) {
 
     console.error("Playback failed:", err);
 
-    // Auto-skip corrupt/missing files
-    state.consecutiveFailures = (state.consecutiveFailures || 0) + 1;
-    if (state.consecutiveFailures >= state.queue.length) {
-      console.warn("All tracks in queue failed to play. Stopping.");
-      state.consecutiveFailures = 0;
-      showAppDialog({
-        title: "Playback Error",
-        message: "None of the tracks in the play queue could be played.",
-        confirmText: "OK",
-        cancelText: null,
-      });
-      return;
+    // Broken file (decode / unsupported) → skip; transient (timeout/network) → retry
+    if (err && (err.mediaCode === 3 || err.mediaCode === 4)) {
+      _skipBroken();
+    } else {
+      _retryTrack(track);
     }
-
-    // Effortlessly skip to next track
-    playNext();
   }
+}
+function _skipBroken() {
+  _retryCount = 0;
+  state.consecutiveFailures = (state.consecutiveFailures || 0) + 1;
+  if (state.consecutiveFailures >= state.queue.length) {
+    state.consecutiveFailures = 0;
+    showAppDialog({
+      title: "Playback Error",
+      message: "None of the tracks in the play queue could be played.",
+      confirmText: "OK",
+      cancelText: null,
+    });
+    return;
+  }
+  playNext();
+}
+let _retryTimer = 0;
+let _retryCount = 0;
+function _retryTrack(track) {
+  clearTimeout(_retryTimer);
+  _retryCount++;
+  const delay = Math.min(500 * _retryCount, 5000);
+  _retryTimer = setTimeout(() => {
+    if (state.currentTrack === track) playTrack(track);
+  }, delay);
 }
 
 function _smtcStatus(status) {
@@ -15239,10 +15260,8 @@ function _setupAudioEvents() {
     // which increments consecutiveFailures and calls playNext() — the
     // _isLoading gate in AudioEngine prevents _emit("error") during load,
     // so this handler will never double-fire for load failures.
-    state.consecutiveFailures = (state.consecutiveFailures || 0) + 1;
-    if (state.consecutiveFailures < state.queue.length) {
-      playNext();
-    }
+    if (data.code === 3 || data.code === 4) _skipBroken();
+    else if (state.currentTrack) _retryTrack(state.currentTrack);
   });
 }
 
