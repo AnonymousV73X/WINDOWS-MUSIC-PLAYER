@@ -312,7 +312,7 @@ function createMainWindow() {
       process.platform === "win32"
         ? {
             color: "rgba(0, 0, 0, 0)",
-            symbolColor: "#b3b3b3",
+            symbolColor: "#ffffff",
             height: 32,
           }
         : undefined,
