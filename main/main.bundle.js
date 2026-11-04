@@ -42088,6 +42088,37 @@ ${items}
         return { success: false, error: err.message };
       }
     });
+    ipcMain.handle("share:pick-app", async () => {
+      try {
+        const r = await dialog.showOpenDialog({
+          title: "Select the app's executable",
+          properties: ["openFile"],
+          filters: [{ name: "Applications", extensions: ["exe", "lnk", "bat", "cmd"] }]
+        });
+        if (r.canceled || !r.filePaths.length) return { success: false, canceled: true };
+        return { success: true, path: r.filePaths[0] };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
+    ipcMain.handle("share:launch-app", async (_event, exePath, filePath) => {
+      try {
+        if (!exePath || !fs.existsSync(exePath))
+          return { success: false, error: "App not found" };
+        const { spawn } = require("child_process");
+        const child = spawn(exePath, filePath ? [filePath] : [], {
+          detached: true,
+          stdio: "ignore",
+          windowsHide: false
+        });
+        child.on("error", () => {
+        });
+        child.unref();
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
     ipcMain.handle("share:show-in-folder", async (_event, filePath) => {
       try {
         if (filePath) shell.showItemInFolder(filePath);

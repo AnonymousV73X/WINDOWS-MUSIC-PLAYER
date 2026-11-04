@@ -101,7 +101,8 @@ class DiscoveryView {
       });
 
       this.novaAPI.on("discovery:search-update", (d) => {
-        if (!d || d.searchId !== this._searchSeq || !Array.isArray(d.results)) return;
+        if (!d || d.searchId !== this._searchSeq || !Array.isArray(d.results))
+          return;
         if (this._searchBusyFn) this._searchBusyFn(false);
         this.tracks = d.results;
         this._renderResults(this.tracks);
@@ -298,7 +299,11 @@ class DiscoveryView {
     const searchId = (this._searchSeq = (this._searchSeq || 0) + 1);
 
     try {
-      const res = await this.novaAPI.invoke("discovery:search", query, searchId);
+      const res = await this.novaAPI.invoke(
+        "discovery:search",
+        query,
+        searchId,
+      );
       if (searchId !== this._searchSeq) return;
       setBusy(false);
       if (res && res.streamed) return;
@@ -409,11 +414,15 @@ class DiscoveryView {
 
     if (state.status === "done") {
       const pb = this._getPlayback();
-      const isPlaying =
-        !!(pb && state.track && this._samePb(pb, state.track) && pb.isPlaying);
+      const isPlaying = !!(
+        pb &&
+        state.track &&
+        this._samePb(pb, state.track) &&
+        pb.isPlaying
+      );
       const icon = isPlaying
         ? `<svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`
-        : `<svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;"><polygon points="5 3 19 12 5 21" /></svg>`;
+        : `<svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;"><polygon points="5 3 19 12 5 21" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/></svg>`;
       return `
         <button class="action-play-downloaded-btn" data-id="${trackId}" style="background: none; border: none; padding: 4px 8px; cursor: pointer; display: flex; align-items: center; gap: 6px; color: var(--green); font-size: 12px; font-weight: 600; transition: transform 0.15s ease;">
           ${icon}
@@ -510,7 +519,7 @@ class DiscoveryView {
       this.playingTrackId = null;
       buttonEl.classList.remove("playing");
       buttonEl.style.opacity = "1";
-      buttonEl.innerHTML = `<svg viewBox="0 0 24 24" fill="#fff" style="width: 20px; height: 20px;"><polygon points="5,3 19,12 5,21"/></svg>`;
+      buttonEl.innerHTML = `<svg viewBox="0 0 24 24" fill="#fff" style="width: 20px; height: 20px;"><polygon points="5,3 19,12 5,21" stroke="#fff" stroke-width="3" stroke-linejoin="round"/></svg>`;
       return;
     }
 
@@ -519,7 +528,7 @@ class DiscoveryView {
       this.container.querySelectorAll(".preview-btn.playing").forEach((b) => {
         b.classList.remove("playing");
         b.style.opacity = "1";
-        b.innerHTML = `<svg viewBox="0 0 24 24" fill="#fff" style="width: 20px; height: 20px;"><polygon points="5,3 19,12 5,21"/></svg>`;
+        b.innerHTML = `<svg viewBox="0 0 24 24" fill="#fff" style="width: 20px; height: 20px;"><polygon points="5,3 19,12 5,21" stroke="#fff" stroke-width="3" stroke-linejoin="round"/></svg>`;
       });
     }
 
