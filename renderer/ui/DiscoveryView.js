@@ -101,10 +101,9 @@ class DiscoveryView {
       });
 
       this.novaAPI.on("discovery:search-update", (d) => {
-        if (!d || d.searchId !== this._searchSeq || !Array.isArray(d.results))
-          return;
+        if (!d || d.searchId !== this._searchSeq || !Array.isArray(d.results)) return;
         if (this._searchBusyFn) this._searchBusyFn(false);
-        this.tracks = d.results;
+        this.tracks = this._stableMerge(this.tracks, d.results);
         this._renderResults(this.tracks);
       });
 
@@ -297,13 +296,10 @@ class DiscoveryView {
     setBusy(true);
     this._searchBusyFn = setBusy;
     const searchId = (this._searchSeq = (this._searchSeq || 0) + 1);
+    this.tracks = [];
 
     try {
-      const res = await this.novaAPI.invoke(
-        "discovery:search",
-        query,
-        searchId,
-      );
+      const res = await this.novaAPI.invoke("discovery:search", query, searchId);
       if (searchId !== this._searchSeq) return;
       setBusy(false);
       if (res && res.streamed) return;
@@ -318,6 +314,20 @@ class DiscoveryView {
       setBusy(false);
       this._renderEmpty("Error searching tracks: " + err.message);
     }
+  }
+
+  // Keep rows already on screen in place; refresh their data, append new ones.
+  _stableMerge(prev, next) {
+    if (!prev || !prev.length) return next;
+    const byId = new Map(next.map((t) => [t.id, t]));
+    const seen = new Set();
+    const out = [];
+    for (const t of prev) {
+      out.push(byId.get(t.id) || t);
+      seen.add(t.id);
+    }
+    for (const t of next) if (!seen.has(t.id)) out.push(t);
+    return out;
   }
 
   _renderEmpty(message) {
@@ -414,12 +424,8 @@ class DiscoveryView {
 
     if (state.status === "done") {
       const pb = this._getPlayback();
-      const isPlaying = !!(
-        pb &&
-        state.track &&
-        this._samePb(pb, state.track) &&
-        pb.isPlaying
-      );
+      const isPlaying =
+        !!(pb && state.track && this._samePb(pb, state.track) && pb.isPlaying);
       const icon = isPlaying
         ? `<svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`
         : `<svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;"><polygon points="5 3 19 12 5 21" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/></svg>`;
