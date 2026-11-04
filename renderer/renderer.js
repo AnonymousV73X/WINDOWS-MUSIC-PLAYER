@@ -9403,10 +9403,10 @@ function _openShareCard(track) {
   const ico = (d) =>
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
   const items = [
+    ["lanbeam", "LANBeam", "Send file over LAN", ico('<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>')],
     ["copy-file", "Copy File", "Paste into any app", ico('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>')],
     ["folder", "Show in Folder", "Drag it into any app", ico('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>')],
     ["copy-text", "Copy Name", "Song title & artist", ico('<path d="M4 7V4h16v3"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>')],
-    ["lanbeam", "LANBeam", "Send file over LAN", ico('<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>')],
     ["whatsapp", "WhatsApp", "Copies file, then opens app", ico('<path d="M21 11.5a8.4 8.4 0 0 1-12.4 7.4L3 21l2.1-5.5A8.4 8.4 0 1 1 21 11.5z"/>')],
     ["telegram", "Telegram", "Copies file, then opens app", ico('<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>')],
     ["email", "Email", "Copies file, then opens app", ico('<path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><polyline points="22,6 12,13 2,6"/>')],
@@ -9466,18 +9466,47 @@ function _openShareCard(track) {
       _showActionToast(track.title, "name copied");
     } else if (act === "lanbeam") {
       let exe = state.settings.lanbeamPath;
-      let res = exe ? await inv("share:launch-app", exe, track.filePath) : null;
-      if (!res?.success) {
-        const pick = await inv("share:pick-app");
-        if (!pick?.success) return;
-        exe = pick.path;
-        state.settings.lanbeamPath = exe;
-        await saveSetting("lanbeamPath", exe);
-        res = await inv("share:launch-app", exe, track.filePath);
+      // Verify stored path still actually exists
+      if (exe) {
+        const check = await inv("share:find-lanbeam");
+        if (!check?.success || check.path !== exe) {
+          exe = check?.success ? check.path : null;
+          if (exe) {
+            state.settings.lanbeamPath = exe;
+            await saveSetting("lanbeamPath", exe);
+          }
+        }
       }
-      await inv("share:copy-file", track.filePath);
+      if (!exe) {
+        const f = await inv("share:find-lanbeam");
+        if (f?.success) {
+          exe = f.path;
+          state.settings.lanbeamPath = exe;
+          await saveSetting("lanbeamPath", exe);
+        }
+      }
+      // If still not installed anywhere on the PC, auto-download & install from latest GitHub release!
+      if (!exe) {
+        _showActionToast(track.title, "downloading LANBeam from GitHub...");
+        const installRes = await inv("share:install-lanbeam");
+        if (installRes?.success && installRes.path) {
+          exe = installRes.path;
+          state.settings.lanbeamPath = exe;
+          await saveSetting("lanbeamPath", exe);
+          _showActionToast("LANBeam", "installed successfully!");
+        } else {
+          // Fallback: let user manually locate exe if download/install failed
+          const pick = await inv("share:pick-app");
+          if (pick?.success) {
+            exe = pick.path;
+            state.settings.lanbeamPath = exe;
+            await saveSetting("lanbeamPath", exe);
+          }
+        }
+      }
+      let res = exe ? await inv("share:launch-app", exe, track.filePath) : null;
       close();
-      _showActionToast(track.title, res?.success ? "opened in LANBeam — file copied" : "launch failed");
+      _showActionToast(track.title, res?.success ? "queued in LANBeam" : "launch failed");
     } else {
       const urls = {
         whatsapp: `https://wa.me/?text=${enc}`,
