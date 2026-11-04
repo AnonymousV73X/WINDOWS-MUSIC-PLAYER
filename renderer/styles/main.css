@@ -1514,7 +1514,11 @@ input[type="range"] {
 }
 
 [data-theme="light"] .le-badge-synced {
-  background: color-mix(in srgb, var(--green, #1ed760) 15%, transparent) !important;
+  background: color-mix(
+    in srgb,
+    var(--green, #1ed760) 15%,
+    transparent
+  ) !important;
   color: var(--green, #1ed760) !important;
 }
 
@@ -1529,7 +1533,11 @@ input[type="range"] {
 }
 
 [data-theme="light"] .le-badge-dur-match {
-  background: color-mix(in srgb, var(--green, #1ed760) 15%, transparent) !important;
+  background: color-mix(
+    in srgb,
+    var(--green, #1ed760) 15%,
+    transparent
+  ) !important;
   color: var(--green, #1ed760) !important;
 }
 
@@ -9050,7 +9058,6 @@ body.expanded-sidebar .sidebar-search {
   transition: border-color 0.15s ease;
 }
 
-
 .cqb-name-input:focus {
   border-bottom-color: var(--green);
 }
@@ -9321,7 +9328,10 @@ body.expanded-sidebar .sidebar-search {
   color: var(--text-secondary);
   cursor: pointer;
   box-sizing: border-box;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
 }
 .nav-lyrics-group #playlist-import-btn:hover {
   background: var(--surface-hover);
@@ -9380,7 +9390,8 @@ body.expanded-sidebar .sidebar-search {
   display: flex;
   gap: 16px;
   padding: 7px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--border, #333) 50%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--border, #333) 50%, transparent);
   font-size: 13px;
 }
 .track-props-key {
