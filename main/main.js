@@ -167,7 +167,18 @@ function parseFileFromArgv(argv) {
     const arg = argv[i];
     if (arg.startsWith("-")) continue;
     const ext = path.extname(arg).toLowerCase();
-    const audioExtensions = [".mp3", ".flac", ".wav", ".m4a", ".ogg", ".aac", ".wma", ".opus", ".m3u", ".m3u8"];
+    const audioExtensions = [
+      ".mp3",
+      ".flac",
+      ".wav",
+      ".m4a",
+      ".ogg",
+      ".aac",
+      ".wma",
+      ".opus",
+      ".m3u",
+      ".m3u8",
+    ];
     if (audioExtensions.includes(ext)) {
       const fullPath = path.resolve(arg);
       if (fs.existsSync(fullPath)) {
@@ -308,6 +319,14 @@ function createMainWindow() {
     backgroundColor: "#121212",
     title: "NovaTune",
     titleBarStyle: "hidden",
+    titleBarOverlay:
+      process.platform === "win32"
+        ? {
+            color: "rgba(0, 0, 0, 0)",
+            symbolColor: "rgba(0, 0, 0, 0)",
+            height: 32,
+          }
+        : undefined,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: true,
@@ -322,45 +341,52 @@ function createMainWindow() {
 
   // Initialize taskbar thumbnail toolbar actions
   let thumbarIcons = null;
-  ensureThumbarIcons().then(icons => {
-    thumbarIcons = icons;
-    global.updateThumbarButtons = (isPlaying) => {
-      if (!mainWindow || mainWindow.isDestroyed() || !thumbarIcons) return;
-      global._thumbarIsPlaying = !!isPlaying; // track state for restore handler
-      try {
-        const res = mainWindow.setThumbarButtons([
-          {
-            tooltip: "Previous",
-            icon: thumbarIcons.prev,
-            click() {
-              mainWindow.webContents.send("player:prev");
-            }
-          },
-          {
-            tooltip: isPlaying ? "Pause" : "Play",
-            icon: isPlaying ? thumbarIcons.pause : thumbarIcons.play,
-            click() {
-              mainWindow.webContents.send("player:toggle-play-pause");
-            }
-          },
-          {
-            tooltip: "Next",
-            icon: thumbarIcons.next,
-            click() {
-              mainWindow.webContents.send("player:next");
-            }
-          }
-        ]);
-        console.log("[thumbar] setThumbarButtons result:", res, "isPlaying:", isPlaying);
-      } catch (err) {
-        console.warn("[thumbar] Failed to set thumbar buttons:", err.message);
-      }
-    };
-    // NOTE: Don't call updateThumbarButtons here — the window isn't shown yet.
-    // The 'show' event listener (added after _showWindow) handles the first call.
-  }).catch(err => {
-    console.error("Failed to initialize thumbar icons:", err);
-  });
+  ensureThumbarIcons()
+    .then((icons) => {
+      thumbarIcons = icons;
+      global.updateThumbarButtons = (isPlaying) => {
+        if (!mainWindow || mainWindow.isDestroyed() || !thumbarIcons) return;
+        global._thumbarIsPlaying = !!isPlaying; // track state for restore handler
+        try {
+          const res = mainWindow.setThumbarButtons([
+            {
+              tooltip: "Previous",
+              icon: thumbarIcons.prev,
+              click() {
+                mainWindow.webContents.send("player:prev");
+              },
+            },
+            {
+              tooltip: isPlaying ? "Pause" : "Play",
+              icon: isPlaying ? thumbarIcons.pause : thumbarIcons.play,
+              click() {
+                mainWindow.webContents.send("player:toggle-play-pause");
+              },
+            },
+            {
+              tooltip: "Next",
+              icon: thumbarIcons.next,
+              click() {
+                mainWindow.webContents.send("player:next");
+              },
+            },
+          ]);
+          console.log(
+            "[thumbar] setThumbarButtons result:",
+            res,
+            "isPlaying:",
+            isPlaying,
+          );
+        } catch (err) {
+          console.warn("[thumbar] Failed to set thumbar buttons:", err.message);
+        }
+      };
+      // NOTE: Don't call updateThumbarButtons here — the window isn't shown yet.
+      // The 'show' event listener (added after _showWindow) handles the first call.
+    })
+    .catch((err) => {
+      console.error("Failed to initialize thumbar icons:", err);
+    });
 
   mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
 
@@ -405,12 +431,19 @@ function createMainWindow() {
   // button (HWND association) before setThumbarButtons is called.
   mainWindow.on("show", () => {
     setTimeout(() => {
-      if (global.updateThumbarButtons && mainWindow && !mainWindow.isDestroyed()) {
+      if (
+        global.updateThumbarButtons &&
+        mainWindow &&
+        !mainWindow.isDestroyed()
+      ) {
         // Use the last-known playing state as an immediate best-guess so the
         // icon is never wrong on first paint.  On cold start _thumbarIsPlaying
         // is undefined → false (play icon), which is the correct default.
         const knownState = !!global._thumbarIsPlaying;
-        console.log("[thumbar] Applying buttons after show event + 200ms delay, knownState:", knownState);
+        console.log(
+          "[thumbar] Applying buttons after show event + 200ms delay, knownState:",
+          knownState,
+        );
         global.updateThumbarButtons(knownState);
         // Ask the renderer for the authoritative playing state and sync the
         // thumbar immediately if it differs (handles the race where the
@@ -426,7 +459,11 @@ function createMainWindow() {
   // thumbar when the window is minimized and re-shown.
   mainWindow.on("restore", () => {
     setTimeout(() => {
-      if (global.updateThumbarButtons && mainWindow && !mainWindow.isDestroyed()) {
+      if (
+        global.updateThumbarButtons &&
+        mainWindow &&
+        !mainWindow.isDestroyed()
+      ) {
         const isPlaying = !!global._thumbarIsPlaying;
         global.updateThumbarButtons(isPlaying);
       }
@@ -973,8 +1010,6 @@ app.whenReady().then(() => {
     } catch (_) {}
   }
 
-  
-
   // ─── Auto-Updater ─────────────────────────────────────────────────
   if (autoUpdater && app.isPackaged) {
     autoUpdater.autoDownload = true;
@@ -1100,12 +1135,17 @@ async function ensureThumbarIcons() {
   const pausePath = path.join(assetDir, "pause.png");
   const nextPath = path.join(assetDir, "next.png");
 
-  console.log("[thumbar] Asset paths:", { prevPath, playPath, pausePath, nextPath });
+  console.log("[thumbar] Asset paths:", {
+    prevPath,
+    playPath,
+    pausePath,
+    nextPath,
+  });
   console.log("[thumbar] Asset existence:", {
     prev: fs.existsSync(prevPath),
     play: fs.existsSync(playPath),
     pause: fs.existsSync(pausePath),
-    next: fs.existsSync(nextPath)
+    next: fs.existsSync(nextPath),
   });
 
   const fallbackDir = path.join(app.getPath("userData"), "thumbar-icons");
@@ -1119,9 +1159,19 @@ async function ensureThumbarIcons() {
   const usePause = fs.existsSync(pausePath) ? pausePath : fallbackPause;
   const useNext = fs.existsSync(nextPath) ? nextPath : fallbackNext;
 
-  console.log("[thumbar] Using paths:", { usePrev, usePlay, usePause, useNext });
+  console.log("[thumbar] Using paths:", {
+    usePrev,
+    usePlay,
+    usePause,
+    useNext,
+  });
 
-  if (!fs.existsSync(usePrev) || !fs.existsSync(usePlay) || !fs.existsSync(usePause) || !fs.existsSync(useNext)) {
+  if (
+    !fs.existsSync(usePrev) ||
+    !fs.existsSync(usePlay) ||
+    !fs.existsSync(usePause) ||
+    !fs.existsSync(useNext)
+  ) {
     try {
       if (!fs.existsSync(fallbackDir)) {
         fs.mkdirSync(fallbackDir, { recursive: true });
@@ -1132,32 +1182,47 @@ async function ensureThumbarIcons() {
       const nextSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M8 8 L20 16 L8 24 Z" fill="none" stroke="white" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/><rect x="21.5" y="7" width="3.5" height="18" rx="1.75" fill="white"/></svg>`;
 
       const sharp = require("sharp");
-      if (!fs.existsSync(fallbackPrev)) await sharp(Buffer.from(prevSvg)).png().toFile(fallbackPrev);
-      if (!fs.existsSync(fallbackPlay)) await sharp(Buffer.from(playSvg)).png().toFile(fallbackPlay);
-      if (!fs.existsSync(fallbackPause)) await sharp(Buffer.from(pauseSvg)).png().toFile(fallbackPause);
-      if (!fs.existsSync(fallbackNext)) await sharp(Buffer.from(nextSvg)).png().toFile(fallbackNext);
+      if (!fs.existsSync(fallbackPrev))
+        await sharp(Buffer.from(prevSvg)).png().toFile(fallbackPrev);
+      if (!fs.existsSync(fallbackPlay))
+        await sharp(Buffer.from(playSvg)).png().toFile(fallbackPlay);
+      if (!fs.existsSync(fallbackPause))
+        await sharp(Buffer.from(pauseSvg)).png().toFile(fallbackPause);
+      if (!fs.existsSync(fallbackNext))
+        await sharp(Buffer.from(nextSvg)).png().toFile(fallbackNext);
     } catch (err) {
-      console.error("[thumbar] Failed to generate fallback taskbar icons using sharp:", err.message);
+      console.error(
+        "[thumbar] Failed to generate fallback taskbar icons using sharp:",
+        err.message,
+      );
     }
   }
 
-  const prevImg = nativeImage.createFromPath(fs.existsSync(usePrev) ? usePrev : fallbackPrev);
-  const playImg = nativeImage.createFromPath(fs.existsSync(usePlay) ? usePlay : fallbackPlay);
-  const pauseImg = nativeImage.createFromPath(fs.existsSync(usePause) ? usePause : fallbackPause);
-  const nextImg = nativeImage.createFromPath(fs.existsSync(useNext) ? useNext : fallbackNext);
+  const prevImg = nativeImage.createFromPath(
+    fs.existsSync(usePrev) ? usePrev : fallbackPrev,
+  );
+  const playImg = nativeImage.createFromPath(
+    fs.existsSync(usePlay) ? usePlay : fallbackPlay,
+  );
+  const pauseImg = nativeImage.createFromPath(
+    fs.existsSync(usePause) ? usePause : fallbackPause,
+  );
+  const nextImg = nativeImage.createFromPath(
+    fs.existsSync(useNext) ? useNext : fallbackNext,
+  );
 
   console.log("[thumbar] NativeImage empty checks:", {
     prev: prevImg.isEmpty(),
     play: playImg.isEmpty(),
     pause: pauseImg.isEmpty(),
-    next: nextImg.isEmpty()
+    next: nextImg.isEmpty(),
   });
 
   return {
     prev: prevImg,
     play: playImg,
     pause: pauseImg,
-    next: nextImg
+    next: nextImg,
   };
 }
 

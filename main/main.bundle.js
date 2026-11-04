@@ -41235,18 +41235,10 @@ ${items}
         }
         return { success: true };
       });
-      ipcMain.handle("window:set-overlay-chrome", async (event, hidden) => {
+      ipcMain.handle("window:set-overlay-chrome", async () => ({ success: true }));
+      ipcMain.handle("window:is-maximized", async () => {
         const win = BrowserWindow.getFocusedWindow() || mainWindow;
-        if (win && !win.isDestroyed() && process.platform === "win32") {
-          win.setTitleBarOverlay(
-            hidden ? {
-              color: "rgba(0, 0, 0, 0)",
-              symbolColor: "rgba(0, 0, 0, 0)",
-              height: 0
-            } : { color: "rgba(0, 0, 0, 0)", symbolColor: "#ffffff", height: 32 }
-          );
-        }
-        return { success: true };
+        return !!(win && !win.isDestroyed() && win.isMaximized());
       });
       ipcMain.handle("smtc:update-metadata", (_, metadata) => {
         if (_smtcBridgeRef && typeof _smtcBridgeRef.updateMetadata === "function") {
@@ -43266,11 +43258,6 @@ var require_main = __commonJS({
         backgroundColor: "#121212",
         title: "NovaTune",
         titleBarStyle: "hidden",
-        titleBarOverlay: process.platform === "win32" ? {
-          color: "rgba(0, 0, 0, 0)",
-          symbolColor: "#ffffff",
-          height: 32
-        } : void 0,
         webPreferences: {
           preload: path.join(__dirname, "preload.js"),
           nodeIntegration: true,

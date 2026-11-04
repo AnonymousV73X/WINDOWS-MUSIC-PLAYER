@@ -4551,7 +4551,17 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
     return { success: true };
   });
 
-  ipcMain.handle("window:set-overlay-chrome", async () => ({ success: true }));
+  ipcMain.handle("window:set-overlay-chrome", async (event, hidden) => {
+    const win = BrowserWindow.getFocusedWindow() || mainWindow;
+    if (win && !win.isDestroyed() && process.platform === "win32") {
+      win.setTitleBarOverlay({
+        color: "rgba(0, 0, 0, 0)",
+        symbolColor: "rgba(0, 0, 0, 0)",
+        height: hidden ? 0 : 32,
+      });
+    }
+    return { success: true };
+  });
 
   ipcMain.handle("window:is-maximized", async () => {
     const win = BrowserWindow.getFocusedWindow() || mainWindow;
