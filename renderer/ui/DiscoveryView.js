@@ -94,6 +94,7 @@ class DiscoveryView {
     if (this.novaAPI?.on) {
       this.novaAPI.on("discovery:progress", (data) => {
         if (!data || !data.trackId) return;
+        if (this._cancelledIds && this._cancelledIds.has(data.trackId)) return;
         const current = this.downloadStates.get(data.trackId) || {};
         const updated = { ...current, ...data };
         this.downloadStates.set(data.trackId, updated);
@@ -101,8 +102,7 @@ class DiscoveryView {
       });
 
       this.novaAPI.on("discovery:search-update", (d) => {
-        if (!d || d.searchId !== this._searchSeq || !Array.isArray(d.results))
-          return;
+        if (!d || d.searchId !== this._searchSeq || !Array.isArray(d.results)) return;
         if (this._searchBusyFn) this._searchBusyFn(false);
         this.tracks = this._stableMerge(this.tracks, d.results);
         this._renderResults(this.tracks);
@@ -300,11 +300,7 @@ class DiscoveryView {
     this.tracks = [];
 
     try {
-      const res = await this.novaAPI.invoke(
-        "discovery:search",
-        query,
-        searchId,
-      );
+      const res = await this.novaAPI.invoke("discovery:search", query, searchId);
       if (searchId !== this._searchSeq) return;
       setBusy(false);
       if (res && res.streamed) return;
@@ -409,7 +405,7 @@ class DiscoveryView {
         <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--green); font-weight: 500;">
           <div style="width: 14px; height: 14px; border: 2px solid color-mix(in srgb, var(--green) 30%, transparent); border-top-color: var(--green); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
           <span>${state.percent || 10}%</span>
-          <button class="action-cancel-btn" data-id="${trackId}" style="width: 20px; height: 20px; border-radius: 50%; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; color: rgba(255,255,255,0.6); font-size: 11px; line-height: 1; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);" title="Cancel download" onmouseover="this.style.background='rgba(239,68,68,0.2)'; this.style.borderColor='rgba(239,68,68,0.5)'; this.style.color='#ef4444';" onmouseout="this.style.background='rgba(255,255,255,0.08)'; this.style.borderColor='rgba(255,255,255,0.15)'; this.style.color='rgba(255,255,255,0.6)';">✕</button>
+          <button class="action-cancel-btn" data-id="${trackId}" title="Cancel download" style="display:flex;align-items:center;gap:5px;padding:4px 10px 4px 8px;border-radius:999px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);color:#ff6b6b;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;transition:background .15s,color .15s,transform .1s;" onmouseover="this.style.background='#ef4444';this.style.color='#fff';" onmouseout="this.style.background='rgba(239,68,68,0.12)';this.style.color='#ff6b6b';" onmousedown="this.style.transform='scale(0.95)'" onmouseup="this.style.transform=''"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" style="width:10px;height:10px;"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>Cancel</button>
         </div>
       `;
     }
@@ -429,12 +425,8 @@ class DiscoveryView {
 
     if (state.status === "done") {
       const pb = this._getPlayback();
-      const isPlaying = !!(
-        pb &&
-        state.track &&
-        this._samePb(pb, state.track) &&
-        pb.isPlaying
-      );
+      const isPlaying =
+        !!(pb && state.track && this._samePb(pb, state.track) && pb.isPlaying);
       const icon = isPlaying
         ? `<svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`
         : `<svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;"><polygon points="5 3 19 12 5 21" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/></svg>`;
@@ -486,6 +478,7 @@ class DiscoveryView {
       btn.addEventListener("click", async (e) => {
         e.stopPropagation();
         const id = btn.dataset.id;
+        (this._cancelledIds = this._cancelledIds || new Set()).add(id);
         try {
           await this.novaAPI.invoke("discovery:cancel", { trackId: id });
         } catch (_) {}
@@ -571,6 +564,7 @@ class DiscoveryView {
         if (await this.onCheckDuplicate(track)) return;
       } catch (_) {}
     }
+    this._cancelledIds?.delete(track.id);
     this.downloadStates.set(track.id, { status: "resolving", percent: 5 });
     this._updateTrackDownloadUI(track.id, { status: "resolving", percent: 5 });
 
@@ -616,12 +610,14 @@ class DiscoveryView {
         }, 4000);
       } else {
         const msg = res?.error || "Unknown error";
-        this._showToast("Download failed: " + msg);
+        if (!(this._cancelledIds && this._cancelledIds.has(track.id)))
+          this._showToast("Download failed: " + msg);
         this.downloadStates.delete(track.id);
         this._updateTrackDownloadUI(track.id, { status: "idle" });
       }
     } catch (err) {
-      this._showToast("Download error: " + err.message);
+      if (!(this._cancelledIds && this._cancelledIds.has(track.id)))
+        this._showToast("Download error: " + err.message);
       this.downloadStates.delete(track.id);
       this._updateTrackDownloadUI(track.id, { status: "idle" });
     }
