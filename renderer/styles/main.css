@@ -9461,3 +9461,45 @@ body.expanded-sidebar .sidebar-search {
 .win-controls * {
   pointer-events: none !important;
 }
+
+/* ─── Share card ─── */
+.track-share-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.track-share-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px;
+  background: var(--surface, #1a1a1a);
+  border: 1px solid var(--border, #333);
+  border-radius: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+}
+.track-share-item svg {
+  width: 20px;
+  height: 20px;
+  color: var(--green, #1db954);
+  margin-bottom: 4px;
+}
+.track-share-item:hover {
+  border-color: var(--green, #1db954);
+  background: color-mix(in srgb, var(--green, #1db954) 10%, var(--surface, #1a1a1a));
+}
+.track-share-item:active {
+  transform: scale(0.97);
+}
+.track-share-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.track-share-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+}
