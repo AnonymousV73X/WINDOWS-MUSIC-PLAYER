@@ -2643,7 +2643,8 @@ textarea {
 
 /* v1.0.9: Only show the eq-icon when the parent row is playing */
 .track-row.is-playing .eq-icon,
-.playlist-song-row.is-playing .eq-icon {
+.playlist-song-row.is-playing .eq-icon,
+.discovery-track-row.is-playing .eq-icon {
   opacity: 1;
 }
 
@@ -2661,7 +2662,8 @@ textarea {
 
 /* v1.0.9: Run the animation only when the row is playing */
 .track-row.is-playing .eq-bar,
-.playlist-song-row.is-playing .eq-bar {
+.playlist-song-row.is-playing .eq-bar,
+.discovery-track-row.is-playing .eq-bar {
   animation-play-state: running;
 }
 
