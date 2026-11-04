@@ -41235,7 +41235,17 @@ ${items}
         }
         return { success: true };
       });
-      ipcMain.handle("window:set-overlay-chrome", async () => ({ success: true }));
+      ipcMain.handle("window:set-overlay-chrome", async (event, hidden) => {
+        const win = BrowserWindow.getFocusedWindow() || mainWindow;
+        if (win && !win.isDestroyed() && process.platform === "win32") {
+          win.setTitleBarOverlay({
+            color: "rgba(0, 0, 0, 0)",
+            symbolColor: "rgba(0, 0, 0, 0)",
+            height: hidden ? 0 : 32
+          });
+        }
+        return { success: true };
+      });
       ipcMain.handle("window:is-maximized", async () => {
         const win = BrowserWindow.getFocusedWindow() || mainWindow;
         return !!(win && !win.isDestroyed() && win.isMaximized());
@@ -43152,7 +43162,18 @@ var require_main = __commonJS({
         const arg = argv[i];
         if (arg.startsWith("-")) continue;
         const ext = path.extname(arg).toLowerCase();
-        const audioExtensions = [".mp3", ".flac", ".wav", ".m4a", ".ogg", ".aac", ".wma", ".opus", ".m3u", ".m3u8"];
+        const audioExtensions = [
+          ".mp3",
+          ".flac",
+          ".wav",
+          ".m4a",
+          ".ogg",
+          ".aac",
+          ".wma",
+          ".opus",
+          ".m3u",
+          ".m3u8"
+        ];
         if (audioExtensions.includes(ext)) {
           const fullPath = path.resolve(arg);
           if (fs.existsSync(fullPath)) {
@@ -43258,6 +43279,11 @@ var require_main = __commonJS({
         backgroundColor: "#121212",
         title: "NovaTune",
         titleBarStyle: "hidden",
+        titleBarOverlay: process.platform === "win32" ? {
+          color: "rgba(0, 0, 0, 0)",
+          symbolColor: "rgba(0, 0, 0, 0)",
+          height: 32
+        } : void 0,
         webPreferences: {
           preload: path.join(__dirname, "preload.js"),
           nodeIntegration: true,
@@ -43298,7 +43324,12 @@ var require_main = __commonJS({
                 }
               }
             ]);
-            console.log("[thumbar] setThumbarButtons result:", res, "isPlaying:", isPlaying);
+            console.log(
+              "[thumbar] setThumbarButtons result:",
+              res,
+              "isPlaying:",
+              isPlaying
+            );
           } catch (err) {
             console.warn("[thumbar] Failed to set thumbar buttons:", err.message);
           }
@@ -43332,7 +43363,10 @@ var require_main = __commonJS({
         setTimeout(() => {
           if (global.updateThumbarButtons && mainWindow && !mainWindow.isDestroyed()) {
             const knownState = !!global._thumbarIsPlaying;
-            console.log("[thumbar] Applying buttons after show event + 200ms delay, knownState:", knownState);
+            console.log(
+              "[thumbar] Applying buttons after show event + 200ms delay, knownState:",
+              knownState
+            );
             global.updateThumbarButtons(knownState);
             if (!mainWindow.isDestroyed()) {
               mainWindow.webContents.send("player:request-thumbar-sync");
@@ -43887,7 +43921,12 @@ var require_main = __commonJS({
       const playPath = path.join(assetDir, "play.png");
       const pausePath = path.join(assetDir, "pause.png");
       const nextPath = path.join(assetDir, "next.png");
-      console.log("[thumbar] Asset paths:", { prevPath, playPath, pausePath, nextPath });
+      console.log("[thumbar] Asset paths:", {
+        prevPath,
+        playPath,
+        pausePath,
+        nextPath
+      });
       console.log("[thumbar] Asset existence:", {
         prev: fs.existsSync(prevPath),
         play: fs.existsSync(playPath),
@@ -43903,7 +43942,12 @@ var require_main = __commonJS({
       const usePlay = fs.existsSync(playPath) ? playPath : fallbackPlay;
       const usePause = fs.existsSync(pausePath) ? pausePath : fallbackPause;
       const useNext = fs.existsSync(nextPath) ? nextPath : fallbackNext;
-      console.log("[thumbar] Using paths:", { usePrev, usePlay, usePause, useNext });
+      console.log("[thumbar] Using paths:", {
+        usePrev,
+        usePlay,
+        usePause,
+        useNext
+      });
       if (!fs.existsSync(usePrev) || !fs.existsSync(usePlay) || !fs.existsSync(usePause) || !fs.existsSync(useNext)) {
         try {
           if (!fs.existsSync(fallbackDir)) {
@@ -43914,18 +43958,33 @@ var require_main = __commonJS({
           const pauseSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="7" width="5" height="18" rx="2.5" fill="white"/><rect x="19" y="7" width="5" height="18" rx="2.5" fill="white"/></svg>`;
           const nextSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M8 8 L20 16 L8 24 Z" fill="none" stroke="white" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/><rect x="21.5" y="7" width="3.5" height="18" rx="1.75" fill="white"/></svg>`;
           const sharp = require("sharp");
-          if (!fs.existsSync(fallbackPrev)) await sharp(Buffer.from(prevSvg)).png().toFile(fallbackPrev);
-          if (!fs.existsSync(fallbackPlay)) await sharp(Buffer.from(playSvg)).png().toFile(fallbackPlay);
-          if (!fs.existsSync(fallbackPause)) await sharp(Buffer.from(pauseSvg)).png().toFile(fallbackPause);
-          if (!fs.existsSync(fallbackNext)) await sharp(Buffer.from(nextSvg)).png().toFile(fallbackNext);
+          if (!fs.existsSync(fallbackPrev))
+            await sharp(Buffer.from(prevSvg)).png().toFile(fallbackPrev);
+          if (!fs.existsSync(fallbackPlay))
+            await sharp(Buffer.from(playSvg)).png().toFile(fallbackPlay);
+          if (!fs.existsSync(fallbackPause))
+            await sharp(Buffer.from(pauseSvg)).png().toFile(fallbackPause);
+          if (!fs.existsSync(fallbackNext))
+            await sharp(Buffer.from(nextSvg)).png().toFile(fallbackNext);
         } catch (err) {
-          console.error("[thumbar] Failed to generate fallback taskbar icons using sharp:", err.message);
+          console.error(
+            "[thumbar] Failed to generate fallback taskbar icons using sharp:",
+            err.message
+          );
         }
       }
-      const prevImg = nativeImage.createFromPath(fs.existsSync(usePrev) ? usePrev : fallbackPrev);
-      const playImg = nativeImage.createFromPath(fs.existsSync(usePlay) ? usePlay : fallbackPlay);
-      const pauseImg = nativeImage.createFromPath(fs.existsSync(usePause) ? usePause : fallbackPause);
-      const nextImg = nativeImage.createFromPath(fs.existsSync(useNext) ? useNext : fallbackNext);
+      const prevImg = nativeImage.createFromPath(
+        fs.existsSync(usePrev) ? usePrev : fallbackPrev
+      );
+      const playImg = nativeImage.createFromPath(
+        fs.existsSync(usePlay) ? usePlay : fallbackPlay
+      );
+      const pauseImg = nativeImage.createFromPath(
+        fs.existsSync(usePause) ? usePause : fallbackPause
+      );
+      const nextImg = nativeImage.createFromPath(
+        fs.existsSync(useNext) ? useNext : fallbackNext
+      );
       console.log("[thumbar] NativeImage empty checks:", {
         prev: prevImg.isEmpty(),
         play: playImg.isEmpty(),
