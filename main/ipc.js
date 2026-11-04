@@ -4528,7 +4528,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
               symbolColor: "rgba(0, 0, 0, 0)",
               height: 0,
             }
-          : { color: "rgba(0, 0, 0, 0)", symbolColor: "#b3b3b3", height: 32 },
+          : { color: "rgba(0, 0, 0, 0)", symbolColor: "#ffffff", height: 32 },
       );
     }
     return { success: true };
