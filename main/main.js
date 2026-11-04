@@ -308,14 +308,6 @@ function createMainWindow() {
     backgroundColor: "#121212",
     title: "NovaTune",
     titleBarStyle: "hidden",
-    titleBarOverlay:
-      process.platform === "win32"
-        ? {
-            color: "rgba(0, 0, 0, 0)",
-            symbolColor: "#ffffff",
-            height: 32,
-          }
-        : undefined,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: true,
