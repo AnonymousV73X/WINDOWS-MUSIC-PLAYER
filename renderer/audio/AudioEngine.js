@@ -310,7 +310,14 @@ class AudioEngine {
             `code=${code} msg=${msg} readyState=${this.audio.readyState} ` +
             `networkState=${this.audio.networkState}`,
         );
-        reject(new Error(`Failed to load audio: ${msg} (code ${code})`));
+        reject(
+          Object.assign(
+            new Error(`Failed to load audio: ${msg} (code ${code})`),
+            {
+              mediaCode: code,
+            },
+          ),
+        );
       };
 
       // Timeout: 45s for the first track load after startup (main process may be

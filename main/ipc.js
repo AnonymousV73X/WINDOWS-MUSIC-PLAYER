@@ -4521,17 +4521,18 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   ipcMain.handle("window:set-overlay-chrome", async (event, hidden) => {
     const win = BrowserWindow.getFocusedWindow() || mainWindow;
     if (win && !win.isDestroyed() && process.platform === "win32") {
-      win.setTitleBarOverlay(
-        hidden
-          ? {
-              color: "rgba(0, 0, 0, 0)",
-              symbolColor: "rgba(0, 0, 0, 0)",
-              height: 0,
-            }
-          : { color: "rgba(0, 0, 0, 0)", symbolColor: "#b3b3b3", height: 32 },
-      );
+      win.setTitleBarOverlay({
+        color: "rgba(0, 0, 0, 0)",
+        symbolColor: "rgba(0, 0, 0, 0)",
+        height: hidden ? 0 : 32,
+      });
     }
     return { success: true };
+  });
+
+  ipcMain.handle("window:is-maximized", async () => {
+    const win = BrowserWindow.getFocusedWindow() || mainWindow;
+    return !!(win && !win.isDestroyed() && win.isMaximized());
   });
 
   // ═══════════════════════════════════════════════════════════════════
@@ -5623,6 +5624,216 @@ ipcMain.handle("app:install-update", async () => {
   }
 });
 
+ipcMain.handle("share:copy-file", async (_event, filePath) => {
+  try {
+    if (!filePath || !fs.existsSync(filePath))
+      return { success: false, error: "File not found" };
+    if (process.platform === "win32") {
+      const { execFile } = require("child_process");
+      await new Promise((resolve, reject) => {
+        execFile(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Set-Clipboard -LiteralPath $env:NT_SHARE_PATH",
+          ],
+          { env: { ...process.env, NT_SHARE_PATH: filePath }, windowsHide: true },
+          (err) => (err ? reject(err) : resolve()),
+        );
+      });
+      return { success: true, file: true };
+    }
+    require("electron").clipboard.writeText(filePath);
+    return { success: true, file: false };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle("share:pick-app", async () => {
+  try {
+    const r = await dialog.showOpenDialog({
+      title: "Select the app's executable",
+      properties: ["openFile"],
+      filters: [{ name: "Applications", extensions: ["exe", "lnk", "bat", "cmd"] }],
+    });
+    if (r.canceled || !r.filePaths.length) return { success: false, canceled: true };
+    return { success: true, path: r.filePaths[0] };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle("share:find-lanbeam", async () => {
+  const path = require("path");
+  const candidates = [];
+  if (process.env.LOCALAPPDATA) {
+    candidates.push(path.join(process.env.LOCALAPPDATA, "Programs", "LANBeam", "LANBeam.exe"));
+    candidates.push(path.join(process.env.LOCALAPPDATA, "Programs", "lanbeam", "LANBeam.exe"));
+    candidates.push(path.join(process.env.LOCALAPPDATA, "LANBeam", "LANBeam.exe"));
+    candidates.push(path.join(process.env.LOCALAPPDATA, "lanbeam", "LANBeam.exe"));
+  }
+  if (process.env.ProgramFiles) {
+    candidates.push(path.join(process.env.ProgramFiles, "LANBeam", "LANBeam.exe"));
+    candidates.push(path.join(process.env.ProgramFiles, "lanbeam", "LANBeam.exe"));
+  }
+  if (process.env["ProgramFiles(x86)"]) {
+    candidates.push(path.join(process.env["ProgramFiles(x86)"], "LANBeam", "LANBeam.exe"));
+    candidates.push(path.join(process.env["ProgramFiles(x86)"], "lanbeam", "LANBeam.exe"));
+  }
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return { success: true, path: c };
+  }
+  return { success: false };
+});
+
+ipcMain.handle("share:install-lanbeam", async (event) => {
+  const https = require("https");
+  const os = require("os");
+  const path = require("path");
+  const { spawn } = require("child_process");
+
+  const sendProgress = (step, percent, msg) => {
+    try {
+      event.sender.send("share:install-lanbeam-progress", { step, percent, message: msg });
+    } catch (_) {}
+  };
+
+  try {
+    sendProgress("fetching", 10, "Checking latest LANBeam release...");
+    
+    // Fetch latest release metadata from GitHub
+    const fetchJson = (url) => new Promise((resolve, reject) => {
+      const req = https.get(url, { headers: { "User-Agent": "NovaTune" } }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return resolve(fetchJson(res.headers.location));
+        }
+        if (res.statusCode !== 200) return reject(new Error("GitHub API HTTP " + res.statusCode));
+        let data = "";
+        res.on("data", (c) => data += c);
+        res.on("end", () => {
+          try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
+        });
+      });
+      req.on("error", reject);
+      req.setTimeout(15000, () => { req.destroy(); reject(new Error("GitHub API request timed out")); });
+    });
+
+    const release = await fetchJson("https://api.github.com/repos/AnonymousV73X/LAN-FILE-TRANSFER-LANBEAM/releases/latest");
+    const asset = (release.assets || []).find((a) => a.name.endsWith(".exe") && !a.name.includes("blockmap"));
+    if (!asset || !asset.browser_download_url) {
+      throw new Error("No installer asset found in latest LANBeam release (" + (release.tag_name || "unknown") + ")");
+    }
+
+    sendProgress("downloading", 20, "Downloading " + asset.name + " (" + (release.tag_name || "latest") + ")...");
+
+    const tmpDir = os.tmpdir();
+    const installerPath = path.join(tmpDir, asset.name);
+
+    // Download with redirect handling
+    await new Promise((resolve, reject) => {
+      const downloadFile = (fileUrl) => {
+        const req = https.get(fileUrl, { headers: { "User-Agent": "NovaTune" } }, (res) => {
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            return downloadFile(res.headers.location);
+          }
+          if (res.statusCode !== 200) return reject(new Error("Installer download HTTP " + res.statusCode));
+          const total = parseInt(res.headers["content-length"], 10) || 0;
+          let downloaded = 0;
+          const outStream = fs.createWriteStream(installerPath);
+          res.on("data", (chunk) => {
+            downloaded += chunk.length;
+            if (total > 0) {
+              const pct = 20 + Math.round((downloaded / total) * 60);
+              sendProgress("downloading", pct, "Downloading LANBeam... " + pct + "%");
+            }
+          });
+          res.pipe(outStream);
+          outStream.on("finish", () => {
+            outStream.close();
+            resolve();
+          });
+          outStream.on("error", reject);
+        });
+        req.on("error", reject);
+      };
+      downloadFile(asset.browser_download_url);
+    });
+
+    sendProgress("installing", 85, "Installing LANBeam silently...");
+
+    // Run NSIS installer silently (/S)
+    await new Promise((resolve, reject) => {
+      const proc = spawn(installerPath, ["/S"], { windowsHide: true, detached: false });
+      proc.on("close", (code) => {
+        try { fs.unlinkSync(installerPath); } catch (_) {}
+        resolve();
+      });
+      proc.on("error", (err) => {
+        try { fs.unlinkSync(installerPath); } catch (_) {}
+        reject(err);
+      });
+    });
+
+    // Wait a brief moment for files to settle, then verify installed exe
+    await new Promise((r) => setTimeout(r, 1500));
+
+    const candidates = [];
+    if (process.env.LOCALAPPDATA) {
+      candidates.push(path.join(process.env.LOCALAPPDATA, "Programs", "LANBeam", "LANBeam.exe"));
+      candidates.push(path.join(process.env.LOCALAPPDATA, "Programs", "lanbeam", "LANBeam.exe"));
+      candidates.push(path.join(process.env.LOCALAPPDATA, "LANBeam", "LANBeam.exe"));
+    }
+    if (process.env.ProgramFiles) {
+      candidates.push(path.join(process.env.ProgramFiles, "LANBeam", "LANBeam.exe"));
+    }
+    if (process.env["ProgramFiles(x86)"]) {
+      candidates.push(path.join(process.env["ProgramFiles(x86)"], "LANBeam", "LANBeam.exe"));
+    }
+
+    for (const c of candidates) {
+      if (fs.existsSync(c)) {
+        sendProgress("done", 100, "LANBeam ready!");
+        return { success: true, path: c };
+      }
+    }
+
+    return { success: false, error: "Installer finished but LANBeam.exe was not found in standard directories." };
+  } catch (err) {
+    console.error("[IPC] share:install-lanbeam error:", err);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle("share:launch-app", async (_event, exePath, filePath) => {
+  try {
+    if (!exePath || !fs.existsSync(exePath))
+      return { success: false, error: "App not found" };
+    const { spawn } = require("child_process");
+    const child = spawn(exePath, filePath ? [`--share=${filePath}`] : [], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: false,
+    });
+    child.on("error", () => {});
+    child.unref();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle("share:show-in-folder", async (_event, filePath) => {
+  try {
+    if (filePath) shell.showItemInFolder(filePath);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMain.handle("app:open-external", async (_event, url) => {
   try {
     await shell.openExternal(url);
@@ -6631,6 +6842,9 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
 
     return { success: true, filePath: savedPath, track: parsedTrack };
   } catch (err) {
+    if (err && err.cancelled) {
+      return { success: false, cancelled: true, error: "Download cancelled" };
+    }
     console.error("[IPC] discovery:download error:", err);
     return { success: false, error: err.message };
   }

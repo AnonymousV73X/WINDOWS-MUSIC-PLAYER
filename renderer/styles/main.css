@@ -341,8 +341,13 @@
   --green: #1ed760;
   --green-hover: #1fdf64;
   --text-primary: #ffffff;
-  --text-secondary: #b3b3b3;
-  --text-muted: #6a6a6a;
+  --text-secondary: #d0d0d0;
+  --text-muted: #9a9a9a;
+  --dv-field-bg: rgba(255, 255, 255, 0.06);
+  --dv-border: rgba(255, 255, 255, 0.1);
+  --dv-row-bg: rgba(255, 255, 255, 0.03);
+  --dv-row-hover: rgba(255, 255, 255, 0.08);
+  --dv-btn-bg: rgba(255, 255, 255, 0.08);
   --lyrics-bg: #161616;
   --sidebar-w: 240px;
   --app-font: "Outfit", sans-serif;
@@ -364,6 +369,11 @@
   --text-primary: #1f211d;
   --text-secondary: #575a53;
   --text-muted: #8b8f85;
+  --dv-field-bg: rgba(0, 0, 0, 0.05);
+  --dv-border: rgba(0, 0, 0, 0.14);
+  --dv-row-bg: rgba(0, 0, 0, 0.035);
+  --dv-row-hover: rgba(0, 0, 0, 0.08);
+  --dv-btn-bg: rgba(0, 0, 0, 0.07);
   --lyrics-bg: #fafbfa;
   --slider-track-unfilled: #d8dcd3;
   /* Light mode: button text stays light (handled by !important overrides below) */
@@ -1670,6 +1680,7 @@ body {
   height: 100vh;
   overflow: hidden !important;
   font-size: 14px;
+  font-weight: 500;
   -webkit-font-smoothing: antialiased;
   user-select: none;
   /* PERFORMANCE: Promote body to its own compositing layer so that
@@ -1681,7 +1692,7 @@ body {
 
 .home-shuffle-btn {
   font-family: inherit;
-  font-weight: 300 !important;
+  font-weight: 500 !important;
   margin-bottom: 2px !important;
 }
 
@@ -2643,7 +2654,8 @@ textarea {
 
 /* v1.0.9: Only show the eq-icon when the parent row is playing */
 .track-row.is-playing .eq-icon,
-.playlist-song-row.is-playing .eq-icon {
+.playlist-song-row.is-playing .eq-icon,
+.discovery-track-row.is-playing .eq-icon {
   opacity: 1;
 }
 
@@ -2661,7 +2673,8 @@ textarea {
 
 /* v1.0.9: Run the animation only when the row is playing */
 .track-row.is-playing .eq-bar,
-.playlist-song-row.is-playing .eq-bar {
+.playlist-song-row.is-playing .eq-bar,
+.discovery-track-row.is-playing .eq-bar {
   animation-play-state: running;
 }
 
@@ -9329,4 +9342,204 @@ body.expanded-sidebar .sidebar-search {
 .nav-lyrics-group #playlist-import-btn svg {
   width: 15px;
   height: 15px;
+}
+/* ─── Track Properties Card ─── */
+.track-props-card {
+  width: 460px;
+  border-top: 2px solid var(--green, #1db954);
+}
+.track-props-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border, #333);
+}
+.track-props-head img {
+  width: 72px;
+  height: 72px;
+  border-radius: 10px;
+  object-fit: cover;
+  border: 1px solid var(--border, #333);
+  flex-shrink: 0;
+}
+.track-props-head-text {
+  min-width: 0;
+}
+.track-props-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--green, #1db954);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.track-props-sub {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.track-props-list {
+  display: flex;
+  flex-direction: column;
+}
+.track-props-row {
+  display: flex;
+  gap: 16px;
+  padding: 7px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border, #333) 50%, transparent);
+  font-size: 13px;
+}
+.track-props-key {
+  flex: 0 0 96px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding-top: 1px;
+}
+.track-props-val {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  word-break: break-all;
+  user-select: text;
+}
+
+/* ─── Custom window controls ─── */
+.win-controls {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 32px;
+  display: flex;
+  z-index: 100001;
+  -webkit-app-region: no-drag;
+}
+.win-btn {
+  width: 46px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.12s;
+  -webkit-app-region: no-drag;
+}
+.win-btn svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.win-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+.win-btn:active {
+  background: rgba(255, 255, 255, 0.24);
+}
+.win-btn.win-close:hover {
+  background: #e81123;
+}
+.win-btn.win-close:active {
+  background: #f1707a;
+}
+[data-theme="light"] .win-btn {
+  color: #1f211d;
+}
+[data-theme="light"] .win-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+[data-theme="light"] .win-btn.win-close:hover {
+  color: #fff;
+  background: #e81123;
+}
+
+/* Native overlay (invisible glyphs) handles clicks + Snap Layouts; DOM buttons are visual only */
+.win-controls,
+.win-controls * {
+  pointer-events: none !important;
+}
+
+/* ─── Share card ─── */
+.track-share-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.track-share-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px;
+  background: var(--surface, #1a1a1a);
+  border: 1px solid var(--border, #333);
+  border-radius: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+}
+.track-share-item svg {
+  width: 20px;
+  height: 20px;
+  color: var(--green, #1db954);
+  margin-bottom: 4px;
+}
+.track-share-item:hover {
+  border-color: var(--green, #1db954);
+  background: color-mix(in srgb, var(--green, #1db954) 10%, var(--surface, #1a1a1a));
+}
+.track-share-item:active {
+  transform: scale(0.97);
+}
+.track-share-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.track-share-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Discovery: focus ring + placeholder follow theme */
+#discovery-search-input::placeholder {
+  color: var(--text-muted);
+}
+#discovery-search-input:focus {
+  border-color: var(--green, #1db954) !important;
+}
+
+/* Seek hover time tooltip */
+.seek-hover-tip {
+  position: fixed;
+  z-index: 100002;
+  pointer-events: none;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  background: var(--surface, #242424);
+  border: 1px solid var(--border, #333);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, -100%);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.seek-hover-tip.show {
+  opacity: 1;
 }

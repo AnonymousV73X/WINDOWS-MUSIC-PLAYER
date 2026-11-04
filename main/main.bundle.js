@@ -41219,15 +41219,17 @@ ${items}
       ipcMain.handle("window:set-overlay-chrome", async (event, hidden) => {
         const win = BrowserWindow.getFocusedWindow() || mainWindow;
         if (win && !win.isDestroyed() && process.platform === "win32") {
-          win.setTitleBarOverlay(
-            hidden ? {
-              color: "rgba(0, 0, 0, 0)",
-              symbolColor: "rgba(0, 0, 0, 0)",
-              height: 0
-            } : { color: "rgba(0, 0, 0, 0)", symbolColor: "#b3b3b3", height: 32 }
-          );
+          win.setTitleBarOverlay({
+            color: "rgba(0, 0, 0, 0)",
+            symbolColor: "rgba(0, 0, 0, 0)",
+            height: hidden ? 0 : 32
+          });
         }
         return { success: true };
+      });
+      ipcMain.handle("window:is-maximized", async () => {
+        const win = BrowserWindow.getFocusedWindow() || mainWindow;
+        return !!(win && !win.isDestroyed() && win.isMaximized());
       });
       ipcMain.handle("smtc:update-metadata", (_, metadata) => {
         if (_smtcBridgeRef && typeof _smtcBridgeRef.updateMetadata === "function") {
@@ -42059,6 +42061,208 @@ ${items}
         return { success: false, error: err.message };
       }
     });
+    ipcMain.handle("share:copy-file", async (_event, filePath) => {
+      try {
+        if (!filePath || !fs.existsSync(filePath))
+          return { success: false, error: "File not found" };
+        if (process.platform === "win32") {
+          const { execFile } = require("child_process");
+          await new Promise((resolve, reject) => {
+            execFile(
+              "powershell.exe",
+              [
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Set-Clipboard -LiteralPath $env:NT_SHARE_PATH"
+              ],
+              { env: { ...process.env, NT_SHARE_PATH: filePath }, windowsHide: true },
+              (err) => err ? reject(err) : resolve()
+            );
+          });
+          return { success: true, file: true };
+        }
+        require("electron").clipboard.writeText(filePath);
+        return { success: true, file: false };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
+    ipcMain.handle("share:pick-app", async () => {
+      try {
+        const r = await dialog.showOpenDialog({
+          title: "Select the app's executable",
+          properties: ["openFile"],
+          filters: [{ name: "Applications", extensions: ["exe", "lnk", "bat", "cmd"] }]
+        });
+        if (r.canceled || !r.filePaths.length) return { success: false, canceled: true };
+        return { success: true, path: r.filePaths[0] };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
+    ipcMain.handle("share:find-lanbeam", async () => {
+      const path2 = require("path");
+      const candidates = [];
+      if (process.env.LOCALAPPDATA) {
+        candidates.push(path2.join(process.env.LOCALAPPDATA, "Programs", "LANBeam", "LANBeam.exe"));
+        candidates.push(path2.join(process.env.LOCALAPPDATA, "Programs", "lanbeam", "LANBeam.exe"));
+        candidates.push(path2.join(process.env.LOCALAPPDATA, "LANBeam", "LANBeam.exe"));
+        candidates.push(path2.join(process.env.LOCALAPPDATA, "lanbeam", "LANBeam.exe"));
+      }
+      if (process.env.ProgramFiles) {
+        candidates.push(path2.join(process.env.ProgramFiles, "LANBeam", "LANBeam.exe"));
+        candidates.push(path2.join(process.env.ProgramFiles, "lanbeam", "LANBeam.exe"));
+      }
+      if (process.env["ProgramFiles(x86)"]) {
+        candidates.push(path2.join(process.env["ProgramFiles(x86)"], "LANBeam", "LANBeam.exe"));
+        candidates.push(path2.join(process.env["ProgramFiles(x86)"], "lanbeam", "LANBeam.exe"));
+      }
+      for (const c of candidates) {
+        if (fs.existsSync(c)) return { success: true, path: c };
+      }
+      return { success: false };
+    });
+    ipcMain.handle("share:install-lanbeam", async (event) => {
+      const https = require("https");
+      const os = require("os");
+      const path2 = require("path");
+      const { spawn } = require("child_process");
+      const sendProgress2 = (step, percent, msg) => {
+        try {
+          event.sender.send("share:install-lanbeam-progress", { step, percent, message: msg });
+        } catch (_) {
+        }
+      };
+      try {
+        sendProgress2("fetching", 10, "Checking latest LANBeam release...");
+        const fetchJson = (url) => new Promise((resolve, reject) => {
+          const req = https.get(url, { headers: { "User-Agent": "NovaTune" } }, (res) => {
+            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+              return resolve(fetchJson(res.headers.location));
+            }
+            if (res.statusCode !== 200) return reject(new Error("GitHub API HTTP " + res.statusCode));
+            let data = "";
+            res.on("data", (c) => data += c);
+            res.on("end", () => {
+              try {
+                resolve(JSON.parse(data));
+              } catch (e) {
+                reject(e);
+              }
+            });
+          });
+          req.on("error", reject);
+          req.setTimeout(15e3, () => {
+            req.destroy();
+            reject(new Error("GitHub API request timed out"));
+          });
+        });
+        const release = await fetchJson("https://api.github.com/repos/AnonymousV73X/LAN-FILE-TRANSFER-LANBEAM/releases/latest");
+        const asset = (release.assets || []).find((a) => a.name.endsWith(".exe") && !a.name.includes("blockmap"));
+        if (!asset || !asset.browser_download_url) {
+          throw new Error("No installer asset found in latest LANBeam release (" + (release.tag_name || "unknown") + ")");
+        }
+        sendProgress2("downloading", 20, "Downloading " + asset.name + " (" + (release.tag_name || "latest") + ")...");
+        const tmpDir = os.tmpdir();
+        const installerPath = path2.join(tmpDir, asset.name);
+        await new Promise((resolve, reject) => {
+          const downloadFile = (fileUrl) => {
+            const req = https.get(fileUrl, { headers: { "User-Agent": "NovaTune" } }, (res) => {
+              if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                return downloadFile(res.headers.location);
+              }
+              if (res.statusCode !== 200) return reject(new Error("Installer download HTTP " + res.statusCode));
+              const total = parseInt(res.headers["content-length"], 10) || 0;
+              let downloaded = 0;
+              const outStream = fs.createWriteStream(installerPath);
+              res.on("data", (chunk) => {
+                downloaded += chunk.length;
+                if (total > 0) {
+                  const pct = 20 + Math.round(downloaded / total * 60);
+                  sendProgress2("downloading", pct, "Downloading LANBeam... " + pct + "%");
+                }
+              });
+              res.pipe(outStream);
+              outStream.on("finish", () => {
+                outStream.close();
+                resolve();
+              });
+              outStream.on("error", reject);
+            });
+            req.on("error", reject);
+          };
+          downloadFile(asset.browser_download_url);
+        });
+        sendProgress2("installing", 85, "Installing LANBeam silently...");
+        await new Promise((resolve, reject) => {
+          const proc = spawn(installerPath, ["/S"], { windowsHide: true, detached: false });
+          proc.on("close", (code) => {
+            try {
+              fs.unlinkSync(installerPath);
+            } catch (_) {
+            }
+            resolve();
+          });
+          proc.on("error", (err) => {
+            try {
+              fs.unlinkSync(installerPath);
+            } catch (_) {
+            }
+            reject(err);
+          });
+        });
+        await new Promise((r) => setTimeout(r, 1500));
+        const candidates = [];
+        if (process.env.LOCALAPPDATA) {
+          candidates.push(path2.join(process.env.LOCALAPPDATA, "Programs", "LANBeam", "LANBeam.exe"));
+          candidates.push(path2.join(process.env.LOCALAPPDATA, "Programs", "lanbeam", "LANBeam.exe"));
+          candidates.push(path2.join(process.env.LOCALAPPDATA, "LANBeam", "LANBeam.exe"));
+        }
+        if (process.env.ProgramFiles) {
+          candidates.push(path2.join(process.env.ProgramFiles, "LANBeam", "LANBeam.exe"));
+        }
+        if (process.env["ProgramFiles(x86)"]) {
+          candidates.push(path2.join(process.env["ProgramFiles(x86)"], "LANBeam", "LANBeam.exe"));
+        }
+        for (const c of candidates) {
+          if (fs.existsSync(c)) {
+            sendProgress2("done", 100, "LANBeam ready!");
+            return { success: true, path: c };
+          }
+        }
+        return { success: false, error: "Installer finished but LANBeam.exe was not found in standard directories." };
+      } catch (err) {
+        console.error("[IPC] share:install-lanbeam error:", err);
+        return { success: false, error: err.message };
+      }
+    });
+    ipcMain.handle("share:launch-app", async (_event, exePath, filePath) => {
+      try {
+        if (!exePath || !fs.existsSync(exePath))
+          return { success: false, error: "App not found" };
+        const { spawn } = require("child_process");
+        const child = spawn(exePath, filePath ? [`--share=${filePath}`] : [], {
+          detached: true,
+          stdio: "ignore",
+          windowsHide: false
+        });
+        child.on("error", () => {
+        });
+        child.unref();
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
+    ipcMain.handle("share:show-in-folder", async (_event, filePath) => {
+      try {
+        if (filePath) shell.showItemInFolder(filePath);
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
     ipcMain.handle("app:open-external", async (_event, url) => {
       try {
         await shell.openExternal(url);
@@ -42799,6 +43003,9 @@ ${items}
         }
         return { success: true, filePath: savedPath, track: parsedTrack };
       } catch (err) {
+        if (err && err.cancelled) {
+          return { success: false, cancelled: true, error: "Download cancelled" };
+        }
         console.error("[IPC] discovery:download error:", err);
         return { success: false, error: err.message };
       }
@@ -43118,7 +43325,18 @@ var require_main = __commonJS({
         const arg = argv[i];
         if (arg.startsWith("-")) continue;
         const ext = path.extname(arg).toLowerCase();
-        const audioExtensions = [".mp3", ".flac", ".wav", ".m4a", ".ogg", ".aac", ".wma", ".opus", ".m3u", ".m3u8"];
+        const audioExtensions = [
+          ".mp3",
+          ".flac",
+          ".wav",
+          ".m4a",
+          ".ogg",
+          ".aac",
+          ".wma",
+          ".opus",
+          ".m3u",
+          ".m3u8"
+        ];
         if (audioExtensions.includes(ext)) {
           const fullPath = path.resolve(arg);
           if (fs.existsSync(fullPath)) {
@@ -43226,7 +43444,7 @@ var require_main = __commonJS({
         titleBarStyle: "hidden",
         titleBarOverlay: process.platform === "win32" ? {
           color: "rgba(0, 0, 0, 0)",
-          symbolColor: "#b3b3b3",
+          symbolColor: "rgba(0, 0, 0, 0)",
           height: 32
         } : void 0,
         webPreferences: {
@@ -43269,7 +43487,12 @@ var require_main = __commonJS({
                 }
               }
             ]);
-            console.log("[thumbar] setThumbarButtons result:", res, "isPlaying:", isPlaying);
+            console.log(
+              "[thumbar] setThumbarButtons result:",
+              res,
+              "isPlaying:",
+              isPlaying
+            );
           } catch (err) {
             console.warn("[thumbar] Failed to set thumbar buttons:", err.message);
           }
@@ -43303,7 +43526,10 @@ var require_main = __commonJS({
         setTimeout(() => {
           if (global.updateThumbarButtons && mainWindow && !mainWindow.isDestroyed()) {
             const knownState = !!global._thumbarIsPlaying;
-            console.log("[thumbar] Applying buttons after show event + 200ms delay, knownState:", knownState);
+            console.log(
+              "[thumbar] Applying buttons after show event + 200ms delay, knownState:",
+              knownState
+            );
             global.updateThumbarButtons(knownState);
             if (!mainWindow.isDestroyed()) {
               mainWindow.webContents.send("player:request-thumbar-sync");
@@ -43858,7 +44084,12 @@ var require_main = __commonJS({
       const playPath = path.join(assetDir, "play.png");
       const pausePath = path.join(assetDir, "pause.png");
       const nextPath = path.join(assetDir, "next.png");
-      console.log("[thumbar] Asset paths:", { prevPath, playPath, pausePath, nextPath });
+      console.log("[thumbar] Asset paths:", {
+        prevPath,
+        playPath,
+        pausePath,
+        nextPath
+      });
       console.log("[thumbar] Asset existence:", {
         prev: fs.existsSync(prevPath),
         play: fs.existsSync(playPath),
@@ -43874,7 +44105,12 @@ var require_main = __commonJS({
       const usePlay = fs.existsSync(playPath) ? playPath : fallbackPlay;
       const usePause = fs.existsSync(pausePath) ? pausePath : fallbackPause;
       const useNext = fs.existsSync(nextPath) ? nextPath : fallbackNext;
-      console.log("[thumbar] Using paths:", { usePrev, usePlay, usePause, useNext });
+      console.log("[thumbar] Using paths:", {
+        usePrev,
+        usePlay,
+        usePause,
+        useNext
+      });
       if (!fs.existsSync(usePrev) || !fs.existsSync(usePlay) || !fs.existsSync(usePause) || !fs.existsSync(useNext)) {
         try {
           if (!fs.existsSync(fallbackDir)) {
@@ -43885,18 +44121,33 @@ var require_main = __commonJS({
           const pauseSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="7" width="5" height="18" rx="2.5" fill="white"/><rect x="19" y="7" width="5" height="18" rx="2.5" fill="white"/></svg>`;
           const nextSvg = `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M8 8 L20 16 L8 24 Z" fill="none" stroke="white" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/><rect x="21.5" y="7" width="3.5" height="18" rx="1.75" fill="white"/></svg>`;
           const sharp = require("sharp");
-          if (!fs.existsSync(fallbackPrev)) await sharp(Buffer.from(prevSvg)).png().toFile(fallbackPrev);
-          if (!fs.existsSync(fallbackPlay)) await sharp(Buffer.from(playSvg)).png().toFile(fallbackPlay);
-          if (!fs.existsSync(fallbackPause)) await sharp(Buffer.from(pauseSvg)).png().toFile(fallbackPause);
-          if (!fs.existsSync(fallbackNext)) await sharp(Buffer.from(nextSvg)).png().toFile(fallbackNext);
+          if (!fs.existsSync(fallbackPrev))
+            await sharp(Buffer.from(prevSvg)).png().toFile(fallbackPrev);
+          if (!fs.existsSync(fallbackPlay))
+            await sharp(Buffer.from(playSvg)).png().toFile(fallbackPlay);
+          if (!fs.existsSync(fallbackPause))
+            await sharp(Buffer.from(pauseSvg)).png().toFile(fallbackPause);
+          if (!fs.existsSync(fallbackNext))
+            await sharp(Buffer.from(nextSvg)).png().toFile(fallbackNext);
         } catch (err) {
-          console.error("[thumbar] Failed to generate fallback taskbar icons using sharp:", err.message);
+          console.error(
+            "[thumbar] Failed to generate fallback taskbar icons using sharp:",
+            err.message
+          );
         }
       }
-      const prevImg = nativeImage.createFromPath(fs.existsSync(usePrev) ? usePrev : fallbackPrev);
-      const playImg = nativeImage.createFromPath(fs.existsSync(usePlay) ? usePlay : fallbackPlay);
-      const pauseImg = nativeImage.createFromPath(fs.existsSync(usePause) ? usePause : fallbackPause);
-      const nextImg = nativeImage.createFromPath(fs.existsSync(useNext) ? useNext : fallbackNext);
+      const prevImg = nativeImage.createFromPath(
+        fs.existsSync(usePrev) ? usePrev : fallbackPrev
+      );
+      const playImg = nativeImage.createFromPath(
+        fs.existsSync(usePlay) ? usePlay : fallbackPlay
+      );
+      const pauseImg = nativeImage.createFromPath(
+        fs.existsSync(usePause) ? usePause : fallbackPause
+      );
+      const nextImg = nativeImage.createFromPath(
+        fs.existsSync(useNext) ? useNext : fallbackNext
+      );
       console.log("[thumbar] NativeImage empty checks:", {
         prev: prevImg.isEmpty(),
         play: playImg.isEmpty(),

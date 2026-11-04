@@ -851,12 +851,11 @@ class SquigglyProgress {
       ctx.beginPath();
       ctx.moveTo(greyStart, cy);
       ctx.lineTo(greyEnd, cy);
-      ctx.strokeStyle =
-        this.overlay && this.themeMode !== "light"
-          ? "rgba(255,255,255,0.18)"
-          : this.themeMode === "light"
-            ? "rgba(0,0,0,0.22)"
-            : "rgba(255,255,255,0.18)";
+      ctx.strokeStyle = (this.overlay && this.themeMode !== "light")
+        ? "rgba(255,255,255,0.18)"
+        : (this.themeMode === "light"
+          ? "rgba(0,0,0,0.22)"
+          : "rgba(255,255,255,0.18)");
       ctx.lineWidth = 2.3;
       ctx.lineCap = "round";
       ctx.stroke();
@@ -865,10 +864,7 @@ class SquigglyProgress {
     if (progress > 0 && totalProgressPx > leftInset + thumbR * 2) {
       ctx.beginPath();
       ctx.arc(leftInset, cy, this.strokeWidth / 2, 0, Math.PI * 2);
-      ctx.fillStyle =
-        this.overlay && this.themeMode !== "light"
-          ? "rgba(255,255,255,0.4)"
-          : this.waveColor;
+      ctx.fillStyle = (this.overlay && this.themeMode !== "light") ? "rgba(255,255,255,0.4)" : this.waveColor;
       ctx.fill();
     }
 
@@ -882,8 +878,7 @@ class SquigglyProgress {
       ctx.beginPath();
       ctx.moveTo(leftInset, cy);
       ctx.lineTo(waveEndPx, cy);
-      ctx.strokeStyle =
-        this.overlay && this.themeMode !== "light" ? "#fff" : this.waveColor;
+      ctx.strokeStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
       ctx.lineWidth = this.strokeWidth;
       ctx.lineCap = "round";
       ctx.stroke();
@@ -932,8 +927,7 @@ class SquigglyProgress {
       const envelope = computeAmp(waveEndPx);
       ctx.lineTo(waveEndPx, cy + Math.sin(k * waveEndPx + phase) * envelope);
     }
-    ctx.strokeStyle =
-      this.overlay && this.themeMode !== "light" ? "#fff" : this.waveColor;
+    ctx.strokeStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
     ctx.lineWidth = this.strokeWidth;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -1297,8 +1291,7 @@ class SquigglyProgress {
       const cr = this.overlay ? 3.5 : 4.5;
       ctx.arc(x, cy, cr, 0, Math.PI * 2);
     }
-    ctx.fillStyle =
-      this.overlay && this.themeMode !== "light" ? "#fff" : this.waveColor;
+    ctx.fillStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
     ctx.fill();
   }
 
@@ -2188,10 +2181,18 @@ function _reRenderPanel(section, renderFn) {
     return;
   }
   _panelDirty[section] = true;
+  const _area = $("track-area");
+  const _prevScroll = _area ? _area.scrollTop : 0;
   _activePanelTarget = panel;
   renderFn();
   _activePanelTarget = null;
   _panelDirty[section] = false;
+  if (_area && _prevScroll) {
+    _area.scrollTop = _prevScroll;
+    requestAnimationFrame(() => {
+      _area.scrollTop = _prevScroll;
+    });
+  }
   if (panel) panel.dataset.subtitle = $("content-subtitle").textContent || "";
 }
 // 8×8 canvas sample — ~64 pixel reads, runs once per track, cached by trackId.
@@ -3293,8 +3294,8 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     if (state.currentTrack) {
       const anchor = state.overlayOpen
-        ? $("ov-add-btn") || $("ov-more-btn") || $("ov-title")
-        : $("np-menu-btn") || $("np-title") || document.body;
+        ? ($("ov-add-btn") || $("ov-more-btn") || $("ov-title"))
+        : ($("np-menu-btn") || $("np-title") || document.body);
       if (anchor) openPlaylistMenu(anchor, state.currentTrack);
     }
     return;
@@ -3434,37 +3435,21 @@ document.addEventListener("keydown", (e) => {
   }
 
   // ─── 12. 1 or R → Repeat One (toggle) ─────────────────────────
-  if (
-    (e.key === "1" || e.code === "KeyR") &&
-    !e.ctrlKey &&
-    !e.metaKey &&
-    !e.altKey
-  ) {
+  if ((e.key === "1" || e.code === "KeyR") && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault();
     _setRepeatMode("one");
     return;
   }
 
   // ─── 13. 0 or O → Repeat All (toggle) ─────────────────────────
-  if (
-    (e.key === "0" || e.code === "KeyO") &&
-    !e.ctrlKey &&
-    !e.metaKey &&
-    !e.altKey
-  ) {
+  if ((e.key === "0" || e.code === "KeyO") && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault();
     _setRepeatMode("all");
     return;
   }
 
   // ─── 14. ArrowUp / ArrowDown → Volume Up / Down ──────────────
-  if (
-    e.code === "ArrowUp" &&
-    !e.ctrlKey &&
-    !e.metaKey &&
-    !e.altKey &&
-    !e.shiftKey
-  ) {
+  if (e.code === "ArrowUp" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
     e.preventDefault();
     state.volume = Math.max(0, Math.min(1, state.volume + 0.05));
     audioEngine.setVolume(state.volume);
@@ -3472,13 +3457,7 @@ document.addEventListener("keydown", (e) => {
     _persistVolumeDebounced();
     return;
   }
-  if (
-    e.code === "ArrowDown" &&
-    !e.ctrlKey &&
-    !e.metaKey &&
-    !e.altKey &&
-    !e.shiftKey
-  ) {
+  if (e.code === "ArrowDown" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
     e.preventDefault();
     state.volume = Math.max(0, Math.min(1, state.volume - 0.05));
     audioEngine.setVolume(state.volume);
@@ -3656,14 +3635,9 @@ function _wireSidebar() {
     window.novaAPI.on("library:track-added", async (newTrack) => {
       try {
         if (!newTrack || !newTrack.id) return;
-        console.log(
-          "[library:track-added] Ingesting downloaded track into renderer state:",
-          newTrack.title,
-        );
+        console.log("[library:track-added] Ingesting downloaded track into renderer state:", newTrack.title);
         // Avoid duplicate additions
-        const existingIdx = state.tracks.findIndex(
-          (t) => t.id === newTrack.id || t.filePath === newTrack.filePath,
-        );
+        const existingIdx = state.tracks.findIndex((t) => t.id === newTrack.id || t.filePath === newTrack.filePath);
         if (existingIdx !== -1) {
           state.tracks[existingIdx] = newTrack;
         } else {
@@ -3671,24 +3645,17 @@ function _wireSidebar() {
         }
         state.filteredTracks = [...state.tracks];
         if (state.sortKey) _sortTracks();
-        if (typeof invalidateSectionCache === "function")
-          invalidateSectionCache();
+        if (typeof invalidateSectionCache === "function") invalidateSectionCache();
         if (typeof buildSearchIndex === "function") buildSearchIndex();
         if (typeof _panelDirty !== "undefined") {
           _panelDirty["home"] = true;
           _panelDirty["albums"] = true;
           _panelDirty["artists"] = true;
         }
-        if (typeof _updateSidebarFolderInfo === "function")
-          _updateSidebarFolderInfo();
-        console.log(
-          `[library:track-added] Library updated! Total tracks: ${state.tracks.length}`,
-        );
+        if (typeof _updateSidebarFolderInfo === "function") _updateSidebarFolderInfo();
+        console.log(`[library:track-added] Library updated! Total tracks: ${state.tracks.length}`);
       } catch (err) {
-        console.warn(
-          "[library:track-added] Failed to update library state:",
-          err,
-        );
+        console.warn("[library:track-added] Failed to update library state:", err);
       }
     });
   }
@@ -3797,8 +3764,7 @@ function _updateToolbarVisibility(section) {
   const lyricsToggle = $("lyrics-toggle-btn");
   const playlistImportBtn = $("playlist-import-btn");
   if (playlistImportBtn) {
-    playlistImportBtn.style.display =
-      section === "playlists" ? "inline-flex" : "none";
+    playlistImportBtn.style.display = (section === "playlists") ? "inline-flex" : "none";
   }
   // Only show shuffle & play and sort-by in home and library sections
   const showShuffleAndSort = section === "home" || section === "library";
@@ -3837,8 +3803,7 @@ function _updateToolbarVisibility(section) {
 }
 
 function _navigateTo(section) {
-  const _dlB = $("sidebar-download-btn"),
-    _hlB = $("sidebar-help-btn");
+  const _dlB = $("sidebar-download-btn"), _hlB = $("sidebar-help-btn");
   if (_dlB) _dlB.classList.toggle("active", section === "discovery");
   if (_hlB) _hlB.classList.toggle("active", section === "help");
   const title = $("content-title");
@@ -3863,7 +3828,7 @@ function _navigateTo(section) {
       title.textContent = "Music Downloader";
       _showCached("discovery", renderDiscovery);
       break;
-    case "library":
+      case "library":
       title.textContent = "Music";
       _showVirtual();
       renderTracks(state.filteredTracks, "library");
@@ -4497,13 +4462,7 @@ function _wireShufflePlay() {
 }
 
 // ─── Library Loading ─────────────────────────────────────────────
-const _NO_COL_HEADER_SECTIONS = [
-  "discovery",
-  "home",
-  "settings",
-  "equalizer",
-  "help",
-];
+const _NO_COL_HEADER_SECTIONS = ["discovery", "home", "settings", "equalizer", "help"];
 function _colHeadersAllowed() {
   return !_NO_COL_HEADER_SECTIONS.includes(state.activeNavSection);
 }
@@ -7833,24 +7792,11 @@ function renderSettings() {
           <span>Startup section</span>
           <div class="nova-dropdown" id="setting-start-section" data-value="${state.settings.startSection || "library"}" style="position:relative;min-width:220px;">
             <button type="button" class="nova-dropdown__trigger" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-2,var(--surface));color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;transition:border-color .15s;">
-              <span class="nova-dropdown__label">${{ library: "Music Library (Default)", artists: "Artists", albums: "Albums", playlists: "Playlists", home: "Home", queue: "Play Queue", equalizer: "Equalizer" }[state.settings.startSection || "library"]}</span>
+              <span class="nova-dropdown__label">${{"library":"Music Library (Default)","artists":"Artists","albums":"Albums","playlists":"Playlists","home":"Home","queue":"Play Queue","equalizer":"Equalizer"}[state.settings.startSection || "library"]}</span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.7;transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
-            <ul class="nova-dropdown__menu" style="display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:100%;background:var(--surface-2,var(--surface));border:1px solid var(--border);border-radius:8px;padding:6px;margin:0;list-style:none;z-index:999;box-shadow:0 8px 24px rgba(0,0,0,.4);display:flex;flex-direction:column;gap:4px;">
-              ${[
-                ["library", "Music Library (Default)"],
-                ["artists", "Artists"],
-                ["albums", "Albums"],
-                ["playlists", "Playlists"],
-                ["home", "Home"],
-                ["queue", "Play Queue"],
-                ["equalizer", "Equalizer"],
-              ]
-                .map(
-                  ([v, l]) =>
-                    `<li data-value="${v}" style="padding:9px 12px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;color:var(--text-primary);transition:background .15s, color .15s;${(state.settings.startSection || "library") === v ? "background:color-mix(in srgb, var(--green, #1ed760) 14%, transparent);color:var(--green, #1ed760);font-weight:600;" : ""}">${(state.settings.startSection || "library") === v ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ""}<span>${l}</span></li>`,
-                )
-                .join("")}
+            <ul class="nova-dropdown__menu" style="display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:100%;background:var(--surface-2,var(--surface));border:1px solid var(--border);border-radius:8px;padding:6px;margin:0;list-style:none;z-index:999;box-shadow:0 8px 24px rgba(0,0,0,.4);flex-direction:column;gap:4px;">
+              ${[["library","Music Library (Default)"],["artists","Artists"],["albums","Albums"],["playlists","Playlists"],["home","Home"],["queue","Play Queue"],["equalizer","Equalizer"]].map(([v,l])=>`<li data-value="${v}" style="padding:9px 12px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;color:var(--text-primary);transition:background .15s, color .15s;${(state.settings.startSection||"library")===v?"background:color-mix(in srgb, var(--green, #1ed760) 14%, transparent);color:var(--green, #1ed760);font-weight:600;":""}">${(state.settings.startSection||"library")===v?'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>':''}<span>${l}</span></li>`).join("")}
             </ul>
           </div>
         </div>
@@ -7953,21 +7899,11 @@ function renderSettings() {
   const startSectionDropdown = $("setting-start-section");
 
   if (startSectionDropdown) {
-    const trigger = startSectionDropdown.querySelector(
-      ".nova-dropdown__trigger",
-    );
+    const trigger = startSectionDropdown.querySelector(".nova-dropdown__trigger");
     const menu = startSectionDropdown.querySelector(".nova-dropdown__menu");
     const label = startSectionDropdown.querySelector(".nova-dropdown__label");
     const chevron = trigger.querySelector("svg");
-    const LABELS = {
-      library: "Music Library (Default)",
-      artists: "Artists",
-      albums: "Albums",
-      playlists: "Playlists",
-      home: "Home",
-      queue: "Play Queue",
-      equalizer: "Equalizer",
-    };
+    const LABELS = { library:"Music Library (Default)", artists:"Artists", albums:"Albums", playlists:"Playlists", home:"Home", queue:"Play Queue", equalizer:"Equalizer" };
 
     const closeMenu = () => {
       menu.style.display = "none";
@@ -7978,9 +7914,7 @@ function renderSettings() {
     trigger.addEventListener("click", (e) => {
       e.stopPropagation();
       const open = menu.style.display === "flex";
-      if (open) {
-        closeMenu();
-      } else {
+      if (open) { closeMenu(); } else {
         menu.style.display = "flex";
         chevron.style.transform = "rotate(180deg)";
         trigger.style.borderColor = "var(--green, #1ed760)";
@@ -7996,21 +7930,14 @@ function renderSettings() {
       label.textContent = LABELS[val];
       startSectionDropdown.dataset.value = val;
       // Highlight selected item
-      menu.querySelectorAll("li").forEach((item) => {
+      menu.querySelectorAll("li").forEach(item => {
         const sel = item.dataset.value === val;
-        item.style.background = sel
-          ? "color-mix(in srgb, var(--green, #1ed760) 14%, transparent)"
-          : "";
-        item.style.color = sel
-          ? "var(--green, #1ed760)"
-          : "var(--text-primary)";
+        item.style.background = sel ? "color-mix(in srgb, var(--green, #1ed760) 14%, transparent)" : "";
+        item.style.color = sel ? "var(--green, #1ed760)" : "var(--text-primary)";
         item.style.fontWeight = sel ? "600" : "";
         let svg = item.querySelector("svg");
         if (sel && !svg) {
-          item.insertAdjacentHTML(
-            "afterbegin",
-            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
-          );
+          item.insertAdjacentHTML("afterbegin", '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>');
         } else if (!sel && svg) {
           svg.remove();
         }
@@ -8032,7 +7959,13 @@ function renderSettings() {
         li.style.background = "";
     });
 
-    document.addEventListener("click", closeMenu, { capture: true });
+    document.addEventListener(
+      "click",
+      (e) => {
+        if (!startSectionDropdown.contains(e.target)) closeMenu();
+      },
+      { capture: true },
+    );
   }
 
   if (shuffle) shuffle.checked = !!state.shuffleEnabled;
@@ -9316,6 +9249,14 @@ function openActionsMenu(anchor, track) {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;vertical-align:-2px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
       Tag Editor
     </button>
+    <button type="button" data-action="share">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;vertical-align:-2px;"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+      Share
+    </button>
+    <button type="button" data-action="properties">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;vertical-align:-2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      Properties
+    </button>
     <div class="context-menu-divider"></div>
     <button type="button" class="context-menu-danger" data-action="delete">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex-shrink:0;vertical-align:-2px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -9418,6 +9359,20 @@ function openActionsMenu(anchor, track) {
       return;
     }
 
+    // ── Share ──
+    if (btn.dataset.action === "share") {
+      closePlaylistMenus();
+      _openShareCard(track);
+      return;
+    }
+
+    // ── Properties ──
+    if (btn.dataset.action === "properties") {
+      closePlaylistMenus();
+      _openTrackProperties(track);
+      return;
+    }
+
     // ── Delete Song / Remove from Queue ──
     if (btn.dataset.action === "delete") {
       closePlaylistMenus();
@@ -9435,6 +9390,224 @@ function openActionsMenu(anchor, track) {
       return;
     }
   });
+}
+
+/**
+ * Share card — copy file / open folder / share link to other apps.
+ */
+function _openShareCard(track) {
+  if (!track) return;
+  const artist = getArtistText(track);
+  const text = `${track.title || "Unknown"} — ${artist}`;
+  const enc = encodeURIComponent(text);
+  const ico = (d) =>
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const items = [
+    ["lanbeam", "LANBeam", "Send file over LAN", ico('<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>')],
+    ["copy-file", "Copy File", "Paste into any app", ico('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>')],
+    ["folder", "Show in Folder", "Drag it into any app", ico('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>')],
+    ["copy-text", "Copy Name", "Song title & artist", ico('<path d="M4 7V4h16v3"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>')],
+    ["whatsapp", "WhatsApp", "Copies file, then opens app", ico('<path d="M21 11.5a8.4 8.4 0 0 1-12.4 7.4L3 21l2.1-5.5A8.4 8.4 0 1 1 21 11.5z"/>')],
+    ["telegram", "Telegram", "Copies file, then opens app", ico('<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>')],
+    ["email", "Email", "Copies file, then opens app", ico('<path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><polyline points="22,6 12,13 2,6"/>')],
+  ];
+  const overlay = document.createElement("div");
+  overlay.className = "tag-editor-overlay track-share-overlay";
+  overlay.innerHTML = `
+    <div class="tag-editor-card track-props-card track-share-card">
+      <div class="tag-editor-scroll">
+        <div class="track-props-head">
+          <img src="${_resolveCoverArtSrc(track) || "../assets/default-cover.png"}" alt="">
+          <div class="track-props-head-text">
+            <div class="track-props-title">${escapeHtml(track.title || "Unknown")}</div>
+            <div class="track-props-sub">${escapeHtml(artist)}</div>
+          </div>
+        </div>
+        <div class="track-share-grid">
+          ${items
+            .map(
+              ([id, l, d, i]) =>
+                `<button type="button" class="track-share-item" data-share="${id}">${i}<span class="track-share-label">${l}</span><span class="track-share-desc">${d}</span></button>`,
+            )
+            .join("")}
+        </div>
+        <div class="tag-editor-actions">
+          <button class="btn-cancel" id="share-close">Close</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e) => {
+    if (e.key === "Escape") close();
+  };
+  document.addEventListener("keydown", onKey);
+  overlay.addEventListener("click", async (e) => {
+    if (e.target === overlay) return close();
+    const b = e.target.closest("[data-share]");
+    if (!b) return;
+    const act = b.dataset.share;
+    const inv = (ch, ...a) => window.novaAPI.invoke(ch, ...a);
+    if (act === "copy-file") {
+      const res = await inv("share:copy-file", track.filePath);
+      close();
+      _showActionToast(track.title, res?.success && res.file ? "file copied" : res?.success ? "path copied" : "copy failed");
+    } else if (act === "folder") {
+      close();
+      inv("share:show-in-folder", track.filePath);
+    } else if (act === "copy-text") {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (_) {}
+      close();
+      _showActionToast(track.title, "name copied");
+    } else if (act === "lanbeam") {
+      let exe = state.settings.lanbeamPath;
+      // Verify stored path still actually exists
+      if (exe) {
+        const check = await inv("share:find-lanbeam");
+        if (!check?.success || check.path !== exe) {
+          exe = check?.success ? check.path : null;
+          if (exe) {
+            state.settings.lanbeamPath = exe;
+            await saveSetting("lanbeamPath", exe);
+          }
+        }
+      }
+      if (!exe) {
+        const f = await inv("share:find-lanbeam");
+        if (f?.success) {
+          exe = f.path;
+          state.settings.lanbeamPath = exe;
+          await saveSetting("lanbeamPath", exe);
+        }
+      }
+      // If still not installed anywhere on the PC, auto-download & install from latest GitHub release!
+      if (!exe) {
+        _showActionToast(track.title, "downloading LANBeam from GitHub...");
+        const installRes = await inv("share:install-lanbeam");
+        if (installRes?.success && installRes.path) {
+          exe = installRes.path;
+          state.settings.lanbeamPath = exe;
+          await saveSetting("lanbeamPath", exe);
+          _showActionToast("LANBeam", "installed successfully!");
+        } else {
+          // Fallback: let user manually locate exe if download/install failed
+          const pick = await inv("share:pick-app");
+          if (pick?.success) {
+            exe = pick.path;
+            state.settings.lanbeamPath = exe;
+            await saveSetting("lanbeamPath", exe);
+          }
+        }
+      }
+      let res = exe ? await inv("share:launch-app", exe, track.filePath) : null;
+      close();
+      _showActionToast(track.title, res?.success ? "queued in LANBeam" : "launch failed");
+    } else {
+      const urls = {
+        whatsapp: `https://wa.me/?text=${enc}`,
+        telegram: `https://t.me/share/url?url=%20&text=${enc}`,
+        email: `mailto:?subject=${enc}&body=${enc}`,
+      };
+      await inv("share:copy-file", track.filePath);
+      close();
+      inv("app:open-external", urls[act]);
+      _showActionToast(track.title, "file copied — paste with Ctrl+V");
+    }
+  });
+  overlay.querySelector("#share-close").addEventListener("click", close);
+}
+
+/**
+ * Properties card — full metadata for a track.
+ */
+function _openTrackProperties(track) {
+  if (!track) return;
+  const fmtSize = (b) => {
+    if (!b) return "—";
+    const u = ["B", "KB", "MB", "GB"];
+    let i = 0;
+    let n = b;
+    while (n >= 1024 && i < u.length - 1) {
+      n /= 1024;
+      i++;
+    }
+    return `${n.toFixed(i ? 2 : 0)} ${u[i]}`;
+  };
+  const fmtDate = (v) => {
+    if (!v) return "—";
+    const d = new Date(v);
+    return isNaN(d) ? "—" : d.toLocaleString();
+  };
+  const chLabel = (c) =>
+    !c ? "—" : c === 1 ? "Mono" : c === 2 ? "Stereo" : `${c} channels`;
+  const dur = track.duration ? formatTime(track.duration) : "—";
+  const rows = [
+    ["Title", track.title],
+    ["Artist", track.artist],
+    ["Album", track.album],
+    ["Album Artist", track.albumArtist],
+    ["Genre", track.genre],
+    ["Year", track.year || ""],
+    ["Track #", track.trackNumber || ""],
+    ["Disc #", track.discNumber || ""],
+    ["Duration", dur],
+    ["Format", track.format],
+    ["Bitrate", track.bitrate ? `${track.bitrate} kbps` : ""],
+    [
+      "Sample Rate",
+      track.sampleRate ? `${(track.sampleRate / 1000).toFixed(1)} kHz` : "",
+    ],
+    ["Channels", chLabel(track.channels)],
+    ["File Size", fmtSize(track.fileSize)],
+    ["Date Added", fmtDate(track.dateAdded)],
+    ["Modified", fmtDate(track.dateModified)],
+    ["File Name", track.fileName || (track.filePath || "").split(/[\\/]/).pop()],
+    ["Location", track.filePath],
+  ];
+  const coverSrc = _resolveCoverArtSrc(track);
+  const overlay = document.createElement("div");
+  overlay.className = "tag-editor-overlay track-props-overlay";
+  overlay.innerHTML = `
+    <div class="tag-editor-card track-props-card">
+      <div class="tag-editor-scroll">
+        <div class="track-props-head">
+          <img src="${coverSrc || "../assets/default-cover.png"}" alt="">
+          <div class="track-props-head-text">
+            <div class="track-props-title">${escapeHtml(track.title || "Unknown")}</div>
+            <div class="track-props-sub">${escapeHtml(getArtistText(track))}</div>
+          </div>
+        </div>
+        <div class="track-props-list">
+          ${rows
+            .map(
+              ([k, v]) =>
+                `<div class="track-props-row"><span class="track-props-key">${k}</span><span class="track-props-val" title="${escapeHtml(String(v || ""))}">${escapeHtml(String(v || "—"))}</span></div>`,
+            )
+            .join("")}
+        </div>
+        <div class="tag-editor-actions">
+          <button class="btn-save" id="props-close">Close</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e) => {
+    if (e.key === "Escape") close();
+  };
+  document.addEventListener("keydown", onKey);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) close();
+  });
+  overlay.querySelector("#props-close").addEventListener("click", close);
 }
 
 /**
@@ -9612,6 +9785,16 @@ async function _removeTrackFromLibrary(track) {
   state.tracks = state.tracks.filter((t) => t.id !== track.id);
   state.filteredTracks = state.filteredTracks.filter((t) => t.id !== track.id);
   state.queue = state.queue.filter((t) => t.id !== track.id);
+  if (state.recentlyPlayed.some((t) => t.id === track.id)) {
+    state.recentlyPlayed = state.recentlyPlayed.filter(
+      (t) => t.id !== track.id,
+    );
+    saveSetting(
+      "recentlyPlayed",
+      state.recentlyPlayed.map((t) => t.id),
+    );
+  }
+  _panelDirty["home"] = true;
   invalidateSectionCache();
   // v1.1.0 — Invalidate the per-track thumbnail cache so the deleted
   // track's URL doesn't linger in IDB forever (the user explicitly said
@@ -10928,17 +11111,18 @@ function _makeAlbumCard(album) {
   return card;
 }
 
+
 function _dupNormTitle(v) {
   return String(v || "")
     .toLowerCase()
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[(\[]([^)\]]*)[)\]]/g, (m, inner) =>
-      /remix|live|acoustic|instrumental|cover|sped|slowed|extended|demo|edit/.test(
+      /^\s*(feat|ft|featuring|with|prod|official|lyrics?|audio|video|visuali[sz]er|hd|hq|4k|explicit|clean|remaster(ed)?)\b/.test(
         inner,
       )
-        ? " " + inner + " "
-        : " ",
+        ? " "
+        : " " + inner + " ",
     )
     .replace(/\b(feat|ft|featuring)\b.*$/, " ")
     .replace(/[^\p{L}\p{N}]+/gu, " ")
@@ -10956,23 +11140,66 @@ function _dupArtistSet(v) {
     .filter(Boolean);
 }
 
+let _dupIndex = null;
+let _dupIndexKey = "";
+function _getDupIndex() {
+  const key = state.tracks.length + ":" + sectionCache.tracksVersion;
+  if (_dupIndex && _dupIndexKey === key) return _dupIndex;
+  const m = new Map();
+  for (const t of state.tracks) {
+    const k = _dupNormTitle(t.title);
+    if (!k) continue;
+    let arr = m.get(k);
+    if (!arr) m.set(k, (arr = []));
+    arr.push({ track: t, artists: _dupArtistSet(t.artist) });
+  }
+  _dupIndex = m;
+  _dupIndexKey = key;
+  return m;
+}
+
 function _findLibraryDuplicate(info) {
   const title = _dupNormTitle(info && info.trackName);
   if (!title) return null;
+  const idx = _getDupIndex();
   const artists = _dupArtistSet(info.artistName);
-  for (const t of state.tracks) {
-    if (_dupNormTitle(t.title) !== title) continue;
-    const libArtists = _dupArtistSet(t.artist);
-    if (artists.length === 0 || libArtists.length === 0) return t;
-    if (
-      artists.some((a) =>
-        libArtists.some((b) => a === b || a.includes(b) || b.includes(a)),
-      )
-    ) {
-      return t;
+  const resDur = info.durationMs ? info.durationMs / 1000 : 0;
+  let best = null;
+  let bestDiff = Infinity;
+
+  const consider = (entries, needDur) => {
+    for (const { track, artists: libArtists } of entries) {
+      if (!artists.length || !libArtists.length) continue;
+      if (!artists.some((x) => libArtists.includes(x))) continue;
+      const libDur = Number(track.duration) || 0;
+      let diff = 0;
+      if (resDur && libDur) {
+        diff = Math.abs(resDur - libDur);
+        if (diff > 6) continue;
+      } else if (needDur) {
+        continue;
+      }
+      if (diff < bestDiff) {
+        best = track;
+        bestDiff = diff;
+      }
+    }
+  };
+
+  const exact = idx.get(title);
+  if (exact) consider(exact, false);
+  if (best) return best;
+
+  // Messy library titles (e.g. "Artist - Song (Official Video)"): accept the
+  // result title as a whole-word part of the library title, but only with a
+  // matching artist AND a matching duration.
+  if (title.length >= 4 && resDur) {
+    const needle = " " + title + " ";
+    for (const [key, entries] of idx) {
+      if ((" " + key + " ").includes(needle)) consider(entries, true);
     }
   }
-  return null;
+  return best;
 }
 
 async function _checkDiscoveryDuplicate(info) {
@@ -11007,6 +11234,7 @@ function renderDiscovery() {
         findLibraryTrack: _findLibraryDuplicate,
         getPlayback: () => ({
           trackId: state.currentTrack && state.currentTrack.id,
+          filePath: state.currentTrack && state.currentTrack.filePath,
           isPlaying: !!state.isPlaying,
         }),
         togglePlay: () => togglePlayPause(),
@@ -13463,6 +13691,44 @@ function _wireVirtualDelegation() {
     playTrack(track);
   });
 
+  // Right-click on a song row → same Actions menu as the 3-dots button
+  document.addEventListener("contextmenu", (e) => {
+    if (e.target.closest(".playlist-popover")) return;
+    const row = e.target.closest(
+      ".track-row[data-track-id], .playlist-song-row[data-track-id]",
+    );
+    if (!row) {
+      closePlaylistMenus();
+      return;
+    }
+    let track = null;
+    if (row.classList.contains("track-row")) {
+      const idx = parseInt(row.dataset.idx, 10);
+      track = virtualList.items[idx];
+      if (!track || track.id !== row.dataset.trackId) track = null;
+    }
+    if (!track) {
+      track = (state.tracks || []).find((t) => t.id === row.dataset.trackId);
+    }
+    if (!track) return;
+    e.preventDefault();
+    const x = e.clientX;
+    const y = e.clientY;
+    openActionsMenu(
+      {
+        getBoundingClientRect: () => ({
+          left: x,
+          right: x,
+          top: y,
+          bottom: y,
+          width: 0,
+          height: 0,
+        }),
+      },
+      track,
+    );
+  });
+
   // ── Queue drag-to-reorder delegation ──
   document.addEventListener("dragstart", (e) => {
     const row = e.target.closest(".queue-row[data-track-id]");
@@ -13595,6 +13861,10 @@ function _applyPlayingStateToDetailRows(container) {
 async function playTrack(track) {
   if (!track) return;
   const previousTrackId = state.currentTrack?.id || null;
+  if (state.currentTrack !== track) {
+    clearTimeout(_retryTimer);
+    _retryCount = 0;
+  }
   state.currentTrack = track;
   if (!state._playingFromPlaylistCard) {
     state.playingPlaylistId = null;
@@ -13751,6 +14021,8 @@ async function playTrack(track) {
     _updateMediaSession(track);
     // Reset consecutive failures on successful play
     state.consecutiveFailures = 0;
+    _retryCount = 0;
+    clearTimeout(_retryTimer);
     // Deferred IPC writes — now that audio is playing, disk IO can't block playback start.
     _persistQueue();
     saveSetting(
@@ -13778,23 +14050,38 @@ async function playTrack(track) {
 
     console.error("Playback failed:", err);
 
-    // Auto-skip corrupt/missing files
-    state.consecutiveFailures = (state.consecutiveFailures || 0) + 1;
-    if (state.consecutiveFailures >= state.queue.length) {
-      console.warn("All tracks in queue failed to play. Stopping.");
-      state.consecutiveFailures = 0;
-      showAppDialog({
-        title: "Playback Error",
-        message: "None of the tracks in the play queue could be played.",
-        confirmText: "OK",
-        cancelText: null,
-      });
-      return;
+    // Broken file (decode / unsupported) → skip; transient (timeout/network) → retry
+    if (err && (err.mediaCode === 3 || err.mediaCode === 4)) {
+      _skipBroken();
+    } else {
+      _retryTrack(track);
     }
-
-    // Effortlessly skip to next track
-    playNext();
   }
+}
+function _skipBroken() {
+  _retryCount = 0;
+  state.consecutiveFailures = (state.consecutiveFailures || 0) + 1;
+  if (state.consecutiveFailures >= state.queue.length) {
+    state.consecutiveFailures = 0;
+    showAppDialog({
+      title: "Playback Error",
+      message: "None of the tracks in the play queue could be played.",
+      confirmText: "OK",
+      cancelText: null,
+    });
+    return;
+  }
+  playNext();
+}
+let _retryTimer = 0;
+let _retryCount = 0;
+function _retryTrack(track) {
+  clearTimeout(_retryTimer);
+  _retryCount++;
+  const delay = Math.min(500 * _retryCount, 5000);
+  _retryTimer = setTimeout(() => {
+    if (state.currentTrack === track) playTrack(track);
+  }, delay);
 }
 
 function _smtcStatus(status) {
@@ -13961,10 +14248,7 @@ async function playNext() {
         for (let i = 0; i < libTracks.length; i++) {
           if (libTracks[i].id !== curId) pool.push(libTracks[i]);
         }
-        state.queue =
-          pool.length > 0
-            ? _fastShuffle(pool)
-            : _fastShuffle(libTracks.slice());
+        state.queue = pool.length > 0 ? _fastShuffle(pool) : _fastShuffle(libTracks.slice());
         state.queueIndex = 0;
         state.queueSource = null;
       } else {
@@ -13978,9 +14262,7 @@ async function playNext() {
       } else {
         // Single-song queue: look up next song in library using active user sort logic
         if (libTracks.length > 1 && state.currentTrack) {
-          const curIdx = libTracks.findIndex(
-            (t) => t.id === state.currentTrack.id,
-          );
+          const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
           const nextIdx = curIdx >= 0 ? (curIdx + 1) % libTracks.length : 0;
           const after = libTracks.slice(nextIdx);
           const before = libTracks.slice(0, nextIdx);
@@ -13993,15 +14275,9 @@ async function playNext() {
       }
     } else {
       // Repeat is OFF & Shuffle is OFF:
-      if (
-        state.queue.length === 1 &&
-        state.currentTrack &&
-        libTracks.length > 1
-      ) {
+      if (state.queue.length === 1 && state.currentTrack && libTracks.length > 1) {
         // Queue was 1 song: continue with user's library sort order
-        const curIdx = libTracks.findIndex(
-          (t) => t.id === state.currentTrack.id,
-        );
+        const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
         if (curIdx >= 0 && curIdx + 1 < libTracks.length) {
           const after = libTracks.slice(curIdx + 1);
           const before = libTracks.slice(0, curIdx + 1);
@@ -14040,9 +14316,7 @@ async function playPrevious() {
       } else {
         const libTracks = _getSortedLibraryTracks();
         if (libTracks.length > 1 && state.currentTrack) {
-          const curIdx = libTracks.findIndex(
-            (t) => t.id === state.currentTrack.id,
-          );
+          const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
           const prevIdx = curIdx > 0 ? curIdx - 1 : libTracks.length - 1;
           const after = libTracks.slice(prevIdx);
           const before = libTracks.slice(0, prevIdx);
@@ -14146,7 +14420,9 @@ function _applyRepeatMode(mode) {
     const sorted = state.filteredTracks.length
       ? state.filteredTracks
       : state.tracks;
-    const currentIdx = sorted.findIndex((t) => t.id === state.currentTrack.id);
+    const currentIdx = sorted.findIndex(
+      (t) => t.id === state.currentTrack.id,
+    );
     if (currentIdx >= 0) {
       const after = sorted.slice(currentIdx);
       const before = sorted.slice(0, currentIdx);
@@ -14182,7 +14458,12 @@ function _updatePlayPauseIcon(playing) {
   // is-playing class yet (e.g. during the brief window between
   // updateActiveTrackRows and _updatePlayPauseIcon).
   $$(".eq-bar").forEach((b) => {
-    b.style.animationPlayState = playing ? "running" : "paused";
+    b.style.animationPlayState =
+      playing && b.closest(".discovery-track-row")
+        ? ""
+        : playing
+          ? "running"
+          : "paused";
   });
   // v1.0.9: Toggle is-playing on all active rows so the CSS animation
   // gate works. This covers both .track-row and .playlist-song-row.
@@ -14193,7 +14474,11 @@ function _updatePlayPauseIcon(playing) {
     });
   // Pause/resume EQ icon overlay (dim when paused)
   $$(".eq-icon").forEach((eq) => {
-    eq.style.opacity = playing ? "1" : "0.5";
+    eq.style.opacity = eq.closest(".discovery-track-row")
+      ? ""
+      : playing
+        ? "1"
+        : "0.5";
   });
   // Pause indicator on now-playing cover art
   const npArt = $("np-art");
@@ -14278,6 +14563,25 @@ function seekFromPointer(canvas, e, squiggly) {
 
 function wireSeekCanvas(canvas, squiggly) {
   if (!canvas) return;
+  // Hover tooltip: time at cursor
+  let _tip = document.getElementById("seek-hover-tip");
+  if (!_tip) {
+    _tip = document.createElement("div");
+    _tip.id = "seek-hover-tip";
+    _tip.className = "seek-hover-tip";
+    document.body.appendChild(_tip);
+  }
+  canvas.addEventListener("pointermove", (e) => {
+    const d = audioEngine.getDuration();
+    const rc = canvas.getBoundingClientRect();
+    if (!(isFinite(d) && d > 0) || rc.width <= 0) return;
+    const pct = Math.max(0, Math.min(1, (e.clientX - rc.left) / rc.width));
+    _tip.textContent = formatTime(pct * d);
+    _tip.style.left = Math.max(28, Math.min(window.innerWidth - 28, e.clientX)) + "px";
+    _tip.style.top = rc.top - 6 + "px";
+    _tip.classList.add("show");
+  });
+  canvas.addEventListener("pointerleave", () => _tip.classList.remove("show"));
   let pendingSeekTime = null;
   let pendingSeekPct = null;
   let pendingHasFiniteDuration = false;
@@ -14811,9 +15115,7 @@ function updateProgressText(cur, dur) {
   if (typeof cur === "number" && isFinite(cur)) _lastProgressCur = cur;
   if (typeof dur === "number" && isFinite(dur)) _lastProgressDur = dur;
 
-  const validCur = isFinite(_lastProgressCur)
-    ? Math.max(0, _lastProgressCur)
-    : 0;
+  const validCur = isFinite(_lastProgressCur) ? Math.max(0, _lastProgressCur) : 0;
   const validDur =
     isFinite(_lastProgressDur) && _lastProgressDur > 0 ? _lastProgressDur : 0;
 
@@ -14987,10 +15289,8 @@ function _setupAudioEvents() {
     // which increments consecutiveFailures and calls playNext() — the
     // _isLoading gate in AudioEngine prevents _emit("error") during load,
     // so this handler will never double-fire for load failures.
-    state.consecutiveFailures = (state.consecutiveFailures || 0) + 1;
-    if (state.consecutiveFailures < state.queue.length) {
-      playNext();
-    }
+    if (data.code === 3 || data.code === 4) _skipBroken();
+    else if (state.currentTrack) _retryTrack(state.currentTrack);
   });
 }
 
@@ -16549,6 +16849,7 @@ function _openTagEditor(track) {
     const newGenre = overlay.querySelector("#tag-genre").value.trim();
     const newYear = overlay.querySelector("#tag-year").value.trim();
 
+
     saveBtn.disabled = true;
     saveBtn.textContent = "Saving...";
 
@@ -16595,7 +16896,7 @@ function _openTagEditor(track) {
             state.currentTrack._hasCoverArt = true;
           }
         }
-
+        
         // Re-render current section
         invalidateSectionCache();
         // Invalidate thumbnail cache for this track (cover art may have changed)
@@ -16714,3 +17015,26 @@ closePlaylistMenus = function () {
     ovAddBtn.dataset.tooltip = "Playlist";
   }
 };
+
+// ─── Custom window controls ───
+(function initWinControls() {
+  const inv = (ch) => window.novaAPI?.invoke?.(ch);
+  const max = document.getElementById("win-max");
+  if (!max) return;
+  const restoreSvg =
+    '<svg viewBox="0 0 12 12"><rect x="1.75" y="3.75" width="6.5" height="6.5" rx="1.2"/><path d="M3.75 3.75V2.9a1.15 1.15 0 0 1 1.15-1.15h4.2a1.15 1.15 0 0 1 1.15 1.15v4.2a1.15 1.15 0 0 1-1.15 1.15h-.85"/></svg>';
+  const maxSvg = max.innerHTML;
+  const sync = async () => {
+    const m = await inv("window:is-maximized");
+    max.innerHTML = m ? restoreSvg : maxSvg;
+    max.setAttribute("aria-label", m ? "Restore" : "Maximize");
+  };
+  document.getElementById("win-min").addEventListener("click", () => inv("window:minimize"));
+  document.getElementById("win-close").addEventListener("click", () => inv("window:close"));
+  max.addEventListener("click", async () => {
+    await inv("window:toggle-maximize");
+    sync();
+  });
+  window.addEventListener("resize", sync);
+  sync();
+})();
