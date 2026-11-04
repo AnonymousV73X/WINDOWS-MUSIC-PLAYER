@@ -21,6 +21,22 @@ class DiscoveryView {
     this._toastTimeout = null;
 
     this._setupProgressEvents();
+    // Delegated cancel: buttons are re-rendered on every progress tick, so
+    // per-button listeners are lost. mousedown fires before any re-render.
+    this.container.addEventListener("mousedown", (e) => {
+      const btn = e.target.closest(".action-cancel-btn");
+      if (!btn || e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this._cancelDownload(btn.dataset.id);
+    });
+    this.container.addEventListener(
+      "click",
+      (e) => {
+        if (e.target.closest(".action-cancel-btn")) e.stopPropagation();
+      },
+      true,
+    );
   }
 
   // ── In-App Toast Notification ─────────────────────────────────────────────
@@ -334,6 +350,16 @@ class DiscoveryView {
     }
     for (const t of next) if (!seen.has(t.id)) out.push(t);
     return out;
+  }
+
+  async _cancelDownload(id) {
+    if (!id) return;
+    (this._cancelledIds = this._cancelledIds || new Set()).add(id);
+    this.downloadStates.delete(id);
+    this._updateTrackDownloadUI(id, { status: "idle" });
+    try {
+      await this.novaAPI.invoke("discovery:cancel", { trackId: id });
+    } catch (_) {}
   }
 
   _renderEmpty(message) {
