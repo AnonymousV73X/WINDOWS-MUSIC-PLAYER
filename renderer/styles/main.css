@@ -9455,3 +9455,9 @@ body.expanded-sidebar .sidebar-search {
   color: #fff;
   background: #e81123;
 }
+
+/* Native overlay (invisible glyphs) handles clicks + Snap Layouts; DOM buttons are visual only */
+.win-controls,
+.win-controls * {
+  pointer-events: none !important;
+}
