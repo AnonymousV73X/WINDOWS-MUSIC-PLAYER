@@ -2745,16 +2745,34 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       const filtered = library.filter((t) => t.id !== trackId);
       saveLibrary(filtered);
 
+      // The renderer loads from the binary manifest at startup; rebuild it
+      // so the deleted track doesn't reappear as a ghost row.
+      try {
+        const st = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+        await ManifestIPC.rebuildManifest(filtered, st._combinedFingerprint || "");
+      } catch (mErr) {
+        console.warn("[library:remove-track] Manifest rebuild failed:", mErr.message);
+        try { ManifestIPC.deleteManifest(); } catch (_) {}
+      }
+
       // Delete the file from physical storage
       if (track.filePath && fs.existsSync(track.filePath)) {
-        try {
-          await fs.promises.unlink(track.filePath);
-          console.log(`[library] Deleted file from storage: ${track.filePath}`);
-        } catch (e) {
-          console.warn(
-            `[library] Failed to delete file ${track.filePath} from storage:`,
-            e.message,
-          );
+        for (let i = 0; i < 6; i++) {
+          try {
+            await fs.promises.unlink(track.filePath);
+            console.log(`[library] Deleted file from storage: ${track.filePath}`);
+            break;
+          } catch (e) {
+            if (e.code === "ENOENT") break;
+            if (i === 5) {
+              console.warn(
+                `[library] Failed to delete file ${track.filePath} from storage:`,
+                e.message,
+              );
+            } else {
+              await new Promise((r) => setTimeout(r, 250 * (i + 1)));
+            }
+          }
         }
       }
 
@@ -6471,11 +6489,15 @@ ipcMain.handle("coverart:migrate-v114", async () => {
  */
 
 // ─── Music Discovery & Downloader IPC Handlers ───────────────────────
-ipcMain.handle("discovery:search", async (_event, query) => {
+ipcMain.handle("discovery:search", async (event, query, searchId) => {
   try {
     if (!query || !query.trim()) return { success: true, results: [] };
-    const results = await DownloadEngine.searchITunes(query);
-    return { success: true, results };
+    let streamed = false;
+    const results = await DownloadEngine.searchITunes(query, 80, (r) => {
+      streamed = true;
+      try { event.sender.send("discovery:search-update", { searchId, results: r }); } catch (_) {}
+    });
+    return { success: true, results, streamed };
   } catch (err) {
     console.error("[IPC] discovery:search error:", err);
     return { success: false, error: err.message, results: [] };
@@ -6500,7 +6522,7 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
       } catch (_) {}
     };
 
-    const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress);
+    const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress, trackInfo.id);
 
     // ── Task 4.1: Instant Single-Track Hot-Reload into Library ────────
     let parsedTrack = null;
@@ -6610,6 +6632,17 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
     return { success: true, filePath: savedPath, track: parsedTrack };
   } catch (err) {
     console.error("[IPC] discovery:download error:", err);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle("discovery:cancel", async (event, { trackId }) => {
+  try {
+    const cancelled = DownloadEngine.cancelDownload(trackId);
+    console.log(`[IPC] discovery:cancel trackId=${trackId} cancelled=${cancelled}`);
+    return { success: cancelled };
+  } catch (err) {
+    console.error("[IPC] discovery:cancel error:", err);
     return { success: false, error: err.message };
   }
 });

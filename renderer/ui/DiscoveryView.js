@@ -100,6 +100,13 @@ class DiscoveryView {
         this._updateTrackDownloadUI(data.trackId, updated);
       });
 
+      this.novaAPI.on("discovery:search-update", (d) => {
+        if (!d || d.searchId !== this._searchSeq || !Array.isArray(d.results)) return;
+        if (this._searchBusyFn) this._searchBusyFn(false);
+        this.tracks = d.results;
+        this._renderResults(this.tracks);
+      });
+
       // When main confirms the track is saved & scannable, promote to "done"
       this.novaAPI.on("library:track-added", (parsedTrack) => {
         if (!parsedTrack || !parsedTrack.filePath) return;
@@ -134,14 +141,21 @@ class DiscoveryView {
   // Songs already in the library show Play/Pause instead of the download CTA.
   _applyLibraryMatches(tracks) {
     if (typeof this.hooks.findLibraryTrack !== "function") return;
+    const claimed = new Set();
     for (const t of tracks) {
       const cur = this.downloadStates.get(t.id);
-      if (cur && cur.status && cur.status !== "idle") continue;
+      if (cur && cur.fromLibrary) this.downloadStates.delete(t.id);
+      else if (cur && cur.status && cur.status !== "idle") {
+        if (cur.track) claimed.add(cur.track.id);
+        continue;
+      }
       let lib = null;
       try {
         lib = this.hooks.findLibraryTrack(t);
       } catch (_) {}
-      if (lib) {
+      // One library song can only back ONE result row.
+      if (lib && !claimed.has(lib.id)) {
+        claimed.add(lib.id);
         this.downloadStates.set(t.id, {
           status: "done",
           percent: 100,
@@ -163,7 +177,7 @@ class DiscoveryView {
     const pb = this._getPlayback();
     if (
       pb &&
-      pb.trackId === state.track.id &&
+      this._samePb(pb, state.track) &&
       typeof this.hooks.togglePlay === "function"
     ) {
       this.hooks.togglePlay();
@@ -180,7 +194,7 @@ class DiscoveryView {
       return;
     }
     const pb = this._getPlayback();
-    const sig = pb ? `${pb.trackId}|${pb.isPlaying}` : "";
+    const sig = pb ? `${pb.trackId}|${pb.filePath}|${pb.isPlaying}` : "";
     if (!force && sig === this._lastPbSig) return;
     this._lastPbSig = sig;
     for (const [id, st] of this.downloadStates) {
@@ -211,7 +225,7 @@ class DiscoveryView {
             <input 
               type="text" 
               id="discovery-search-input" 
-              placeholder="Search by song name, artist, or paste a Spotify link..." 
+              placeholder="Search by song name, artist, or Spotify link..." 
               style="width: 100%; height: 46px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 23px; padding: 0 54px 0 20px; color: #fff; font-size: 15px; outline: none; transition: border-color 0.2s;"
             />
             <button 
@@ -280,10 +294,14 @@ class DiscoveryView {
       if (btn) btn.style.pointerEvents = b ? "none" : "";
     };
     setBusy(true);
+    this._searchBusyFn = setBusy;
+    const searchId = (this._searchSeq = (this._searchSeq || 0) + 1);
 
     try {
-      const res = await this.novaAPI.invoke("discovery:search", query);
+      const res = await this.novaAPI.invoke("discovery:search", query, searchId);
+      if (searchId !== this._searchSeq) return;
       setBusy(false);
+      if (res && res.streamed) return;
 
       if (res && res.success && Array.isArray(res.results)) {
         this.tracks = res.results;
@@ -325,13 +343,15 @@ class DiscoveryView {
 
         const state = this.downloadStates.get(track.id) || { status: "idle" };
         const isDownloaded = state.status === "done";
+        const rowPlaying = this._isRowPlaying(state, this._getPlayback());
 
         return `
-          <div class="discovery-track-row ${isDownloaded ? "is-downloaded" : ""}" data-id="${track.id}" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-radius: 8px; background: rgba(255,255,255,0.03); transition: background 0.15s; cursor: ${isDownloaded ? "pointer" : "default"};">
+          <div class="discovery-track-row ${isDownloaded ? "is-downloaded" : ""}${rowPlaying ? " is-playing" : ""}" data-id="${track.id}" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-radius: 8px; background: rgba(255,255,255,0.03); transition: background 0.15s; cursor: ${isDownloaded ? "pointer" : "default"};">
             <!-- Left: Artwork & Info -->
             <div style="display: flex; align-items: center; gap: 14px; min-width: 0; flex: 1; padding-right: 32px;">
-              <div style="position: relative; width: 44px; height: 44px; flex-shrink: 0; border-radius: 4px; overflow: hidden; background: #222;">
+              <div class="discovery-art" style="position: relative; width: 44px; height: 44px; flex-shrink: 0; border-radius: 4px; overflow: hidden; background: #222;">
                 <img src="${track.artworkThumbnail || track.artworkUrl}" alt="" style="width: 100%; height: 100%; object-fit: cover;" />
+                ${isDownloaded ? DiscoveryView.EQ_HTML : ""}
               </div>
 
               <div style="min-width: 0; flex: 1; overflow: hidden;">
@@ -369,6 +389,7 @@ class DiscoveryView {
         <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--green); font-weight: 500;">
           <div style="width: 14px; height: 14px; border: 2px solid color-mix(in srgb, var(--green) 30%, transparent); border-top-color: var(--green); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
           <span>${state.percent || 10}%</span>
+          <button class="action-cancel-btn" data-id="${trackId}" style="width: 20px; height: 20px; border-radius: 50%; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; color: rgba(255,255,255,0.6); font-size: 11px; line-height: 1; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);" title="Cancel download" onmouseover="this.style.background='rgba(239,68,68,0.2)'; this.style.borderColor='rgba(239,68,68,0.5)'; this.style.color='#ef4444';" onmouseout="this.style.background='rgba(255,255,255,0.08)'; this.style.borderColor='rgba(255,255,255,0.15)'; this.style.color='rgba(255,255,255,0.6)';">✕</button>
         </div>
       `;
     }
@@ -389,7 +410,7 @@ class DiscoveryView {
     if (state.status === "done") {
       const pb = this._getPlayback();
       const isPlaying =
-        !!(pb && state.track && pb.trackId === state.track.id && pb.isPlaying);
+        !!(pb && state.track && this._samePb(pb, state.track) && pb.isPlaying);
       const icon = isPlaying
         ? `<svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`
         : `<svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;"><polygon points="5 3 19 12 5 21" /></svg>`;
@@ -436,6 +457,19 @@ class DiscoveryView {
       });
     });
 
+    // Cancel buttons
+    this.container.querySelectorAll(".action-cancel-btn").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        try {
+          await this.novaAPI.invoke("discovery:cancel", { trackId: id });
+        } catch (_) {}
+        this.downloadStates.delete(id);
+        this._updateTrackDownloadUI(id, { status: "idle" });
+      });
+    });
+
     // Clicking row of a downloaded song plays it
     this.container.querySelectorAll(".discovery-track-row").forEach((row) => {
       row.addEventListener("mouseenter", () => {
@@ -448,7 +482,8 @@ class DiscoveryView {
       row.addEventListener("click", (e) => {
         if (
           e.target.closest(".preview-btn") ||
-          e.target.closest(".action-download-btn")
+          e.target.closest(".action-download-btn") ||
+          e.target.closest(".action-cancel-btn")
         )
           return;
         this._onPlayClick(row.dataset.id);
@@ -568,6 +603,23 @@ class DiscoveryView {
     }
   }
 
+  _isRowPlaying(state, pb) {
+    return !!(
+      state &&
+      state.status === "done" &&
+      state.track &&
+      pb &&
+      this._samePb(pb, state.track) &&
+      pb.isPlaying
+    );
+  }
+
+  _samePb(pb, t) {
+    if (!pb || !t) return false;
+    if (pb.trackId != null && pb.trackId === t.id) return true;
+    return !!(pb.filePath && t.filePath && pb.filePath === t.filePath);
+  }
+
   _updateTrackDownloadUI(trackId, state) {
     const container = this.container.querySelector(`#dl-container-${trackId}`);
     if (container) {
@@ -576,7 +628,15 @@ class DiscoveryView {
         `.discovery-track-row[data-id="${trackId}"]`,
       );
       if (row) {
+        row.classList.toggle(
+          "is-playing",
+          this._isRowPlaying(state, this._getPlayback()),
+        );
         if (state.status === "done") {
+          const art = row.querySelector(".discovery-art");
+          if (art && !art.querySelector(".eq-icon")) {
+            art.insertAdjacentHTML("beforeend", DiscoveryView.EQ_HTML);
+          }
           row.classList.add("is-downloaded");
           row.style.cursor = "pointer";
         } else {
@@ -610,6 +670,9 @@ class DiscoveryView {
     }
   }
 }
+
+DiscoveryView.EQ_HTML =
+  '<div class="eq-icon"><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div></div>';
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = DiscoveryView;
