@@ -225,7 +225,7 @@ class DiscoveryView {
       this._syncTimer = setInterval(() => this._syncPlaybackButtons(), 400);
     }
     this.container.innerHTML = `
-      <div class="discovery-container" style="padding: 24px 32px 48px; box-sizing: border-box; color: var(--text-base); scrollbar-width: none; -ms-overflow-style: none;">
+      <div class="discovery-container" style="padding: 24px 32px 48px; box-sizing: border-box; color: var(--text-primary); scrollbar-width: none; -ms-overflow-style: none;">
         <!-- Header & Search -->
         <div class="discovery-header" style="margin-bottom: 24px;">
           <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
@@ -244,7 +244,7 @@ class DiscoveryView {
               type="text" 
               id="discovery-search-input" 
               placeholder="Search by song name, artist, or Spotify link..." 
-              style="width: 100%; height: 46px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 23px; padding: 0 54px 0 20px; color: #fff; font-size: 15px; outline: none; transition: border-color 0.2s;"
+              style="width: 100%; height: 46px; background: var(--dv-field-bg); border: 1px solid var(--dv-border); border-radius: 23px; padding: 0 54px 0 20px; color: var(--text-primary); font-size: 15px; outline: none; transition: border-color 0.2s;"
             />
             <button 
               id="discovery-search-btn" 
@@ -284,7 +284,7 @@ class DiscoveryView {
         input.style.borderColor = "var(--green)";
       });
       input.addEventListener("blur", () => {
-        input.style.borderColor = "rgba(255,255,255,0.1)";
+        input.style.borderColor = "";
       });
     }
     if (searchBtn) {
@@ -393,7 +393,7 @@ class DiscoveryView {
         const rowPlaying = this._isRowPlaying(state, this._getPlayback());
 
         return `
-          <div class="discovery-track-row ${isDownloaded ? "is-downloaded" : ""}${rowPlaying ? " is-playing" : ""}" data-id="${track.id}" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-radius: 8px; background: rgba(255,255,255,0.03); transition: background 0.15s; cursor: ${isDownloaded ? "pointer" : "default"};">
+          <div class="discovery-track-row ${isDownloaded ? "is-downloaded" : ""}${rowPlaying ? " is-playing" : ""}" data-id="${track.id}" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-radius: 8px; background: var(--dv-row-bg); transition: background 0.15s; cursor: ${isDownloaded ? "pointer" : "default"};">
             <!-- Left: Artwork & Info -->
             <div style="display: flex; align-items: center; gap: 14px; min-width: 0; flex: 1; padding-right: 32px;">
               <div class="discovery-art" style="position: relative; width: 44px; height: 44px; flex-shrink: 0; border-radius: 4px; overflow: hidden; background: #222;">
@@ -402,7 +402,7 @@ class DiscoveryView {
               </div>
 
               <div style="min-width: 0; flex: 1; overflow: hidden;">
-                <div style="font-weight: 600; font-size: 14px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                <div style="font-weight: 600; font-size: 14px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                   ${track.trackName}
                 </div>
                 <div style="font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px;">
@@ -474,7 +474,7 @@ class DiscoveryView {
     }
 
     return `
-      <button class="action-download-btn" data-id="${trackId}" style="display: flex; align-items: center; gap: 6px; padding: 6px 14px; background: rgba(255,255,255,0.08); border: none; border-radius: 16px; color: #fff; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s;">
+      <button class="action-download-btn" data-id="${trackId}" style="display: flex; align-items: center; gap: 6px; padding: 6px 14px; background: var(--dv-btn-bg); border: none; border-radius: 16px; color: var(--text-primary); font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s;">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
           <polyline points="7 10 12 15 17 10" />
@@ -525,10 +525,10 @@ class DiscoveryView {
     // Clicking row of a downloaded song plays it
     this.container.querySelectorAll(".discovery-track-row").forEach((row) => {
       row.addEventListener("mouseenter", () => {
-        row.style.background = "rgba(255,255,255,0.08)";
+        row.style.background = "var(--dv-row-hover)";
       });
       row.addEventListener("mouseleave", () => {
-        row.style.background = "rgba(255,255,255,0.03)";
+        row.style.background = "var(--dv-row-bg)";
       });
 
       row.addEventListener("click", (e) => {
