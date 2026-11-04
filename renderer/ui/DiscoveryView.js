@@ -610,7 +610,7 @@ class DiscoveryView {
         }, 4000);
       } else {
         const msg = res?.error || "Unknown error";
-        if (!(this._cancelledIds && this._cancelledIds.has(track.id)))
+        if (!res?.cancelled && !(this._cancelledIds && this._cancelledIds.has(track.id)))
           this._showToast("Download failed: " + msg);
         this.downloadStates.delete(track.id);
         this._updateTrackDownloadUI(track.id, { status: "idle" });
