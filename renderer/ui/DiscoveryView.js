@@ -101,7 +101,8 @@ class DiscoveryView {
       });
 
       this.novaAPI.on("discovery:search-update", (d) => {
-        if (!d || d.searchId !== this._searchSeq || !Array.isArray(d.results)) return;
+        if (!d || d.searchId !== this._searchSeq || !Array.isArray(d.results))
+          return;
         if (this._searchBusyFn) this._searchBusyFn(false);
         this.tracks = this._stableMerge(this.tracks, d.results);
         this._renderResults(this.tracks);
@@ -299,7 +300,11 @@ class DiscoveryView {
     this.tracks = [];
 
     try {
-      const res = await this.novaAPI.invoke("discovery:search", query, searchId);
+      const res = await this.novaAPI.invoke(
+        "discovery:search",
+        query,
+        searchId,
+      );
       if (searchId !== this._searchSeq) return;
       setBusy(false);
       if (res && res.streamed) return;
@@ -424,8 +429,12 @@ class DiscoveryView {
 
     if (state.status === "done") {
       const pb = this._getPlayback();
-      const isPlaying =
-        !!(pb && state.track && this._samePb(pb, state.track) && pb.isPlaying);
+      const isPlaying = !!(
+        pb &&
+        state.track &&
+        this._samePb(pb, state.track) &&
+        pb.isPlaying
+      );
       const icon = isPlaying
         ? `<svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`
         : `<svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;"><polygon points="5 3 19 12 5 21" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/></svg>`;
