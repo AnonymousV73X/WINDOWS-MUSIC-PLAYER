@@ -6701,6 +6701,9 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
 
     return { success: true, filePath: savedPath, track: parsedTrack };
   } catch (err) {
+    if (err && err.cancelled) {
+      return { success: false, cancelled: true, error: "Download cancelled" };
+    }
     console.error("[IPC] discovery:download error:", err);
     return { success: false, error: err.message };
   }
