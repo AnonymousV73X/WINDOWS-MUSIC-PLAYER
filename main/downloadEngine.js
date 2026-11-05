@@ -214,6 +214,12 @@ function scrapeWatchDuration(videoId, timeoutMs = 2500) {
   });
 }
 
+function _ytArt(u, n) {
+  return u && /googleusercontent\.com|ggpht\.com/.test(u)
+    ? u.replace(/=(?:w\d+-h\d+|s\d+)[^?#]*$/, `=w${n}-h${n}-l90-rj`)
+    : u;
+}
+
 async function searchYouTubeMusic(query, limit = 40) {
   const baseClient = {
     client: {
@@ -344,8 +350,9 @@ async function searchYouTubeMusic(query, limit = 40) {
 
     const thumbs =
       r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
-    const art = thumbs[thumbs.length - 1]?.url || "";
-    const thumb = thumbs[0]?.url || art;
+    const raw = thumbs[thumbs.length - 1]?.url || "";
+    const art = _ytArt(raw, 600);
+    const thumb = _ytArt(thumbs[0]?.url || raw, 256);
 
     return {
       id: `ytm_${videoId}`,
@@ -395,8 +402,9 @@ async function searchYouTubeMusic(query, limit = 40) {
 
         const thumbs =
           card.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
-        const art = thumbs[thumbs.length - 1]?.url || "";
-        const thumb = thumbs[0]?.url || art;
+        const raw = thumbs[thumbs.length - 1]?.url || "";
+        const art = _ytArt(raw, 600);
+        const thumb = _ytArt(thumbs[0]?.url || raw, 256);
         const videoId =
           card.onTap?.watchEndpoint?.videoId ||
           card.buttons?.find(
@@ -561,7 +569,7 @@ function searchITunesInternal(query, limit = 15) {
             durationMs: item.trackTimeMillis || 0,
             previewUrl: item.previewUrl || "",
             artworkUrl: artworkHigh || artwork100,
-            artworkThumbnail: artwork100,
+            artworkThumbnail: artwork100 ? artwork100.replace(/100x100/g, "300x300") : "",
             genre: item.primaryGenreName || "Music",
           };
         });
@@ -584,7 +592,7 @@ function searchDeezerInternal(query, limit = 15) {
             item.album?.cover_medium ||
             "";
           const thumb =
-            item.album?.cover_small || item.album?.cover_medium || "";
+            item.album?.cover_medium || item.album?.cover_small || "";
           return {
             id: `deezer_${item.id}`,
             source: "deezer",
@@ -1314,11 +1322,7 @@ function _tagWithTagLib(filePath, info, artBuf) {
         t.performers = [artist];
         t.albumArtists = [artist];
       }
-      if (
-        info.albumName &&
-        info.albumName.trim() &&
-        info.albumName !== "Unknown Album"
-      )
+      if (info.albumName && info.albumName.trim() && info.albumName !== "Unknown Album")
         t.album = info.albumName.trim();
       const yr = Number(info.releaseYear);
       if (yr > 1900 && yr <= new Date().getFullYear() + 1) t.year = yr;
@@ -1366,8 +1370,7 @@ function _artImage(buf) {
 // ─── Post-download metadata injection ─────────────────────────────────────────
 function injectTrackInfoTags(filePath, trackInfo, artBuf) {
   try {
-    if (!/\.mp3$/i.test(filePath))
-      return _tagWithTagLib(filePath, trackInfo, artBuf);
+    if (!/\.mp3$/i.test(filePath)) return _tagWithTagLib(filePath, trackInfo, artBuf);
     const cleanTags = {};
 
     if (trackInfo.trackName && trackInfo.trackName.trim())
