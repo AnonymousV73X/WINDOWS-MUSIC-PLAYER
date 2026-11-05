@@ -92,6 +92,7 @@ const DEFAULT_SETTINGS = {
   alwaysOnTop: false,
   hardwareAcceleration: true,
   outputDevice: "default",
+  downloadFormat: "m4a",
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -6733,7 +6734,8 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
       } catch (_) {}
     };
 
-    const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress, trackInfo.id);
+    const fmt = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS }).downloadFormat === "mp3" ? "mp3" : "m4a";
+    const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress, trackInfo.id, fmt);
 
     // ── Task 4.1: Instant Single-Track Hot-Reload into Library ────────
     let parsedTrack = null;

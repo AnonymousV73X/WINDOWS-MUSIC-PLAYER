@@ -7769,6 +7769,13 @@ function renderSettings() {
           </div>
         </div>
         <div class="settings-row settings-row--wrap">
+          <span>Download format <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(M4A = instant, original quality &bull; MP3 320k = universal)</span></span>
+          <div class="settings-btn-group">
+            <button type="button" class="dlfmt-btn settings-toggle-btn${state.settings.downloadFormat === "mp3" ? " active" : ""}" data-mode="mp3">MP3</button>
+            <button type="button" class="dlfmt-btn settings-toggle-btn${state.settings.downloadFormat !== "mp3" ? " active" : ""}" data-mode="m4a">M4A</button>
+          </div>
+        </div>
+        <div class="settings-row settings-row--wrap">
           <span>Side menu (compact view)</span>
           <div class="settings-btn-group">
             <button type="button" class="nav-mode-btn settings-toggle-btn${(state.settings.navMode || "hover") === "hover" ? " active" : ""}" data-mode="hover">On Hover</button>
@@ -8100,6 +8107,17 @@ function renderSettings() {
     if (state.activeNavSection === "home") {
       _reRenderPanel("home", renderHome);
     }
+  });
+
+  document.querySelectorAll(".dlfmt-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mode = btn.dataset.mode;
+      document.querySelectorAll(".dlfmt-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.mode === mode);
+      });
+      saveSetting("downloadFormat", mode);
+      window.dispatchEvent(new CustomEvent("dlfmt-changed", { detail: mode }));
+    });
   });
 
   document.querySelectorAll(".vol-mode-btn").forEach((btn) => {
