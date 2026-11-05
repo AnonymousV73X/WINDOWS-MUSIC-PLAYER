@@ -1597,7 +1597,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                 _hasCoverArt: !!metadata.coverArt,
                 dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                 dateModified: file.modifiedTime || Date.now(),
-                ...(existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}),
+                ...(existingMap.get(file.filePath)?._userEdited
+                  ? { _userEdited: true }
+                  : {}),
               });
             }
           } else {
@@ -1645,7 +1647,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   _hasCoverArt: false,
                   dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                   dateModified: file.modifiedTime || Date.now(),
-                  ...(existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}),
+                  ...(existingMap.get(file.filePath)?._userEdited
+                    ? { _userEdited: true }
+                    : {}),
                 });
               } else {
                 // v1.1.0 EXHAUSTIVE SCANNER FIX: Even when quickInfo also
@@ -1737,7 +1741,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   _hasCoverArt: !!fallback.coverArt,
                   dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                   dateModified: file.modifiedTime || Date.now(),
-                  ...(existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}),
+                  ...(existingMap.get(file.filePath)?._userEdited
+                    ? { _userEdited: true }
+                    : {}),
                 });
               } else {
                 failedCount++;
@@ -2029,7 +2035,10 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
 
       // Detect songs deleted from disk (only when the scan actually saw files,
       // so an unreadable/disconnected folder never wipes the library).
-      const _norm = (x) => String(x || "").replace(/\\/g, "/").toLowerCase();
+      const _norm = (x) =>
+        String(x || "")
+          .replace(/\\/g, "/")
+          .toLowerCase();
       const _folderNorm = _norm(folderPath);
       const _onDisk = new Set(files.map((f) => _norm(f.filePath)));
       const removedIds =
@@ -2065,10 +2074,11 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         worker = new MetadataWorker();
         worker.setCoverCacheDir(coverCacheDir);
       } catch (err) {
-        if (newFiles.length > 0) console.warn(
-          "[library:quick-scan] MetadataWorker unavailable, using main thread:",
-          err.message,
-        );
+        if (newFiles.length > 0)
+          console.warn(
+            "[library:quick-scan] MetadataWorker unavailable, using main thread:",
+            err.message,
+          );
       }
 
       const newTracks = [];
@@ -2750,10 +2760,18 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       // so the deleted track doesn't reappear as a ghost row.
       try {
         const st = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
-        await ManifestIPC.rebuildManifest(filtered, st._combinedFingerprint || "");
+        await ManifestIPC.rebuildManifest(
+          filtered,
+          st._combinedFingerprint || "",
+        );
       } catch (mErr) {
-        console.warn("[library:remove-track] Manifest rebuild failed:", mErr.message);
-        try { ManifestIPC.deleteManifest(); } catch (_) {}
+        console.warn(
+          "[library:remove-track] Manifest rebuild failed:",
+          mErr.message,
+        );
+        try {
+          ManifestIPC.deleteManifest();
+        } catch (_) {}
       }
 
       // Delete the file from physical storage
@@ -2761,7 +2779,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         for (let i = 0; i < 6; i++) {
           try {
             await fs.promises.unlink(track.filePath);
-            console.log(`[library] Deleted file from storage: ${track.filePath}`);
+            console.log(
+              `[library] Deleted file from storage: ${track.filePath}`,
+            );
             break;
           } catch (e) {
             if (e.code === "ENOENT") break;
@@ -2786,11 +2806,14 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   // ─── Library: batch update tracks (e.g. background unknown artist resolution) ──
   ipcMain.handle("library:update-tracks", async (event, updates) => {
     try {
-      if (!Array.isArray(updates) || updates.length === 0) return { success: true, count: 0 };
+      if (!Array.isArray(updates) || updates.length === 0)
+        return { success: true, count: 0 };
       // db is the module-level SQLite handle (let db = null; at top of file)
       if (db) {
         const selectStmt = db.prepare("SELECT data FROM tracks WHERE id = ?");
-        const updateStmt = db.prepare("UPDATE tracks SET title = ?, artist = ?, data = ? WHERE id = ?");
+        const updateStmt = db.prepare(
+          "UPDATE tracks SET title = ?, artist = ?, data = ? WHERE id = ?",
+        );
         const tx = db.transaction(() => {
           for (const u of updates) {
             if (!u.id) continue;
@@ -2799,9 +2822,16 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
               try {
                 const track = JSON.parse(row.data);
                 if (u.artist !== undefined) track.artist = u.artist;
-                if (u.title  !== undefined) track.title  = u.title;
-                const artistStr = Array.isArray(track.artist) ? track.artist.join(", ") : (track.artist || "");
-                updateStmt.run(track.title || "", artistStr, JSON.stringify(track), u.id);
+                if (u.title !== undefined) track.title = u.title;
+                const artistStr = Array.isArray(track.artist)
+                  ? track.artist.join(", ")
+                  : track.artist || "";
+                updateStmt.run(
+                  track.title || "",
+                  artistStr,
+                  JSON.stringify(track),
+                  u.id,
+                );
               } catch (_) {}
             }
           }
@@ -2811,12 +2841,12 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       // Also patch the JSON manifest cache if it's loaded
       const library = getLibrary ? getLibrary() : null;
       if (Array.isArray(library)) {
-        const map = new Map(updates.map(u => [u.id, u]));
+        const map = new Map(updates.map((u) => [u.id, u]));
         for (const t of library) {
           const u = map.get(t.id);
           if (u) {
             if (u.artist !== undefined) t.artist = u.artist;
-            if (u.title  !== undefined) t.title  = u.title;
+            if (u.title !== undefined) t.title = u.title;
           }
         }
         if (saveLibrary) saveLibrary(library);
@@ -2829,7 +2859,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             const tracksForManifest =
               typeof module.exports.getLibraryForManifest === "function"
                 ? module.exports.getLibraryForManifest()
-                : (getLibrary ? getLibrary() : null);
+                : getLibrary
+                  ? getLibrary()
+                  : null;
             if (tracksForManifest) {
               ManifestIPC.rebuildManifest(tracksForManifest).catch((err) => {
                 console.warn(
@@ -2853,7 +2885,6 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       return { success: false, error: err.message };
     }
   });
-
 
   // ─── Cover Art: find sidecar cover art in the audio file's directory ──
   // Revolutionary: This handler was MISSING — the renderer called it via
@@ -3670,7 +3701,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   t.year = tags.year ? parseInt(tags.year, 10) || 0 : 0;
 
                 if (tags.coverArt) {
-                  const match = tags.coverArt.match(/^data:([^;]+);base64,(.+)$/);
+                  const match = tags.coverArt.match(
+                    /^data:([^;]+);base64,(.+)$/,
+                  );
                   if (match) {
                     const mime = match[1];
                     const buf = Buffer.from(match[2], "base64");
@@ -5640,7 +5673,10 @@ ipcMain.handle("share:copy-file", async (_event, filePath) => {
             "-Command",
             "Set-Clipboard -LiteralPath $env:NT_SHARE_PATH",
           ],
-          { env: { ...process.env, NT_SHARE_PATH: filePath }, windowsHide: true },
+          {
+            env: { ...process.env, NT_SHARE_PATH: filePath },
+            windowsHide: true,
+          },
           (err) => (err ? reject(err) : resolve()),
         );
       });
@@ -5658,9 +5694,12 @@ ipcMain.handle("share:pick-app", async () => {
     const r = await dialog.showOpenDialog({
       title: "Select the app's executable",
       properties: ["openFile"],
-      filters: [{ name: "Applications", extensions: ["exe", "lnk", "bat", "cmd"] }],
+      filters: [
+        { name: "Applications", extensions: ["exe", "lnk", "bat", "cmd"] },
+      ],
     });
-    if (r.canceled || !r.filePaths.length) return { success: false, canceled: true };
+    if (r.canceled || !r.filePaths.length)
+      return { success: false, canceled: true };
     return { success: true, path: r.filePaths[0] };
   } catch (err) {
     return { success: false, error: err.message };
@@ -5671,18 +5710,34 @@ ipcMain.handle("share:find-lanbeam", async () => {
   const path = require("path");
   const candidates = [];
   if (process.env.LOCALAPPDATA) {
-    candidates.push(path.join(process.env.LOCALAPPDATA, "Programs", "LANBeam", "LANBeam.exe"));
-    candidates.push(path.join(process.env.LOCALAPPDATA, "Programs", "lanbeam", "LANBeam.exe"));
-    candidates.push(path.join(process.env.LOCALAPPDATA, "LANBeam", "LANBeam.exe"));
-    candidates.push(path.join(process.env.LOCALAPPDATA, "lanbeam", "LANBeam.exe"));
+    candidates.push(
+      path.join(process.env.LOCALAPPDATA, "Programs", "LANBeam", "LANBeam.exe"),
+    );
+    candidates.push(
+      path.join(process.env.LOCALAPPDATA, "Programs", "lanbeam", "LANBeam.exe"),
+    );
+    candidates.push(
+      path.join(process.env.LOCALAPPDATA, "LANBeam", "LANBeam.exe"),
+    );
+    candidates.push(
+      path.join(process.env.LOCALAPPDATA, "lanbeam", "LANBeam.exe"),
+    );
   }
   if (process.env.ProgramFiles) {
-    candidates.push(path.join(process.env.ProgramFiles, "LANBeam", "LANBeam.exe"));
-    candidates.push(path.join(process.env.ProgramFiles, "lanbeam", "LANBeam.exe"));
+    candidates.push(
+      path.join(process.env.ProgramFiles, "LANBeam", "LANBeam.exe"),
+    );
+    candidates.push(
+      path.join(process.env.ProgramFiles, "lanbeam", "LANBeam.exe"),
+    );
   }
   if (process.env["ProgramFiles(x86)"]) {
-    candidates.push(path.join(process.env["ProgramFiles(x86)"], "LANBeam", "LANBeam.exe"));
-    candidates.push(path.join(process.env["ProgramFiles(x86)"], "lanbeam", "LANBeam.exe"));
+    candidates.push(
+      path.join(process.env["ProgramFiles(x86)"], "LANBeam", "LANBeam.exe"),
+    );
+    candidates.push(
+      path.join(process.env["ProgramFiles(x86)"], "lanbeam", "LANBeam.exe"),
+    );
   }
   for (const c of candidates) {
     if (fs.existsSync(c)) return { success: true, path: c };
@@ -5698,37 +5753,74 @@ ipcMain.handle("share:install-lanbeam", async (event) => {
 
   const sendProgress = (step, percent, msg) => {
     try {
-      event.sender.send("share:install-lanbeam-progress", { step, percent, message: msg });
+      event.sender.send("share:install-lanbeam-progress", {
+        step,
+        percent,
+        message: msg,
+      });
     } catch (_) {}
   };
 
   try {
     sendProgress("fetching", 10, "Checking latest LANBeam release...");
-    
+
     // Fetch latest release metadata from GitHub
-    const fetchJson = (url) => new Promise((resolve, reject) => {
-      const req = https.get(url, { headers: { "User-Agent": "NovaTune" } }, (res) => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          return resolve(fetchJson(res.headers.location));
-        }
-        if (res.statusCode !== 200) return reject(new Error("GitHub API HTTP " + res.statusCode));
-        let data = "";
-        res.on("data", (c) => data += c);
-        res.on("end", () => {
-          try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
+    const fetchJson = (url) =>
+      new Promise((resolve, reject) => {
+        const req = https.get(
+          url,
+          { headers: { "User-Agent": "NovaTune" } },
+          (res) => {
+            if (
+              res.statusCode >= 300 &&
+              res.statusCode < 400 &&
+              res.headers.location
+            ) {
+              return resolve(fetchJson(res.headers.location));
+            }
+            if (res.statusCode !== 200)
+              return reject(new Error("GitHub API HTTP " + res.statusCode));
+            let data = "";
+            res.on("data", (c) => (data += c));
+            res.on("end", () => {
+              try {
+                resolve(JSON.parse(data));
+              } catch (e) {
+                reject(e);
+              }
+            });
+          },
+        );
+        req.on("error", reject);
+        req.setTimeout(15000, () => {
+          req.destroy();
+          reject(new Error("GitHub API request timed out"));
         });
       });
-      req.on("error", reject);
-      req.setTimeout(15000, () => { req.destroy(); reject(new Error("GitHub API request timed out")); });
-    });
 
-    const release = await fetchJson("https://api.github.com/repos/AnonymousV73X/LAN-FILE-TRANSFER-LANBEAM/releases/latest");
-    const asset = (release.assets || []).find((a) => a.name.endsWith(".exe") && !a.name.includes("blockmap"));
+    const release = await fetchJson(
+      "https://api.github.com/repos/AnonymousV73X/LAN-FILE-TRANSFER-LANBEAM/releases/latest",
+    );
+    const asset = (release.assets || []).find(
+      (a) => a.name.endsWith(".exe") && !a.name.includes("blockmap"),
+    );
     if (!asset || !asset.browser_download_url) {
-      throw new Error("No installer asset found in latest LANBeam release (" + (release.tag_name || "unknown") + ")");
+      throw new Error(
+        "No installer asset found in latest LANBeam release (" +
+          (release.tag_name || "unknown") +
+          ")",
+      );
     }
 
-    sendProgress("downloading", 20, "Downloading " + asset.name + " (" + (release.tag_name || "latest") + ")...");
+    sendProgress(
+      "downloading",
+      20,
+      "Downloading " +
+        asset.name +
+        " (" +
+        (release.tag_name || "latest") +
+        ")...",
+    );
 
     const tmpDir = os.tmpdir();
     const installerPath = path.join(tmpDir, asset.name);
@@ -5736,28 +5828,43 @@ ipcMain.handle("share:install-lanbeam", async (event) => {
     // Download with redirect handling
     await new Promise((resolve, reject) => {
       const downloadFile = (fileUrl) => {
-        const req = https.get(fileUrl, { headers: { "User-Agent": "NovaTune" } }, (res) => {
-          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            return downloadFile(res.headers.location);
-          }
-          if (res.statusCode !== 200) return reject(new Error("Installer download HTTP " + res.statusCode));
-          const total = parseInt(res.headers["content-length"], 10) || 0;
-          let downloaded = 0;
-          const outStream = fs.createWriteStream(installerPath);
-          res.on("data", (chunk) => {
-            downloaded += chunk.length;
-            if (total > 0) {
-              const pct = 20 + Math.round((downloaded / total) * 60);
-              sendProgress("downloading", pct, "Downloading LANBeam... " + pct + "%");
+        const req = https.get(
+          fileUrl,
+          { headers: { "User-Agent": "NovaTune" } },
+          (res) => {
+            if (
+              res.statusCode >= 300 &&
+              res.statusCode < 400 &&
+              res.headers.location
+            ) {
+              return downloadFile(res.headers.location);
             }
-          });
-          res.pipe(outStream);
-          outStream.on("finish", () => {
-            outStream.close();
-            resolve();
-          });
-          outStream.on("error", reject);
-        });
+            if (res.statusCode !== 200)
+              return reject(
+                new Error("Installer download HTTP " + res.statusCode),
+              );
+            const total = parseInt(res.headers["content-length"], 10) || 0;
+            let downloaded = 0;
+            const outStream = fs.createWriteStream(installerPath);
+            res.on("data", (chunk) => {
+              downloaded += chunk.length;
+              if (total > 0) {
+                const pct = 20 + Math.round((downloaded / total) * 60);
+                sendProgress(
+                  "downloading",
+                  pct,
+                  "Downloading LANBeam... " + pct + "%",
+                );
+              }
+            });
+            res.pipe(outStream);
+            outStream.on("finish", () => {
+              outStream.close();
+              resolve();
+            });
+            outStream.on("error", reject);
+          },
+        );
         req.on("error", reject);
       };
       downloadFile(asset.browser_download_url);
@@ -5767,13 +5874,20 @@ ipcMain.handle("share:install-lanbeam", async (event) => {
 
     // Run NSIS installer silently (/S)
     await new Promise((resolve, reject) => {
-      const proc = spawn(installerPath, ["/S"], { windowsHide: true, detached: false });
+      const proc = spawn(installerPath, ["/S"], {
+        windowsHide: true,
+        detached: false,
+      });
       proc.on("close", (code) => {
-        try { fs.unlinkSync(installerPath); } catch (_) {}
+        try {
+          fs.unlinkSync(installerPath);
+        } catch (_) {}
         resolve();
       });
       proc.on("error", (err) => {
-        try { fs.unlinkSync(installerPath); } catch (_) {}
+        try {
+          fs.unlinkSync(installerPath);
+        } catch (_) {}
         reject(err);
       });
     });
@@ -5783,15 +5897,35 @@ ipcMain.handle("share:install-lanbeam", async (event) => {
 
     const candidates = [];
     if (process.env.LOCALAPPDATA) {
-      candidates.push(path.join(process.env.LOCALAPPDATA, "Programs", "LANBeam", "LANBeam.exe"));
-      candidates.push(path.join(process.env.LOCALAPPDATA, "Programs", "lanbeam", "LANBeam.exe"));
-      candidates.push(path.join(process.env.LOCALAPPDATA, "LANBeam", "LANBeam.exe"));
+      candidates.push(
+        path.join(
+          process.env.LOCALAPPDATA,
+          "Programs",
+          "LANBeam",
+          "LANBeam.exe",
+        ),
+      );
+      candidates.push(
+        path.join(
+          process.env.LOCALAPPDATA,
+          "Programs",
+          "lanbeam",
+          "LANBeam.exe",
+        ),
+      );
+      candidates.push(
+        path.join(process.env.LOCALAPPDATA, "LANBeam", "LANBeam.exe"),
+      );
     }
     if (process.env.ProgramFiles) {
-      candidates.push(path.join(process.env.ProgramFiles, "LANBeam", "LANBeam.exe"));
+      candidates.push(
+        path.join(process.env.ProgramFiles, "LANBeam", "LANBeam.exe"),
+      );
     }
     if (process.env["ProgramFiles(x86)"]) {
-      candidates.push(path.join(process.env["ProgramFiles(x86)"], "LANBeam", "LANBeam.exe"));
+      candidates.push(
+        path.join(process.env["ProgramFiles(x86)"], "LANBeam", "LANBeam.exe"),
+      );
     }
 
     for (const c of candidates) {
@@ -5801,7 +5935,11 @@ ipcMain.handle("share:install-lanbeam", async (event) => {
       }
     }
 
-    return { success: false, error: "Installer finished but LANBeam.exe was not found in standard directories." };
+    return {
+      success: false,
+      error:
+        "Installer finished but LANBeam.exe was not found in standard directories.",
+    };
   } catch (err) {
     console.error("[IPC] share:install-lanbeam error:", err);
     return { success: false, error: err.message };
@@ -6702,7 +6840,9 @@ ipcMain.handle("coverart:migrate-v114", async () => {
 
 // ─── Music Discovery & Downloader IPC Handlers ───────────────────────
 setTimeout(() => {
-  try { DownloadEngine.prewarmDownloader(); } catch (_) {}
+  try {
+    DownloadEngine.prewarmDownloader();
+  } catch (_) {}
 }, 8000);
 
 ipcMain.handle("discovery:search", async (event, query, searchId) => {
@@ -6711,7 +6851,9 @@ ipcMain.handle("discovery:search", async (event, query, searchId) => {
     let streamed = false;
     const results = await DownloadEngine.searchITunes(query, 80, (r) => {
       streamed = true;
-      try { event.sender.send("discovery:search-update", { searchId, results: r }); } catch (_) {}
+      try {
+        event.sender.send("discovery:search-update", { searchId, results: r });
+      } catch (_) {}
     });
     return { success: true, results, streamed };
   } catch (err) {
@@ -6726,7 +6868,8 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
       return { success: false, error: "Invalid track data" };
     }
 
-    const musicDir = app.getPath("music") || path.join(app.getPath("userData"), "Downloads");
+    const musicDir =
+      app.getPath("music") || path.join(app.getPath("userData"), "Downloads");
     const targetFolder = path.join(musicDir, "NovaTune Downloads");
 
     const onProgress = (prog) => {
@@ -6738,8 +6881,17 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
       } catch (_) {}
     };
 
-    const fmt = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS }).downloadFormat === "mp3" ? "mp3" : "m4a";
-    const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress, trackInfo.id, fmt);
+    const fmt =
+      readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS }).downloadFormat === "mp3"
+        ? "mp3"
+        : "m4a";
+    const savedPath = await DownloadEngine.downloadAndTagTrack(
+      trackInfo,
+      targetFolder,
+      onProgress,
+      trackInfo.id,
+      fmt,
+    );
 
     // ── Task 4.1: Instant Single-Track Hot-Reload into Library ────────
     let parsedTrack = null;
@@ -6756,21 +6908,31 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
         // trackInfo always takes priority — it's from the search card the user clicked
         // (Spotify/iTunes/Deezer/YTM rich metadata). meta has yt-dlp's YouTube tags
         // (video title as track name, uploader as artist) which are often wrong.
-        title: trackInfo.trackName || meta?.title || path.basename(fileName, path.extname(fileName)),
-        artist: (trackInfo.artistName && trackInfo.artistName !== "Unknown Artist")
-          ? trackInfo.artistName
-          : (meta?.artist || "Unknown Artist"),
-        album: (trackInfo.albumName && trackInfo.albumName.trim() && trackInfo.albumName !== "Unknown Album")
-          ? trackInfo.albumName
-          : (meta?.album || ""),
+        title:
+          trackInfo.trackName ||
+          meta?.title ||
+          path.basename(fileName, path.extname(fileName)),
+        artist:
+          trackInfo.artistName && trackInfo.artistName !== "Unknown Artist"
+            ? trackInfo.artistName
+            : meta?.artist || "Unknown Artist",
+        album:
+          trackInfo.albumName &&
+          trackInfo.albumName.trim() &&
+          trackInfo.albumName !== "Unknown Album"
+            ? trackInfo.albumName
+            : meta?.album || "",
         albumArtist: meta?.albumArtist || trackInfo.artistName || "",
-        genre: (trackInfo.genre && trackInfo.genre !== "Music")
-          ? trackInfo.genre
-          : (meta?.genre || ""),
+        genre:
+          trackInfo.genre && trackInfo.genre !== "Music"
+            ? trackInfo.genre
+            : meta?.genre || "",
         year: Number(trackInfo.releaseYear || meta?.year) || 0,
         trackNumber: Number(meta?.trackNumber) || 0,
         discNumber: Number(meta?.discNumber) || 0,
-        duration: Number(meta?.duration) || (trackInfo.durationMs ? Math.round(trackInfo.durationMs / 1000) : 0),
+        duration:
+          Number(meta?.duration) ||
+          (trackInfo.durationMs ? Math.round(trackInfo.durationMs / 1000) : 0),
         bitrate: Number(meta?.bitrate) || 320,
         sampleRate: Number(meta?.sampleRate) || 44100,
         channels: Number(meta?.channels) || 2,
@@ -6785,7 +6947,9 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
       // Add folder to scanFolders if not already there so it persists across full re-scans
       try {
         await withSettingsFile((settings) => {
-          const scanFolders = Array.isArray(settings.scanFolders) ? settings.scanFolders : [];
+          const scanFolders = Array.isArray(settings.scanFolders)
+            ? settings.scanFolders
+            : [];
           if (!scanFolders.includes(targetFolder)) {
             scanFolders.push(targetFolder);
             settings.scanFolders = scanFolders;
@@ -6815,24 +6979,35 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
             console.log("[IPC:download] Saved sidecar cover art:", sidecarPath);
           }
         } catch (imgErr) {
-          console.warn("[IPC:download] Could not save sidecar cover art:", imgErr.message);
+          console.warn(
+            "[IPC:download] Could not save sidecar cover art:",
+            imgErr.message,
+          );
         }
       }
 
       // Persist directly to SQLite database using partialSaveLibrary
       const currentLibrary = getLibrary();
-      const updatedLibrary = [parsedTrack, ...currentLibrary.filter((t) => t.id !== parsedTrack.id)];
+      const updatedLibrary = [
+        parsedTrack,
+        ...currentLibrary.filter((t) => t.id !== parsedTrack.id),
+      ];
       partialSaveLibrary(updatedLibrary, [parsedTrack], []);
 
       // Invalidate & rebuild binary manifest cache so download persists across app restarts
       if (ManifestIPC && typeof ManifestIPC.rebuildManifest === "function") {
         setImmediate(async () => {
           try {
-            const freshSettings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+            const freshSettings = readJSON(SETTINGS_FILE, {
+              ...DEFAULT_SETTINGS,
+            });
             const fp = freshSettings._combinedFingerprint || "";
             await ManifestIPC.rebuildManifest(updatedLibrary, fp);
           } catch (mErr) {
-            console.warn("[IPC:download] Manifest rebuild failed:", mErr.message);
+            console.warn(
+              "[IPC:download] Manifest rebuild failed:",
+              mErr.message,
+            );
           }
         });
       }
@@ -6841,9 +7016,14 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
       BrowserWindow.getAllWindows().forEach((win) => {
         win.webContents.send("library:track-added", parsedTrack);
       });
-      console.log(`[IPC] Successfully saved & broadcasted downloaded track: "${parsedTrack.title}" (${parsedTrack.id})`);
+      console.log(
+        `[IPC] Successfully saved & broadcasted downloaded track: "${parsedTrack.title}" (${parsedTrack.id})`,
+      );
     } catch (trackParseErr) {
-      console.warn("[IPC] Failed to hot-append track to library:", trackParseErr.message);
+      console.warn(
+        "[IPC] Failed to hot-append track to library:",
+        trackParseErr.message,
+      );
     }
 
     return { success: true, filePath: savedPath, track: parsedTrack };
@@ -6859,7 +7039,9 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
 ipcMain.handle("discovery:cancel", async (event, { trackId }) => {
   try {
     const cancelled = DownloadEngine.cancelDownload(trackId);
-    console.log(`[IPC] discovery:cancel trackId=${trackId} cancelled=${cancelled}`);
+    console.log(
+      `[IPC] discovery:cancel trackId=${trackId} cancelled=${cancelled}`,
+    );
     return { success: cancelled };
   } catch (err) {
     console.error("[IPC] discovery:cancel error:", err);
