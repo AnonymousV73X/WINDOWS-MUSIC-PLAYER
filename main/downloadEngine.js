@@ -1310,7 +1310,7 @@ async function _downloadWithYtDlpOnce(
   fmt = "m4a",
 ) {
   const ytDlpBinary = await ensureYtDlpAvailable(onProgress);
-  if (_updP) await Promise.race([_updP, _sleep(30000)]);
+  if (_updP) await Promise.race([_updP, _sleep(2000)]);
   if (_denoP) {
     if (onProgress)
       onProgress({
@@ -1318,7 +1318,7 @@ async function _downloadWithYtDlpOnce(
         percent: 3,
         message: "Setting up downloader components (one-time)…",
       });
-    await Promise.race([_denoP, _sleep(60000)]);
+    await Promise.race([_denoP, _sleep(6000)]);
   }
   const rtArgs = await _jsRuntimeArgs();
 
@@ -1366,6 +1366,8 @@ async function _downloadWithYtDlpOnce(
 
     try {
       proc = spawn(ytDlpBinary, args, { windowsHide: true });
+      var _tSpawn = Date.now();
+      var _loggedFirst = false;
       if (ctx) {
         ctx.proc = proc;
         ctx.destBase = destBase;
@@ -1379,6 +1381,12 @@ async function _downloadWithYtDlpOnce(
       for (const line of lines) {
         const text = line.trim();
         const pMatch = text.match(/\[download\]\s+([0-9.]+)%/);
+        if (pMatch && !_loggedFirst) {
+          _loggedFirst = true;
+          console.log(
+            `[DownloadEngine] yt-dlp first byte after ${Date.now() - _tSpawn}ms`,
+          );
+        }
         if (pMatch && onProgress) {
           const pct = Math.min(95, Math.round(parseFloat(pMatch[1])));
           onProgress({
@@ -1570,7 +1578,7 @@ async function _fastResolveAudio(videoId) {
   };
 }
 
-function _rangeGet(url, start, end, attempt = 0) {
+function _rangeGet(url, start, end, attempt = 0, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const req = https.get(
@@ -1580,7 +1588,7 @@ function _rangeGet(url, start, end, attempt = 0) {
           "User-Agent": _FAST_UA,
           Range: `bytes=${start}-${end}`,
         },
-        timeout: 10000,
+        timeout: timeoutMs,
         agent: HTTPS_AGENT,
       },
       (res) => {
@@ -1602,7 +1610,7 @@ function _rangeGet(url, start, end, attempt = 0) {
     req.on("error", reject);
     req.on("timeout", () => req.destroy(new Error("timeout")));
   }).catch((e) => {
-    if (attempt < 2) return _rangeGet(url, start, end, attempt + 1);
+    if (attempt < 2) return _rangeGet(url, start, end, attempt + 1, timeoutMs);
     throw e;
   });
 }
@@ -1923,7 +1931,13 @@ async function _downloadAndTagTrackInner(
     try {
       ctx.destBase = destBase;
       const r = await _fastResolveAudio(videoId);
+      console.log(
+        `[DownloadEngine] fast resolve ${Date.now() - t0}ms`,
+        r ? `${r.bitrate}bps` : "none",
+      );
       if (!r || r.bitrate < 100000) throw new Error("no hq direct stream");
+      // Probe first: if the URL stalls/403s, bail to yt-dlp in ~3s instead of retrying chunks
+      await _rangeGet(r.url, 0, Math.min(65535, r.size - 1), 2, 3000);
       await _fastDownload(r.url, r.size, out, onProgress, ctx);
       if (!_validateAudio(out, r.durSec)) throw new Error("invalid audio");
       injectTrackInfoTags(out, trackInfo, await artPromise);
