@@ -1,5 +1,5 @@
 /**
- * NovaTune — Renderer Entry Point  [v1.1.8]
+ * NovaTune — Renderer Entry Point  [v1.1.8.1]
  * Wires the user's custom UI to the Electron backend.
  * Uses window.novaAPI (from preload.js) for all IPC communication.
  *
