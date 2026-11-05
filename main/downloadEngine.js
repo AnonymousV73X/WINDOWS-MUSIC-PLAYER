@@ -840,6 +840,7 @@ async function searchITunes(query, limit = 80, onUpdate) {
     if (resolvedTitle) effectiveQuery = resolvedTitle;
   }
 
+  prewarmDownloader();
   const key = effectiveQuery.toLowerCase();
   const hit = SEARCH_CACHE.get(key);
   if (hit && Date.now() - hit.t < SEARCH_CACHE_TTL)
@@ -941,7 +942,18 @@ async function searchITunes(query, limit = 80, onUpdate) {
 }
 
 // ─── Download & Store Orchestration ───────────────────────────────────────────
+function _managedDir() {
+  try {
+    const { app } = require("electron");
+    if (app) return path.join(app.getPath("userData"), "bin");
+  } catch (_) {}
+  return path.join(__dirname, "../bin");
+}
+
 function getYtDlpPath() {
+  const managed = path.join(_managedDir(), "yt-dlp.exe");
+  if (fs.existsSync(managed)) return managed;
+
   // 1. Packaged app: electron-builder puts extraResources next to the exe
   //    at <install>/resources/bin/yt-dlp.exe (process.resourcesPath)
   if (process.resourcesPath) {
@@ -1057,6 +1069,17 @@ function downloadYtDlpBinary(targetPath, onProgress) {
  * If completely missing from resources and local bin, downloads it to userData/bin/yt-dlp.exe.
  */
 async function ensureYtDlpAvailable(onProgress) {
+  // Keep a writable, self-updating copy in userData (bundled copy may be read-only)
+  try {
+    const managed = path.join(_managedDir(), "yt-dlp.exe");
+    if (!fs.existsSync(managed)) {
+      const src = getYtDlpPath();
+      if (src !== "yt-dlp" && fs.existsSync(src)) {
+        fs.mkdirSync(path.dirname(managed), { recursive: true });
+        fs.copyFileSync(src, managed);
+      }
+    }
+  } catch (_) {}
   const currentPath = getYtDlpPath();
   if (currentPath !== "yt-dlp" && fs.existsSync(currentPath)) {
     return currentPath;
@@ -1109,30 +1132,176 @@ async function ensureYtDlpAvailable(onProgress) {
   return targetPath;
 }
 
-let _jsRt = null;
-function _jsRuntimeArgs() {
-  if (_jsRt) return _jsRt;
-  _jsRt = [];
-  const { execFileSync } = require("child_process");
-  const ver = (bin) => {
+function _ver(bin) {
+  return new Promise((res) => {
     try {
-      return execFileSync(bin, ["--version"], {
-        windowsHide: true,
-        timeout: 4000,
-        encoding: "utf8",
-      }).trim();
+      require("child_process").execFile(
+        bin,
+        ["--version"],
+        { windowsHide: true, timeout: 4000 },
+        (err, out) => res(err ? null : String(out).trim()),
+      );
     } catch (_) {
-      return null;
+      res(null);
     }
-  };
-  if (ver("deno")) return _jsRt; // deno is enabled by default in yt-dlp
-  const nv = ver("node");
-  if (nv && parseInt(nv.replace(/^v/, ""), 10) >= 20)
-    _jsRt = ["--js-runtimes", "node"];
-  return _jsRt;
+  });
 }
 
-async function downloadWithYtDlp(
+function _downloadFile(url, dest, hops = 0) {
+  return new Promise((resolve, reject) => {
+    if (hops > 6) return reject(new Error("Too many redirects"));
+    https
+      .get(
+        url,
+        { headers: { "User-Agent": "NovaTune Downloader" }, timeout: 30000 },
+        (res) => {
+          if (
+            res.statusCode >= 300 &&
+            res.statusCode < 400 &&
+            res.headers.location
+          ) {
+            res.resume();
+            return resolve(
+              _downloadFile(
+                new URL(res.headers.location, url).href,
+                dest,
+                hops + 1,
+              ),
+            );
+          }
+          if (res.statusCode !== 200) {
+            res.resume();
+            return reject(new Error(`HTTP ${res.statusCode}`));
+          }
+          const tmp = `${dest}.tmp`;
+          const ws = fs.createWriteStream(tmp);
+          res.pipe(ws);
+          ws.on("finish", () =>
+            ws.close(() => {
+              try {
+                if (fs.existsSync(dest)) fs.unlinkSync(dest);
+                fs.renameSync(tmp, dest);
+                resolve(dest);
+              } catch (e) {
+                reject(e);
+              }
+            }),
+          );
+          ws.on("error", reject);
+        },
+      )
+      .on("error", reject)
+      .on("timeout", function () {
+        this.destroy(new Error("timeout"));
+      });
+  });
+}
+
+// One-time silent install of Deno (yt-dlp's recommended JS runtime) into userData/bin
+async function ensureDeno() {
+  if (process.platform !== "win32") return null;
+  const dir = _managedDir();
+  const exe = path.join(dir, "deno.exe");
+  if (fs.existsSync(exe)) return exe;
+  fs.mkdirSync(dir, { recursive: true });
+  const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
+  const zip = path.join(dir, "deno.zip");
+  await _downloadFile(
+    `https://github.com/denoland/deno/releases/latest/download/deno-${arch}-pc-windows-msvc.zip`,
+    zip,
+  );
+  await new Promise((resolve) => {
+    const p = spawn("tar", ["-xf", zip, "-C", dir], {
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    p.on("close", resolve);
+    p.on("error", resolve);
+  });
+  try {
+    fs.unlinkSync(zip);
+  } catch (_) {}
+  return fs.existsSync(exe) ? exe : null;
+}
+
+let _jsRtP = null;
+function _jsRuntimeArgs() {
+  if (_jsRtP) return _jsRtP;
+  _jsRtP = (async () => {
+    const managed = path.join(_managedDir(), "deno.exe");
+    if (fs.existsSync(managed)) return ["--js-runtimes", `deno:${managed}`];
+    if (await _ver("deno")) return [];
+    const nv = await _ver("node");
+    return nv && parseInt(nv.replace(/^v/, ""), 10) >= 20
+      ? ["--js-runtimes", "node"]
+      : [];
+  })();
+  return _jsRtP;
+}
+
+// Self-update yt-dlp (managed copy only), at most once per 24h unless forced
+let _updP = null;
+function updateYtDlp(force = false) {
+  if (_updP) return _updP;
+  _updP = (async () => {
+    try {
+      const bin = await ensureYtDlpAvailable();
+      if (bin === "yt-dlp" || path.dirname(bin) !== _managedDir()) return;
+      const stamp = path.join(_managedDir(), "ytdlp-update.stamp");
+      let last = 0;
+      try {
+        last = Number(fs.readFileSync(stamp, "utf8")) || 0;
+      } catch (_) {}
+      if (!force && Date.now() - last < 24 * 3600 * 1000) return;
+      await new Promise((resolve) => {
+        const p = spawn(bin, ["-U"], { windowsHide: true, stdio: "ignore" });
+        const t = setTimeout(() => {
+          try {
+            p.kill();
+          } catch (_) {}
+          resolve();
+        }, 90000);
+        p.on("close", () => (clearTimeout(t), resolve()));
+        p.on("error", () => (clearTimeout(t), resolve()));
+      });
+      try {
+        fs.writeFileSync(stamp, String(Date.now()));
+      } catch (_) {}
+    } catch (_) {
+    } finally {
+      _updP = null;
+    }
+  })();
+  return _updP;
+}
+
+let _warmed = false;
+let _denoP = null;
+function prewarmDownloader() {
+  if (_warmed) return;
+  _warmed = true;
+  const p = (async () => {
+    if (await _ver("deno")) return;
+    const exe = await ensureDeno().catch(() => null);
+    if (exe) _jsRtP = null;
+  })();
+  _denoP = p;
+  p.finally(() => {
+    if (_denoP === p) _denoP = null;
+  });
+  updateYtDlp()
+    .then(() => ensureYtDlpAvailable())
+    .then((bin) => {
+      const w = spawn(bin, ["--version"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+      w.on("error", () => {});
+    })
+    .catch(() => {});
+}
+
+async function _downloadWithYtDlpOnce(
   urlOrQuery,
   destBase,
   onProgress,
@@ -1141,11 +1310,22 @@ async function downloadWithYtDlp(
   fmt = "m4a",
 ) {
   const ytDlpBinary = await ensureYtDlpAvailable(onProgress);
+  if (_updP) await Promise.race([_updP, _sleep(30000)]);
+  if (_denoP) {
+    if (onProgress)
+      onProgress({
+        status: "installing",
+        percent: 3,
+        message: "Setting up downloader components (one-time)…",
+      });
+    await Promise.race([_denoP, _sleep(60000)]);
+  }
+  const rtArgs = await _jsRuntimeArgs();
 
   return new Promise((resolve, reject) => {
     const args = [
       urlOrQuery,
-      ..._jsRuntimeArgs(),
+      ...rtArgs,
       ...(fmt === "m4a"
         ? [
             "-f",
@@ -1167,10 +1347,7 @@ async function downloadWithYtDlp(
             "--postprocessor-args",
             "ExtractAudio:-threads 0 -compression_level 7",
           ]),
-      "--concurrent-fragments",
-      "8",
-      "--http-chunk-size",
-      "10M",
+      "--no-warnings",
       "-o",
       `${destBase}.%(ext)s`,
       "--no-playlist",
@@ -1256,6 +1433,50 @@ async function downloadWithYtDlp(
       reject(new Error(`Failed to launch downloader: ${err.message}`));
     });
   });
+}
+
+async function downloadWithYtDlp(
+  urlOrQuery,
+  destBase,
+  onProgress,
+  trackId,
+  ctx,
+  fmt = "m4a",
+) {
+  try {
+    return await _downloadWithYtDlpOnce(
+      urlOrQuery,
+      destBase,
+      onProgress,
+      trackId,
+      ctx,
+      fmt,
+    );
+  } catch (err) {
+    if (err.cancelled || (ctx && (ctx.cancelled || ctx._retried))) throw err;
+    if (
+      !/HTTP Error 40[13]|Sign in|nsig|Unable to extract|Requested format is not available|player response|signature/i.test(
+        err.message,
+      )
+    )
+      throw err;
+    if (ctx) ctx._retried = true;
+    if (onProgress)
+      onProgress({
+        status: "installing",
+        percent: 5,
+        message: "Updating downloader…",
+      });
+    await updateYtDlp(true);
+    return _downloadWithYtDlpOnce(
+      urlOrQuery,
+      destBase,
+      onProgress,
+      trackId,
+      ctx,
+      fmt,
+    );
+  }
 }
 
 function fetchArtworkBuffer(url, timeoutMs = 6000, hops = 0) {
@@ -1619,5 +1840,6 @@ module.exports = {
   downloadAndTagTrack,
   getYtDlpPath,
   ensureYtDlpAvailable,
+  prewarmDownloader,
   cancelDownload,
 };
