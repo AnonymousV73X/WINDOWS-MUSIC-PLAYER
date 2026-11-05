@@ -1,5 +1,6 @@
 const { spawn } = require("child_process");
 const NodeID3 = require("node-id3");
+const TagLib = require("node-taglib-sharp");
 /**
  * NovaTune — Music Discovery & Download Engine [v3.0 - Universal Search]
  * Multi-Engine Aggregator:
@@ -546,7 +547,7 @@ function searchITunesInternal(query, limit = 15) {
         const results = (data?.results || []).map((item) => {
           const artwork100 = item.artworkUrl100 || "";
           const artworkHigh = artwork100
-            ? artwork100.replace(/100x100/g, "600x600")
+            ? artwork100.replace(/100x100/g, "1200x1200")
             : "";
           return {
             id: `itunes_${item.trackId}`,
@@ -1104,20 +1105,39 @@ async function downloadWithYtDlp(
   onProgress,
   trackId,
   ctx,
+  fmt = "m4a",
 ) {
   const ytDlpBinary = await ensureYtDlpAvailable(onProgress);
 
   return new Promise((resolve, reject) => {
     const args = [
       urlOrQuery,
-      "-x",
-      "--audio-format",
-      "mp3",
-      "--audio-quality",
-      "0",
-      "--add-metadata",
+      "-f",
+      ...(fmt === "m4a"
+        ? [
+            "-f",
+            "bestaudio[ext=m4a]/bestaudio",
+            "-x",
+            "--audio-format",
+            "m4a",
+            "--audio-quality",
+            "0",
+          ]
+        : [
+            "-f",
+            "bestaudio",
+            "-x",
+            "--audio-format",
+            "mp3",
+            "--audio-quality",
+            "320K",
+            "--postprocessor-args",
+            "ExtractAudio:-threads 0 -compression_level 7",
+          ]),
       "--concurrent-fragments",
-      "4",
+      "8",
+      "--http-chunk-size",
+      "10M",
       "-o",
       `${destBase}.%(ext)s`,
       "--no-playlist",
@@ -1179,7 +1199,7 @@ async function downloadWithYtDlp(
         return reject(e);
       }
       if (code === 0) {
-        const expectedMp3 = `${destBase}.mp3`;
+        const expectedMp3 = `${destBase}.${fmt}`;
         if (fs.existsSync(expectedMp3)) return resolve(expectedMp3);
         if (finalFile && fs.existsSync(finalFile)) return resolve(finalFile);
         const dir = path.dirname(destBase);
@@ -1260,6 +1280,64 @@ function fetchArtworkBuffer(url, timeoutMs = 6000, hops = 0) {
   });
 }
 
+function _artCandidates(url) {
+  if (!url) return [];
+  const out = [];
+  if (/googleusercontent\.com|ggpht\.com/.test(url))
+    out.push(url.replace(/=(?:w\d+-h\d+|s\d+)[^?#]*$/, "=w1200-h1200-l100-rj"));
+  else if (/mzstatic\.com/.test(url))
+    out.push(url.replace(/\d+x\d+(bb)?\.(jpg|png)/i, "1200x1200bb.jpg"));
+  out.push(url);
+  return [...new Set(out)];
+}
+
+async function fetchBestArtwork(url) {
+  for (const u of _artCandidates(url)) {
+    const b = await fetchArtworkBuffer(u, 8000);
+    if (b) return b;
+  }
+  return null;
+}
+
+function _tagWithTagLib(filePath, info, artBuf) {
+  try {
+    const f = TagLib.File.createFromPath(filePath);
+    try {
+      const t = f.tag;
+      const artist =
+        info.artistName && info.artistName !== "Unknown Artist"
+          ? info.artistName.trim()
+          : "";
+      if (info.trackName && info.trackName.trim())
+        t.title = info.trackName.trim();
+      if (artist) {
+        t.performers = [artist];
+        t.albumArtists = [artist];
+      }
+      if (info.albumName && info.albumName.trim() && info.albumName !== "Unknown Album")
+        t.album = info.albumName.trim();
+      const yr = Number(info.releaseYear);
+      if (yr > 1900 && yr <= new Date().getFullYear() + 1) t.year = yr;
+      if (info.genre && info.genre !== "Music" && info.genre.trim())
+        t.genres = [info.genre.trim()];
+      const img = _artImage(artBuf);
+      if (img) {
+        const pic = TagLib.Picture.fromData(
+          TagLib.ByteVector.fromByteArray(artBuf),
+        );
+        pic.mimeType = img.mime;
+        pic.type = TagLib.PictureType.FrontCover;
+        t.pictures = [pic];
+      }
+      f.save();
+    } finally {
+      f.dispose();
+    }
+  } catch (e) {
+    console.warn("[DownloadEngine] TagLib tagging failed:", e.message);
+  }
+}
+
 function _artImage(buf) {
   if (!buf) return null;
   let mime = null;
@@ -1284,7 +1362,7 @@ function _artImage(buf) {
 // ─── Post-download metadata injection ─────────────────────────────────────────
 function injectTrackInfoTags(filePath, trackInfo, artBuf) {
   try {
-    if (!filePath.endsWith(".mp3")) return;
+    if (!/\.mp3$/i.test(filePath)) return _tagWithTagLib(filePath, trackInfo, artBuf);
     const cleanTags = {};
 
     if (trackInfo.trackName && trackInfo.trackName.trim())
@@ -1344,6 +1422,7 @@ async function downloadAndTagTrack(
   targetFolder,
   onProgress,
   trackId,
+  fmt = "m4a",
 ) {
   const ctx = { cancelled: false, proc: null, destBase: null };
   if (trackId) _downloads.set(trackId, ctx);
@@ -1354,6 +1433,7 @@ async function downloadAndTagTrack(
       onProgress,
       trackId,
       ctx,
+      fmt,
     );
   } finally {
     if (trackId && _downloads.get(trackId) === ctx) _downloads.delete(trackId);
@@ -1366,6 +1446,7 @@ async function _downloadAndTagTrackInner(
   onProgress,
   trackId,
   ctx,
+  fmt = "m4a",
 ) {
   onProgress({
     status: "resolving",
@@ -1381,7 +1462,7 @@ async function _downloadAndTagTrackInner(
   if (!fs.existsSync(targetFolder))
     fs.mkdirSync(targetFolder, { recursive: true });
 
-  const artPromise = fetchArtworkBuffer(trackInfo.artworkUrl);
+  const artPromise = fetchBestArtwork(trackInfo.artworkUrl);
 
   // Strategy 1: Direct YouTube video download if videoId is present
   const videoId =
@@ -1403,6 +1484,7 @@ async function _downloadAndTagTrackInner(
         onProgress,
         trackId,
         ctx,
+        fmt,
       );
       injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
       onProgress({
@@ -1434,6 +1516,7 @@ async function _downloadAndTagTrackInner(
     onProgress,
     trackId,
     ctx,
+    fmt,
   );
   injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
   onProgress({
