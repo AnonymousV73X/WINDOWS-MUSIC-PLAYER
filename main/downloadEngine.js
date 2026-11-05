@@ -1314,7 +1314,7 @@ async function _downloadWithYtDlpOnce(
   fmt = "m4a",
 ) {
   const ytDlpBinary = await ensureYtDlpAvailable(onProgress);
-  if (_updP) await Promise.race([_updP, _sleep(2000)]);
+  // _updP (yt-dlp self-update) intentionally not awaited — don't block user downloads
   if (_denoP) {
     if (onProgress)
       onProgress({
@@ -1985,7 +1985,7 @@ async function _downloadAndTagTrackInner(
     (trackInfo.id && trackInfo.id.startsWith("ytm_")
       ? trackInfo.id.replace("ytm_", "")
       : null);
-  if (videoId && videoId.length >= 5 && fmt === "m4a" && _fastFails < 2) {
+  if (videoId && videoId.length >= 5 && fmt === "m4a" && _fastFails < 5) {
     const out = `${destBase}.m4a`;
     const t0 = Date.now();
     try {
@@ -1997,7 +1997,7 @@ async function _downloadAndTagTrackInner(
       );
       if (!r || r.bitrate < 100000) throw new Error("no hq direct stream");
       // Probe first: if the URL stalls/403s, bail to yt-dlp in ~3s instead of retrying chunks
-      await _rangeGet(r.url, 0, Math.min(65535, r.size - 1), 2, 3000, r.ua);
+      await _rangeGet(r.url, 0, Math.min(32767, r.size - 1), 0, 1500, r.ua);
       await _fastDownload(r.url, r.size, out, onProgress, ctx, r.ua);
       if (!_validateAudio(out, r.durSec)) throw new Error("invalid audio");
       injectTrackInfoTags(out, trackInfo, await artPromise);
@@ -2030,7 +2030,7 @@ async function _downloadAndTagTrackInner(
         message: "Downloading audio via yt-dlp…",
       });
       const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      const downloadedPath = await downloadWithYtDlp(
+            const downloadedPath = await downloadWithYtDlp(
         targetUrl,
         destBase,
         onProgress,
@@ -2038,7 +2038,7 @@ async function _downloadAndTagTrackInner(
         ctx,
         fmt,
       );
-      injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
+            injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
       onProgress({
         status: "done",
         percent: 100,
@@ -2055,6 +2055,47 @@ async function _downloadAndTagTrackInner(
     }
   }
 
+  // Strategy 1.5: Resolve videoId via exact ranked search matching before falling back to ytsearch
+  let effectiveVideoId = videoId;
+  if (!effectiveVideoId) {
+    try {
+      const q = [trackInfo.artistName, trackInfo.trackName].filter(Boolean).join(" ").trim();
+      if (q) {
+        const found = await searchYouTubeMusic(q, 5).catch(() => []);
+        if (found && found.length > 0) {
+          const matched = rankAndMerge(found, q);
+          if (matched && matched.length > 0 && matched[0].videoId) {
+            effectiveVideoId = matched[0].videoId;
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (effectiveVideoId && effectiveVideoId.length >= 5) {
+    try {
+      const targetUrl = `https://www.youtube.com/watch?v=${effectiveVideoId}`;
+      const downloadedPath = await downloadWithYtDlp(
+        targetUrl,
+        destBase,
+        onProgress,
+        trackId,
+        ctx,
+        fmt,
+      );
+      injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
+      onProgress({
+        status: "done",
+        percent: 100,
+        message: "Done!",
+        filePath: downloadedPath,
+      });
+      return downloadedPath;
+    } catch (err) {
+      if (err.cancelled || ctx.cancelled) throw err;
+    }
+  }
+
   // Strategy 2: Accurate search query with yt-dlp
   const searchQuery = `ytsearch1:${trackInfo.artistName} - ${trackInfo.trackName} audio`;
   onProgress({
@@ -2062,7 +2103,7 @@ async function _downloadAndTagTrackInner(
     percent: 10,
     message: "Searching and downloading via yt-dlp…",
   });
-  const downloadedPath = await downloadWithYtDlp(
+    const downloadedPath = await downloadWithYtDlp(
     searchQuery,
     destBase,
     onProgress,
@@ -2070,7 +2111,7 @@ async function _downloadAndTagTrackInner(
     ctx,
     fmt,
   );
-  injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
+    injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
   onProgress({
     status: "done",
     percent: 100,
