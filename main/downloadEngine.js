@@ -569,9 +569,7 @@ function searchITunesInternal(query, limit = 15) {
             durationMs: item.trackTimeMillis || 0,
             previewUrl: item.previewUrl || "",
             artworkUrl: artworkHigh || artwork100,
-            artworkThumbnail: artwork100
-              ? artwork100.replace(/100x100/g, "300x300")
-              : "",
+            artworkThumbnail: artwork100 ? artwork100.replace(/100x100/g, "300x300") : "",
             genre: item.primaryGenreName || "Music",
           };
         });
@@ -906,6 +904,10 @@ async function searchITunes(query, limit = 80, onUpdate) {
 
   done = true;
   const final = emit();
+  final
+    .filter((t) => t.videoId)
+    .slice(0, 8)
+    .forEach((t, i) => setTimeout(() => prefetchStream(t.videoId), i * 150));
 
   // Fill missing durations afterwards (non-blocking)
   const need = final.filter((t) => t.videoId && !t.durationMs).slice(0, 24);
@@ -1155,18 +1157,10 @@ function _downloadFile(url, dest, hops = 0) {
         url,
         { headers: { "User-Agent": "NovaTune Downloader" }, timeout: 30000 },
         (res) => {
-          if (
-            res.statusCode >= 300 &&
-            res.statusCode < 400 &&
-            res.headers.location
-          ) {
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             res.resume();
             return resolve(
-              _downloadFile(
-                new URL(res.headers.location, url).href,
-                dest,
-                hops + 1,
-              ),
+              _downloadFile(new URL(res.headers.location, url).href, dest, hops + 1),
             );
           }
           if (res.statusCode !== 200) {
@@ -1292,10 +1286,7 @@ function prewarmDownloader() {
   updateYtDlp()
     .then(() => ensureYtDlpAvailable())
     .then((bin) => {
-      const w = spawn(bin, ["--version"], {
-        windowsHide: true,
-        stdio: "ignore",
-      });
+      const w = spawn(bin, ["--version"], { windowsHide: true, stdio: "ignore" });
       w.on("error", () => {});
     })
     .catch(() => {});
@@ -1383,9 +1374,7 @@ async function _downloadWithYtDlpOnce(
         const pMatch = text.match(/\[download\]\s+([0-9.]+)%/);
         if (pMatch && !_loggedFirst) {
           _loggedFirst = true;
-          console.log(
-            `[DownloadEngine] yt-dlp first byte after ${Date.now() - _tSpawn}ms`,
-          );
+          console.log(`[DownloadEngine] yt-dlp first byte after ${Date.now() - _tSpawn}ms`);
         }
         if (pMatch && onProgress) {
           const pct = Math.min(95, Math.round(parseFloat(pMatch[1])));
@@ -1443,23 +1432,9 @@ async function _downloadWithYtDlpOnce(
   });
 }
 
-async function downloadWithYtDlp(
-  urlOrQuery,
-  destBase,
-  onProgress,
-  trackId,
-  ctx,
-  fmt = "m4a",
-) {
+async function downloadWithYtDlp(urlOrQuery, destBase, onProgress, trackId, ctx, fmt = "m4a") {
   try {
-    return await _downloadWithYtDlpOnce(
-      urlOrQuery,
-      destBase,
-      onProgress,
-      trackId,
-      ctx,
-      fmt,
-    );
+    return await _downloadWithYtDlpOnce(urlOrQuery, destBase, onProgress, trackId, ctx, fmt);
   } catch (err) {
     if (err.cancelled || (ctx && (ctx.cancelled || ctx._retried))) throw err;
     if (
@@ -1470,20 +1445,9 @@ async function downloadWithYtDlp(
       throw err;
     if (ctx) ctx._retried = true;
     if (onProgress)
-      onProgress({
-        status: "installing",
-        percent: 5,
-        message: "Updating downloader…",
-      });
+      onProgress({ status: "installing", percent: 5, message: "Updating downloader…" });
     await updateYtDlp(true);
-    return _downloadWithYtDlpOnce(
-      urlOrQuery,
-      destBase,
-      onProgress,
-      trackId,
-      ctx,
-      fmt,
-    );
+    return _downloadWithYtDlpOnce(urlOrQuery, destBase, onProgress, trackId, ctx, fmt);
   }
 }
 
@@ -1501,6 +1465,23 @@ const _FAST_CLIENT = {
 };
 const _FAST_UA =
   "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip";
+const _FAST_IOS = {
+  clientName: "IOS",
+  clientVersion: "20.10.4",
+  deviceMake: "Apple",
+  deviceModel: "iPhone16,2",
+  osName: "iPhone",
+  osVersion: "18.3.2.22D82",
+  hl: "en",
+  gl: "US",
+};
+const _FAST_IOS_UA =
+  "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
+const _FAST_CLIENTS = [
+  { ctx: _FAST_CLIENT, ua: _FAST_UA, id: "28" },
+  { ctx: _FAST_IOS, ua: _FAST_IOS_UA, id: "5" },
+];
+const _STREAM_CACHE = new Map(); // videoId -> { t, p }
 let _fastFails = 0;
 
 function _postJson(url, body, headers, timeoutMs) {
@@ -1543,19 +1524,19 @@ function _postJson(url, body, headers, timeoutMs) {
   });
 }
 
-async function _fastResolveAudio(videoId) {
+async function _resolveWithClient(c, videoId) {
   const j = await _postJson(
     "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
     {
-      context: { client: _FAST_CLIENT },
+      context: { client: c.ctx },
       videoId,
       contentCheckOk: true,
       racyCheckOk: true,
     },
     {
-      "User-Agent": _FAST_UA,
-      "X-YouTube-Client-Name": "28",
-      "X-YouTube-Client-Version": _FAST_CLIENT.clientVersion,
+      "User-Agent": c.ua,
+      "X-YouTube-Client-Name": c.id,
+      "X-YouTube-Client-Version": c.ctx.clientVersion,
       Origin: "https://www.youtube.com",
     },
     4000,
@@ -1575,17 +1556,47 @@ async function _fastResolveAudio(videoId) {
     size: Number(a.contentLength),
     bitrate: a.bitrate || 0,
     durSec: Number(j.videoDetails?.lengthSeconds) || 0,
+    ua: c.ua,
   };
 }
 
-function _rangeGet(url, start, end, attempt = 0, timeoutMs = 10000) {
+// Race all clients; first HQ result wins. Cached ~90min so prefetched clicks are instant.
+function _fastResolveAudio(videoId) {
+  const hit = _STREAM_CACHE.get(videoId);
+  if (hit && Date.now() - hit.t < 90 * 60 * 1000) return hit.p;
+  const p = new Promise((resolve) => {
+    let left = _FAST_CLIENTS.length;
+    for (const c of _FAST_CLIENTS) {
+      _resolveWithClient(c, videoId)
+        .catch(() => null)
+        .then((r) => {
+          if (r && r.bitrate >= 100000) resolve(r);
+          if (--left === 0) resolve(null);
+        });
+    }
+  });
+  _STREAM_CACHE.set(videoId, { t: Date.now(), p });
+  if (_STREAM_CACHE.size > 60)
+    _STREAM_CACHE.delete(_STREAM_CACHE.keys().next().value);
+  p.then((r) => {
+    if (!r && _STREAM_CACHE.get(videoId)?.p === p) _STREAM_CACHE.delete(videoId);
+  });
+  return p;
+}
+
+function prefetchStream(videoId) {
+  if (!videoId || videoId.length < 5) return;
+  _fastResolveAudio(videoId).catch(() => {});
+}
+
+function _rangeGet(url, start, end, attempt = 0, timeoutMs = 10000, ua = _FAST_UA) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const req = https.get(
       url,
       {
         headers: {
-          "User-Agent": _FAST_UA,
+          "User-Agent": ua,
           Range: `bytes=${start}-${end}`,
         },
         timeout: timeoutMs,
@@ -1610,12 +1621,12 @@ function _rangeGet(url, start, end, attempt = 0, timeoutMs = 10000) {
     req.on("error", reject);
     req.on("timeout", () => req.destroy(new Error("timeout")));
   }).catch((e) => {
-    if (attempt < 2) return _rangeGet(url, start, end, attempt + 1, timeoutMs);
+    if (attempt < 2) return _rangeGet(url, start, end, attempt + 1, timeoutMs, ua);
     throw e;
   });
 }
 
-async function _fastDownload(url, size, dest, onProgress, ctx) {
+async function _fastDownload(url, size, dest, onProgress, ctx, ua) {
   const fd = fs.openSync(dest, "w");
   try {
     const CH = 2 * 1024 * 1024;
@@ -1625,9 +1636,7 @@ async function _fastDownload(url, size, dest, onProgress, ctx) {
     const worker = async () => {
       while (!err) {
         if (ctx && ctx.cancelled) {
-          err = Object.assign(new Error("Download cancelled"), {
-            cancelled: true,
-          });
+          err = Object.assign(new Error("Download cancelled"), { cancelled: true });
           return;
         }
         const start = next;
@@ -1635,7 +1644,7 @@ async function _fastDownload(url, size, dest, onProgress, ctx) {
         next += CH;
         const end = Math.min(start + CH, size) - 1;
         try {
-          const buf = await _rangeGet(url, start, end);
+          const buf = await _rangeGet(url, start, end, 0, 10000, ua);
           fs.writeSync(fd, buf, 0, buf.length, start);
           got += buf.length;
           if (onProgress) {
@@ -1664,9 +1673,7 @@ function _validateAudio(file, expectedSec) {
     const f = TagLib.File.createFromPath(file);
     try {
       const ms = f.properties?.durationMilliseconds || 0;
-      return (
-        ms > 1000 && (!expectedSec || Math.abs(ms / 1000 - expectedSec) < 5)
-      );
+      return ms > 1000 && (!expectedSec || Math.abs(ms / 1000 - expectedSec) < 5);
     } finally {
       f.dispose();
     }
@@ -1764,11 +1771,7 @@ function _tagWithTagLib(filePath, info, artBuf) {
         t.performers = [artist];
         t.albumArtists = [artist];
       }
-      if (
-        info.albumName &&
-        info.albumName.trim() &&
-        info.albumName !== "Unknown Album"
-      )
+      if (info.albumName && info.albumName.trim() && info.albumName !== "Unknown Album")
         t.album = info.albumName.trim();
       const yr = Number(info.releaseYear);
       if (yr > 1900 && yr <= new Date().getFullYear() + 1) t.year = yr;
@@ -1816,8 +1819,7 @@ function _artImage(buf) {
 // ─── Post-download metadata injection ─────────────────────────────────────────
 function injectTrackInfoTags(filePath, trackInfo, artBuf) {
   try {
-    if (!/\.mp3$/i.test(filePath))
-      return _tagWithTagLib(filePath, trackInfo, artBuf);
+    if (!/\.mp3$/i.test(filePath)) return _tagWithTagLib(filePath, trackInfo, artBuf);
     const cleanTags = {};
 
     if (trackInfo.trackName && trackInfo.trackName.trim())
@@ -1931,24 +1933,16 @@ async function _downloadAndTagTrackInner(
     try {
       ctx.destBase = destBase;
       const r = await _fastResolveAudio(videoId);
-      console.log(
-        `[DownloadEngine] fast resolve ${Date.now() - t0}ms`,
-        r ? `${r.bitrate}bps` : "none",
-      );
+      console.log(`[DownloadEngine] fast resolve ${Date.now() - t0}ms`, r ? `${r.bitrate}bps` : "none");
       if (!r || r.bitrate < 100000) throw new Error("no hq direct stream");
       // Probe first: if the URL stalls/403s, bail to yt-dlp in ~3s instead of retrying chunks
-      await _rangeGet(r.url, 0, Math.min(65535, r.size - 1), 2, 3000);
-      await _fastDownload(r.url, r.size, out, onProgress, ctx);
+      await _rangeGet(r.url, 0, Math.min(65535, r.size - 1), 2, 3000, r.ua);
+      await _fastDownload(r.url, r.size, out, onProgress, ctx, r.ua);
       if (!_validateAudio(out, r.durSec)) throw new Error("invalid audio");
       injectTrackInfoTags(out, trackInfo, await artPromise);
       _fastFails = 0;
       console.log(`[DownloadEngine] fast path OK in ${Date.now() - t0}ms`);
-      onProgress({
-        status: "done",
-        percent: 100,
-        message: "Done!",
-        filePath: out,
-      });
+      onProgress({ status: "done", percent: 100, message: "Done!", filePath: out });
       return out;
     } catch (fastErr) {
       try {
@@ -1956,10 +1950,7 @@ async function _downloadAndTagTrackInner(
       } catch (_) {}
       if (fastErr.cancelled || ctx.cancelled) throw fastErr;
       _fastFails++;
-      console.warn(
-        "[DownloadEngine] fast path failed, using yt-dlp:",
-        fastErr.message,
-      );
+      console.warn("[DownloadEngine] fast path failed, using yt-dlp:", fastErr.message);
     }
   }
   if (videoId && videoId.length >= 5) {
@@ -2074,5 +2065,6 @@ module.exports = {
   getYtDlpPath,
   ensureYtDlpAvailable,
   prewarmDownloader,
+  prefetchStream,
   cancelDownload,
 };
