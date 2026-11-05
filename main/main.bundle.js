@@ -37949,7 +37949,8 @@ var require_ipc = __commonJS({
       miniPlayer: false,
       alwaysOnTop: false,
       hardwareAcceleration: true,
-      outputDevice: "default"
+      outputDevice: "default",
+      downloadFormat: "m4a"
     };
     var _coverArtByIdCache = /* @__PURE__ */ new Map();
     var db = null;
@@ -42913,7 +42914,8 @@ ${items}
           } catch (_) {
           }
         };
-        const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress, trackInfo.id);
+        const fmt = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS }).downloadFormat === "mp3" ? "mp3" : "m4a";
+        const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress, trackInfo.id, fmt);
         let parsedTrack = null;
         try {
           const stats = fs.statSync(savedPath);

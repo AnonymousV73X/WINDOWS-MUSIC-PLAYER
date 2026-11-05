@@ -1109,6 +1109,29 @@ async function ensureYtDlpAvailable(onProgress) {
   return targetPath;
 }
 
+let _jsRt = null;
+function _jsRuntimeArgs() {
+  if (_jsRt) return _jsRt;
+  _jsRt = [];
+  const { execFileSync } = require("child_process");
+  const ver = (bin) => {
+    try {
+      return execFileSync(bin, ["--version"], {
+        windowsHide: true,
+        timeout: 4000,
+        encoding: "utf8",
+      }).trim();
+    } catch (_) {
+      return null;
+    }
+  };
+  if (ver("deno")) return _jsRt; // deno is enabled by default in yt-dlp
+  const nv = ver("node");
+  if (nv && parseInt(nv.replace(/^v/, ""), 10) >= 20)
+    _jsRt = ["--js-runtimes", "node"];
+  return _jsRt;
+}
+
 async function downloadWithYtDlp(
   urlOrQuery,
   destBase,
@@ -1122,7 +1145,7 @@ async function downloadWithYtDlp(
   return new Promise((resolve, reject) => {
     const args = [
       urlOrQuery,
-      "-f",
+      ..._jsRuntimeArgs(),
       ...(fmt === "m4a"
         ? [
             "-f",
