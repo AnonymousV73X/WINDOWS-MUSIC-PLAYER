@@ -569,7 +569,9 @@ function searchITunesInternal(query, limit = 15) {
             durationMs: item.trackTimeMillis || 0,
             previewUrl: item.previewUrl || "",
             artworkUrl: artworkHigh || artwork100,
-            artworkThumbnail: artwork100 ? artwork100.replace(/100x100/g, "300x300") : "",
+            artworkThumbnail: artwork100
+              ? artwork100.replace(/100x100/g, "300x300")
+              : "",
             genre: item.primaryGenreName || "Music",
           };
         });
@@ -1157,10 +1159,18 @@ function _downloadFile(url, dest, hops = 0) {
         url,
         { headers: { "User-Agent": "NovaTune Downloader" }, timeout: 30000 },
         (res) => {
-          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          if (
+            res.statusCode >= 300 &&
+            res.statusCode < 400 &&
+            res.headers.location
+          ) {
             res.resume();
             return resolve(
-              _downloadFile(new URL(res.headers.location, url).href, dest, hops + 1),
+              _downloadFile(
+                new URL(res.headers.location, url).href,
+                dest,
+                hops + 1,
+              ),
             );
           }
           if (res.statusCode !== 200) {
@@ -1286,7 +1296,10 @@ function prewarmDownloader() {
   updateYtDlp()
     .then(() => ensureYtDlpAvailable())
     .then((bin) => {
-      const w = spawn(bin, ["--version"], { windowsHide: true, stdio: "ignore" });
+      const w = spawn(bin, ["--version"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
       w.on("error", () => {});
     })
     .catch(() => {});
@@ -1374,7 +1387,9 @@ async function _downloadWithYtDlpOnce(
         const pMatch = text.match(/\[download\]\s+([0-9.]+)%/);
         if (pMatch && !_loggedFirst) {
           _loggedFirst = true;
-          console.log(`[DownloadEngine] yt-dlp first byte after ${Date.now() - _tSpawn}ms`);
+          console.log(
+            `[DownloadEngine] yt-dlp first byte after ${Date.now() - _tSpawn}ms`,
+          );
         }
         if (pMatch && onProgress) {
           const pct = Math.min(95, Math.round(parseFloat(pMatch[1])));
@@ -1432,9 +1447,23 @@ async function _downloadWithYtDlpOnce(
   });
 }
 
-async function downloadWithYtDlp(urlOrQuery, destBase, onProgress, trackId, ctx, fmt = "m4a") {
+async function downloadWithYtDlp(
+  urlOrQuery,
+  destBase,
+  onProgress,
+  trackId,
+  ctx,
+  fmt = "m4a",
+) {
   try {
-    return await _downloadWithYtDlpOnce(urlOrQuery, destBase, onProgress, trackId, ctx, fmt);
+    return await _downloadWithYtDlpOnce(
+      urlOrQuery,
+      destBase,
+      onProgress,
+      trackId,
+      ctx,
+      fmt,
+    );
   } catch (err) {
     if (err.cancelled || (ctx && (ctx.cancelled || ctx._retried))) throw err;
     if (
@@ -1445,9 +1474,20 @@ async function downloadWithYtDlp(urlOrQuery, destBase, onProgress, trackId, ctx,
       throw err;
     if (ctx) ctx._retried = true;
     if (onProgress)
-      onProgress({ status: "installing", percent: 5, message: "Updating downloader…" });
+      onProgress({
+        status: "installing",
+        percent: 5,
+        message: "Updating downloader…",
+      });
     await updateYtDlp(true);
-    return _downloadWithYtDlpOnce(urlOrQuery, destBase, onProgress, trackId, ctx, fmt);
+    return _downloadWithYtDlpOnce(
+      urlOrQuery,
+      destBase,
+      onProgress,
+      trackId,
+      ctx,
+      fmt,
+    );
   }
 }
 
@@ -1579,7 +1619,8 @@ function _fastResolveAudio(videoId) {
   if (_STREAM_CACHE.size > 60)
     _STREAM_CACHE.delete(_STREAM_CACHE.keys().next().value);
   p.then((r) => {
-    if (!r && _STREAM_CACHE.get(videoId)?.p === p) _STREAM_CACHE.delete(videoId);
+    if (!r && _STREAM_CACHE.get(videoId)?.p === p)
+      _STREAM_CACHE.delete(videoId);
   });
   return p;
 }
@@ -1589,7 +1630,14 @@ function prefetchStream(videoId) {
   _fastResolveAudio(videoId).catch(() => {});
 }
 
-function _rangeGet(url, start, end, attempt = 0, timeoutMs = 10000, ua = _FAST_UA) {
+function _rangeGet(
+  url,
+  start,
+  end,
+  attempt = 0,
+  timeoutMs = 10000,
+  ua = _FAST_UA,
+) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const req = https.get(
@@ -1621,7 +1669,8 @@ function _rangeGet(url, start, end, attempt = 0, timeoutMs = 10000, ua = _FAST_U
     req.on("error", reject);
     req.on("timeout", () => req.destroy(new Error("timeout")));
   }).catch((e) => {
-    if (attempt < 2) return _rangeGet(url, start, end, attempt + 1, timeoutMs, ua);
+    if (attempt < 2)
+      return _rangeGet(url, start, end, attempt + 1, timeoutMs, ua);
     throw e;
   });
 }
@@ -1636,7 +1685,9 @@ async function _fastDownload(url, size, dest, onProgress, ctx, ua) {
     const worker = async () => {
       while (!err) {
         if (ctx && ctx.cancelled) {
-          err = Object.assign(new Error("Download cancelled"), { cancelled: true });
+          err = Object.assign(new Error("Download cancelled"), {
+            cancelled: true,
+          });
           return;
         }
         const start = next;
@@ -1673,7 +1724,9 @@ function _validateAudio(file, expectedSec) {
     const f = TagLib.File.createFromPath(file);
     try {
       const ms = f.properties?.durationMilliseconds || 0;
-      return ms > 1000 && (!expectedSec || Math.abs(ms / 1000 - expectedSec) < 5);
+      return (
+        ms > 1000 && (!expectedSec || Math.abs(ms / 1000 - expectedSec) < 5)
+      );
     } finally {
       f.dispose();
     }
@@ -1771,7 +1824,11 @@ function _tagWithTagLib(filePath, info, artBuf) {
         t.performers = [artist];
         t.albumArtists = [artist];
       }
-      if (info.albumName && info.albumName.trim() && info.albumName !== "Unknown Album")
+      if (
+        info.albumName &&
+        info.albumName.trim() &&
+        info.albumName !== "Unknown Album"
+      )
         t.album = info.albumName.trim();
       const yr = Number(info.releaseYear);
       if (yr > 1900 && yr <= new Date().getFullYear() + 1) t.year = yr;
@@ -1819,7 +1876,8 @@ function _artImage(buf) {
 // ─── Post-download metadata injection ─────────────────────────────────────────
 function injectTrackInfoTags(filePath, trackInfo, artBuf) {
   try {
-    if (!/\.mp3$/i.test(filePath)) return _tagWithTagLib(filePath, trackInfo, artBuf);
+    if (!/\.mp3$/i.test(filePath))
+      return _tagWithTagLib(filePath, trackInfo, artBuf);
     const cleanTags = {};
 
     if (trackInfo.trackName && trackInfo.trackName.trim())
@@ -1933,7 +1991,10 @@ async function _downloadAndTagTrackInner(
     try {
       ctx.destBase = destBase;
       const r = await _fastResolveAudio(videoId);
-      console.log(`[DownloadEngine] fast resolve ${Date.now() - t0}ms`, r ? `${r.bitrate}bps` : "none");
+      console.log(
+        `[DownloadEngine] fast resolve ${Date.now() - t0}ms`,
+        r ? `${r.bitrate}bps` : "none",
+      );
       if (!r || r.bitrate < 100000) throw new Error("no hq direct stream");
       // Probe first: if the URL stalls/403s, bail to yt-dlp in ~3s instead of retrying chunks
       await _rangeGet(r.url, 0, Math.min(65535, r.size - 1), 2, 3000, r.ua);
@@ -1942,7 +2003,12 @@ async function _downloadAndTagTrackInner(
       injectTrackInfoTags(out, trackInfo, await artPromise);
       _fastFails = 0;
       console.log(`[DownloadEngine] fast path OK in ${Date.now() - t0}ms`);
-      onProgress({ status: "done", percent: 100, message: "Done!", filePath: out });
+      onProgress({
+        status: "done",
+        percent: 100,
+        message: "Done!",
+        filePath: out,
+      });
       return out;
     } catch (fastErr) {
       try {
@@ -1950,7 +2016,10 @@ async function _downloadAndTagTrackInner(
       } catch (_) {}
       if (fastErr.cancelled || ctx.cancelled) throw fastErr;
       _fastFails++;
-      console.warn("[DownloadEngine] fast path failed, using yt-dlp:", fastErr.message);
+      console.warn(
+        "[DownloadEngine] fast path failed, using yt-dlp:",
+        fastErr.message,
+      );
     }
   }
   if (videoId && videoId.length >= 5) {
