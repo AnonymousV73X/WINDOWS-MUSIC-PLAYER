@@ -6701,6 +6701,10 @@ ipcMain.handle("coverart:migrate-v114", async () => {
  */
 
 // ─── Music Discovery & Downloader IPC Handlers ───────────────────────
+setTimeout(() => {
+  try { DownloadEngine.prewarmDownloader(); } catch (_) {}
+}, 8000);
+
 ipcMain.handle("discovery:search", async (event, query, searchId) => {
   try {
     if (!query || !query.trim()) return { success: true, results: [] };
