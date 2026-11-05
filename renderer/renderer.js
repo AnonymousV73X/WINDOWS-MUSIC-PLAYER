@@ -11435,7 +11435,7 @@ function renderHelp() {
           <div class="section-panel-title">What's New in v1.1.8.1</div>
 
           <div class="help-item">
-            <div class="help-item-title">📥 Music Downloader Engine</div>
+            <div class="help-item-title">📥 Fast Music Downloader Engine</div>
             <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
                 <li><strong>Pure yt-dlp Audio Downloader:</strong> High-speed 320kbps MP3 audio download engine directly integrated into the Music Downloader tab.</li>
