@@ -1479,6 +1479,194 @@ async function downloadWithYtDlp(
   }
 }
 
+// ─── Fast path: direct InnerTube stream + parallel ranged download (no yt-dlp) ─
+const _FAST_CLIENT = {
+  clientName: "ANDROID_VR",
+  clientVersion: "1.60.19",
+  deviceMake: "Oculus",
+  deviceModel: "Quest 3",
+  osName: "Android",
+  osVersion: "12L",
+  androidSdkVersion: 32,
+  hl: "en",
+  gl: "US",
+};
+const _FAST_UA =
+  "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip";
+let _fastFails = 0;
+
+function _postJson(url, body, headers, timeoutMs) {
+  return new Promise((resolve) => {
+    const data = JSON.stringify(body);
+    const u = new URL(url);
+    const req = https.request(
+      {
+        hostname: u.hostname,
+        path: u.pathname + u.search,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(data),
+          ...headers,
+        },
+        timeout: timeoutMs,
+        agent: HTTPS_AGENT,
+      },
+      (res) => {
+        let d = "";
+        res.setEncoding("utf8");
+        res.on("data", (c) => (d += c));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(d));
+          } catch (_) {
+            resolve(null);
+          }
+        });
+      },
+    );
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.write(data);
+    req.end();
+  });
+}
+
+async function _fastResolveAudio(videoId) {
+  const j = await _postJson(
+    "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+    {
+      context: { client: _FAST_CLIENT },
+      videoId,
+      contentCheckOk: true,
+      racyCheckOk: true,
+    },
+    {
+      "User-Agent": _FAST_UA,
+      "X-YouTube-Client-Name": "28",
+      "X-YouTube-Client-Version": _FAST_CLIENT.clientVersion,
+      Origin: "https://www.youtube.com",
+    },
+    4000,
+  );
+  const fmts = j?.streamingData?.adaptiveFormats || [];
+  const a = fmts
+    .filter(
+      (f) =>
+        f.url &&
+        /^audio\/mp4/.test(f.mimeType || "") &&
+        Number(f.contentLength) > 0,
+    )
+    .sort((x, y) => (y.bitrate || 0) - (x.bitrate || 0))[0];
+  if (!a) return null;
+  return {
+    url: a.url,
+    size: Number(a.contentLength),
+    bitrate: a.bitrate || 0,
+    durSec: Number(j.videoDetails?.lengthSeconds) || 0,
+  };
+}
+
+function _rangeGet(url, start, end, attempt = 0) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = https.get(
+      url,
+      {
+        headers: {
+          "User-Agent": _FAST_UA,
+          Range: `bytes=${start}-${end}`,
+        },
+        timeout: 10000,
+        agent: HTTPS_AGENT,
+      },
+      (res) => {
+        if (res.statusCode !== 206 && res.statusCode !== 200) {
+          res.resume();
+          return reject(new Error(`HTTP ${res.statusCode}`));
+        }
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const b = Buffer.concat(chunks);
+          b.length === end - start + 1
+            ? resolve(b)
+            : reject(new Error("short chunk"));
+        });
+        res.on("error", reject);
+      },
+    );
+    req.on("error", reject);
+    req.on("timeout", () => req.destroy(new Error("timeout")));
+  }).catch((e) => {
+    if (attempt < 2) return _rangeGet(url, start, end, attempt + 1);
+    throw e;
+  });
+}
+
+async function _fastDownload(url, size, dest, onProgress, ctx) {
+  const fd = fs.openSync(dest, "w");
+  try {
+    const CH = 2 * 1024 * 1024;
+    let next = 0;
+    let got = 0;
+    let err = null;
+    const worker = async () => {
+      while (!err) {
+        if (ctx && ctx.cancelled) {
+          err = Object.assign(new Error("Download cancelled"), {
+            cancelled: true,
+          });
+          return;
+        }
+        const start = next;
+        if (start >= size) return;
+        next += CH;
+        const end = Math.min(start + CH, size) - 1;
+        try {
+          const buf = await _rangeGet(url, start, end);
+          fs.writeSync(fd, buf, 0, buf.length, start);
+          got += buf.length;
+          if (onProgress) {
+            const pct = Math.round((got / size) * 100);
+            onProgress({
+              status: "downloading",
+              percent: 10 + Math.round((pct * 80) / 100),
+              message: `Downloading… ${pct}%`,
+            });
+          }
+        } catch (e) {
+          err = e;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: 6 }, worker));
+    if (err) throw err;
+    if (got !== size) throw new Error("size mismatch");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function _validateAudio(file, expectedSec) {
+  try {
+    const f = TagLib.File.createFromPath(file);
+    try {
+      const ms = f.properties?.durationMilliseconds || 0;
+      return (
+        ms > 1000 && (!expectedSec || Math.abs(ms / 1000 - expectedSec) < 5)
+      );
+    } finally {
+      f.dispose();
+    }
+  } catch (_) {
+    return false;
+  }
+}
+
 function fetchArtworkBuffer(url, timeoutMs = 6000, hops = 0) {
   return new Promise((resolve) => {
     if (!url || hops > 3) return resolve(null);
@@ -1729,6 +1917,37 @@ async function _downloadAndTagTrackInner(
     (trackInfo.id && trackInfo.id.startsWith("ytm_")
       ? trackInfo.id.replace("ytm_", "")
       : null);
+  if (videoId && videoId.length >= 5 && fmt === "m4a" && _fastFails < 2) {
+    const out = `${destBase}.m4a`;
+    const t0 = Date.now();
+    try {
+      ctx.destBase = destBase;
+      const r = await _fastResolveAudio(videoId);
+      if (!r || r.bitrate < 100000) throw new Error("no hq direct stream");
+      await _fastDownload(r.url, r.size, out, onProgress, ctx);
+      if (!_validateAudio(out, r.durSec)) throw new Error("invalid audio");
+      injectTrackInfoTags(out, trackInfo, await artPromise);
+      _fastFails = 0;
+      console.log(`[DownloadEngine] fast path OK in ${Date.now() - t0}ms`);
+      onProgress({
+        status: "done",
+        percent: 100,
+        message: "Done!",
+        filePath: out,
+      });
+      return out;
+    } catch (fastErr) {
+      try {
+        if (fs.existsSync(out)) fs.unlinkSync(out);
+      } catch (_) {}
+      if (fastErr.cancelled || ctx.cancelled) throw fastErr;
+      _fastFails++;
+      console.warn(
+        "[DownloadEngine] fast path failed, using yt-dlp:",
+        fastErr.message,
+      );
+    }
+  }
   if (videoId && videoId.length >= 5) {
     try {
       onProgress({
