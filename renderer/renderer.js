@@ -1,5 +1,5 @@
 /**
- * NovaTune — Renderer Entry Point  [v1.1.7]
+ * NovaTune — Renderer Entry Point  [v1.1.8]
  * Wires the user's custom UI to the Electron backend.
  * Uses window.novaAPI (from preload.js) for all IPC communication.
  *
@@ -851,11 +851,12 @@ class SquigglyProgress {
       ctx.beginPath();
       ctx.moveTo(greyStart, cy);
       ctx.lineTo(greyEnd, cy);
-      ctx.strokeStyle = (this.overlay && this.themeMode !== "light")
-        ? "rgba(255,255,255,0.18)"
-        : (this.themeMode === "light"
-          ? "rgba(0,0,0,0.22)"
-          : "rgba(255,255,255,0.18)");
+      ctx.strokeStyle =
+        this.overlay && this.themeMode !== "light"
+          ? "rgba(255,255,255,0.18)"
+          : this.themeMode === "light"
+            ? "rgba(0,0,0,0.22)"
+            : "rgba(255,255,255,0.18)";
       ctx.lineWidth = 2.3;
       ctx.lineCap = "round";
       ctx.stroke();
@@ -864,7 +865,10 @@ class SquigglyProgress {
     if (progress > 0 && totalProgressPx > leftInset + thumbR * 2) {
       ctx.beginPath();
       ctx.arc(leftInset, cy, this.strokeWidth / 2, 0, Math.PI * 2);
-      ctx.fillStyle = (this.overlay && this.themeMode !== "light") ? "rgba(255,255,255,0.4)" : this.waveColor;
+      ctx.fillStyle =
+        this.overlay && this.themeMode !== "light"
+          ? "rgba(255,255,255,0.4)"
+          : this.waveColor;
       ctx.fill();
     }
 
@@ -878,7 +882,8 @@ class SquigglyProgress {
       ctx.beginPath();
       ctx.moveTo(leftInset, cy);
       ctx.lineTo(waveEndPx, cy);
-      ctx.strokeStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
+      ctx.strokeStyle =
+        this.overlay && this.themeMode !== "light" ? "#fff" : this.waveColor;
       ctx.lineWidth = this.strokeWidth;
       ctx.lineCap = "round";
       ctx.stroke();
@@ -927,7 +932,8 @@ class SquigglyProgress {
       const envelope = computeAmp(waveEndPx);
       ctx.lineTo(waveEndPx, cy + Math.sin(k * waveEndPx + phase) * envelope);
     }
-    ctx.strokeStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
+    ctx.strokeStyle =
+      this.overlay && this.themeMode !== "light" ? "#fff" : this.waveColor;
     ctx.lineWidth = this.strokeWidth;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -1291,7 +1297,8 @@ class SquigglyProgress {
       const cr = this.overlay ? 3.5 : 4.5;
       ctx.arc(x, cy, cr, 0, Math.PI * 2);
     }
-    ctx.fillStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
+    ctx.fillStyle =
+      this.overlay && this.themeMode !== "light" ? "#fff" : this.waveColor;
     ctx.fill();
   }
 
@@ -3294,8 +3301,8 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     if (state.currentTrack) {
       const anchor = state.overlayOpen
-        ? ($("ov-add-btn") || $("ov-more-btn") || $("ov-title"))
-        : ($("np-menu-btn") || $("np-title") || document.body);
+        ? $("ov-add-btn") || $("ov-more-btn") || $("ov-title")
+        : $("np-menu-btn") || $("np-title") || document.body;
       if (anchor) openPlaylistMenu(anchor, state.currentTrack);
     }
     return;
@@ -3435,21 +3442,37 @@ document.addEventListener("keydown", (e) => {
   }
 
   // ─── 12. 1 or R → Repeat One (toggle) ─────────────────────────
-  if ((e.key === "1" || e.code === "KeyR") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  if (
+    (e.key === "1" || e.code === "KeyR") &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey
+  ) {
     e.preventDefault();
     _setRepeatMode("one");
     return;
   }
 
   // ─── 13. 0 or O → Repeat All (toggle) ─────────────────────────
-  if ((e.key === "0" || e.code === "KeyO") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  if (
+    (e.key === "0" || e.code === "KeyO") &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey
+  ) {
     e.preventDefault();
     _setRepeatMode("all");
     return;
   }
 
   // ─── 14. ArrowUp / ArrowDown → Volume Up / Down ──────────────
-  if (e.code === "ArrowUp" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+  if (
+    e.code === "ArrowUp" &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey &&
+    !e.shiftKey
+  ) {
     e.preventDefault();
     state.volume = Math.max(0, Math.min(1, state.volume + 0.05));
     audioEngine.setVolume(state.volume);
@@ -3457,7 +3480,13 @@ document.addEventListener("keydown", (e) => {
     _persistVolumeDebounced();
     return;
   }
-  if (e.code === "ArrowDown" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+  if (
+    e.code === "ArrowDown" &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey &&
+    !e.shiftKey
+  ) {
     e.preventDefault();
     state.volume = Math.max(0, Math.min(1, state.volume - 0.05));
     audioEngine.setVolume(state.volume);
@@ -3635,9 +3664,14 @@ function _wireSidebar() {
     window.novaAPI.on("library:track-added", async (newTrack) => {
       try {
         if (!newTrack || !newTrack.id) return;
-        console.log("[library:track-added] Ingesting downloaded track into renderer state:", newTrack.title);
+        console.log(
+          "[library:track-added] Ingesting downloaded track into renderer state:",
+          newTrack.title,
+        );
         // Avoid duplicate additions
-        const existingIdx = state.tracks.findIndex((t) => t.id === newTrack.id || t.filePath === newTrack.filePath);
+        const existingIdx = state.tracks.findIndex(
+          (t) => t.id === newTrack.id || t.filePath === newTrack.filePath,
+        );
         if (existingIdx !== -1) {
           state.tracks[existingIdx] = newTrack;
         } else {
@@ -3645,17 +3679,24 @@ function _wireSidebar() {
         }
         state.filteredTracks = [...state.tracks];
         if (state.sortKey) _sortTracks();
-        if (typeof invalidateSectionCache === "function") invalidateSectionCache();
+        if (typeof invalidateSectionCache === "function")
+          invalidateSectionCache();
         if (typeof buildSearchIndex === "function") buildSearchIndex();
         if (typeof _panelDirty !== "undefined") {
           _panelDirty["home"] = true;
           _panelDirty["albums"] = true;
           _panelDirty["artists"] = true;
         }
-        if (typeof _updateSidebarFolderInfo === "function") _updateSidebarFolderInfo();
-        console.log(`[library:track-added] Library updated! Total tracks: ${state.tracks.length}`);
+        if (typeof _updateSidebarFolderInfo === "function")
+          _updateSidebarFolderInfo();
+        console.log(
+          `[library:track-added] Library updated! Total tracks: ${state.tracks.length}`,
+        );
       } catch (err) {
-        console.warn("[library:track-added] Failed to update library state:", err);
+        console.warn(
+          "[library:track-added] Failed to update library state:",
+          err,
+        );
       }
     });
   }
@@ -3764,7 +3805,8 @@ function _updateToolbarVisibility(section) {
   const lyricsToggle = $("lyrics-toggle-btn");
   const playlistImportBtn = $("playlist-import-btn");
   if (playlistImportBtn) {
-    playlistImportBtn.style.display = (section === "playlists") ? "inline-flex" : "none";
+    playlistImportBtn.style.display =
+      section === "playlists" ? "inline-flex" : "none";
   }
   // Only show shuffle & play and sort-by in home and library sections
   const showShuffleAndSort = section === "home" || section === "library";
@@ -3803,7 +3845,8 @@ function _updateToolbarVisibility(section) {
 }
 
 function _navigateTo(section) {
-  const _dlB = $("sidebar-download-btn"), _hlB = $("sidebar-help-btn");
+  const _dlB = $("sidebar-download-btn"),
+    _hlB = $("sidebar-help-btn");
   if (_dlB) _dlB.classList.toggle("active", section === "discovery");
   if (_hlB) _hlB.classList.toggle("active", section === "help");
   const title = $("content-title");
@@ -3828,7 +3871,7 @@ function _navigateTo(section) {
       title.textContent = "Music Downloader";
       _showCached("discovery", renderDiscovery);
       break;
-      case "library":
+    case "library":
       title.textContent = "Music";
       _showVirtual();
       renderTracks(state.filteredTracks, "library");
@@ -4462,7 +4505,13 @@ function _wireShufflePlay() {
 }
 
 // ─── Library Loading ─────────────────────────────────────────────
-const _NO_COL_HEADER_SECTIONS = ["discovery", "home", "settings", "equalizer", "help"];
+const _NO_COL_HEADER_SECTIONS = [
+  "discovery",
+  "home",
+  "settings",
+  "equalizer",
+  "help",
+];
 function _colHeadersAllowed() {
   return !_NO_COL_HEADER_SECTIONS.includes(state.activeNavSection);
 }
@@ -7792,11 +7841,24 @@ function renderSettings() {
           <span>Startup section</span>
           <div class="nova-dropdown" id="setting-start-section" data-value="${state.settings.startSection || "library"}" style="position:relative;min-width:220px;">
             <button type="button" class="nova-dropdown__trigger" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-2,var(--surface));color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;transition:border-color .15s;">
-              <span class="nova-dropdown__label">${{"library":"Music Library (Default)","artists":"Artists","albums":"Albums","playlists":"Playlists","home":"Home","queue":"Play Queue","equalizer":"Equalizer"}[state.settings.startSection || "library"]}</span>
+              <span class="nova-dropdown__label">${{ library: "Music Library (Default)", artists: "Artists", albums: "Albums", playlists: "Playlists", home: "Home", queue: "Play Queue", equalizer: "Equalizer" }[state.settings.startSection || "library"]}</span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.7;transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
             <ul class="nova-dropdown__menu" style="display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:100%;background:var(--surface-2,var(--surface));border:1px solid var(--border);border-radius:8px;padding:6px;margin:0;list-style:none;z-index:999;box-shadow:0 8px 24px rgba(0,0,0,.4);flex-direction:column;gap:4px;">
-              ${[["library","Music Library (Default)"],["artists","Artists"],["albums","Albums"],["playlists","Playlists"],["home","Home"],["queue","Play Queue"],["equalizer","Equalizer"]].map(([v,l])=>`<li data-value="${v}" style="padding:9px 12px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;color:var(--text-primary);transition:background .15s, color .15s;${(state.settings.startSection||"library")===v?"background:color-mix(in srgb, var(--green, #1ed760) 14%, transparent);color:var(--green, #1ed760);font-weight:600;":""}">${(state.settings.startSection||"library")===v?'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>':''}<span>${l}</span></li>`).join("")}
+              ${[
+                ["library", "Music Library (Default)"],
+                ["artists", "Artists"],
+                ["albums", "Albums"],
+                ["playlists", "Playlists"],
+                ["home", "Home"],
+                ["queue", "Play Queue"],
+                ["equalizer", "Equalizer"],
+              ]
+                .map(
+                  ([v, l]) =>
+                    `<li data-value="${v}" style="padding:9px 12px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;color:var(--text-primary);transition:background .15s, color .15s;${(state.settings.startSection || "library") === v ? "background:color-mix(in srgb, var(--green, #1ed760) 14%, transparent);color:var(--green, #1ed760);font-weight:600;" : ""}">${(state.settings.startSection || "library") === v ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ""}<span>${l}</span></li>`,
+                )
+                .join("")}
             </ul>
           </div>
         </div>
@@ -7899,11 +7961,21 @@ function renderSettings() {
   const startSectionDropdown = $("setting-start-section");
 
   if (startSectionDropdown) {
-    const trigger = startSectionDropdown.querySelector(".nova-dropdown__trigger");
+    const trigger = startSectionDropdown.querySelector(
+      ".nova-dropdown__trigger",
+    );
     const menu = startSectionDropdown.querySelector(".nova-dropdown__menu");
     const label = startSectionDropdown.querySelector(".nova-dropdown__label");
     const chevron = trigger.querySelector("svg");
-    const LABELS = { library:"Music Library (Default)", artists:"Artists", albums:"Albums", playlists:"Playlists", home:"Home", queue:"Play Queue", equalizer:"Equalizer" };
+    const LABELS = {
+      library: "Music Library (Default)",
+      artists: "Artists",
+      albums: "Albums",
+      playlists: "Playlists",
+      home: "Home",
+      queue: "Play Queue",
+      equalizer: "Equalizer",
+    };
 
     const closeMenu = () => {
       menu.style.display = "none";
@@ -7914,7 +7986,9 @@ function renderSettings() {
     trigger.addEventListener("click", (e) => {
       e.stopPropagation();
       const open = menu.style.display === "flex";
-      if (open) { closeMenu(); } else {
+      if (open) {
+        closeMenu();
+      } else {
         menu.style.display = "flex";
         chevron.style.transform = "rotate(180deg)";
         trigger.style.borderColor = "var(--green, #1ed760)";
@@ -7930,14 +8004,21 @@ function renderSettings() {
       label.textContent = LABELS[val];
       startSectionDropdown.dataset.value = val;
       // Highlight selected item
-      menu.querySelectorAll("li").forEach(item => {
+      menu.querySelectorAll("li").forEach((item) => {
         const sel = item.dataset.value === val;
-        item.style.background = sel ? "color-mix(in srgb, var(--green, #1ed760) 14%, transparent)" : "";
-        item.style.color = sel ? "var(--green, #1ed760)" : "var(--text-primary)";
+        item.style.background = sel
+          ? "color-mix(in srgb, var(--green, #1ed760) 14%, transparent)"
+          : "";
+        item.style.color = sel
+          ? "var(--green, #1ed760)"
+          : "var(--text-primary)";
         item.style.fontWeight = sel ? "600" : "";
         let svg = item.querySelector("svg");
         if (sel && !svg) {
-          item.insertAdjacentHTML("afterbegin", '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>');
+          item.insertAdjacentHTML(
+            "afterbegin",
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+          );
         } else if (!sel && svg) {
           svg.remove();
         }
@@ -9403,13 +9484,62 @@ function _openShareCard(track) {
   const ico = (d) =>
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
   const items = [
-    ["lanbeam", "LANBeam", "Send file over LAN", ico('<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>')],
-    ["copy-file", "Copy File", "Paste into any app", ico('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>')],
-    ["folder", "Show in Folder", "Drag it into any app", ico('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>')],
-    ["copy-text", "Copy Name", "Song title & artist", ico('<path d="M4 7V4h16v3"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>')],
-    ["whatsapp", "WhatsApp", "Copies file, then opens app", ico('<path d="M21 11.5a8.4 8.4 0 0 1-12.4 7.4L3 21l2.1-5.5A8.4 8.4 0 1 1 21 11.5z"/>')],
-    ["telegram", "Telegram", "Copies file, then opens app", ico('<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>')],
-    ["email", "Email", "Copies file, then opens app", ico('<path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><polyline points="22,6 12,13 2,6"/>')],
+    [
+      "lanbeam",
+      "LANBeam",
+      "Send file over LAN",
+      ico(
+        '<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
+      ),
+    ],
+    [
+      "copy-file",
+      "Copy File",
+      "Paste into any app",
+      ico(
+        '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+      ),
+    ],
+    [
+      "folder",
+      "Show in Folder",
+      "Drag it into any app",
+      ico(
+        '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
+      ),
+    ],
+    [
+      "copy-text",
+      "Copy Name",
+      "Song title & artist",
+      ico(
+        '<path d="M4 7V4h16v3"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>',
+      ),
+    ],
+    [
+      "whatsapp",
+      "WhatsApp",
+      "Copies file, then opens app",
+      ico(
+        '<path d="M21 11.5a8.4 8.4 0 0 1-12.4 7.4L3 21l2.1-5.5A8.4 8.4 0 1 1 21 11.5z"/>',
+      ),
+    ],
+    [
+      "telegram",
+      "Telegram",
+      "Copies file, then opens app",
+      ico(
+        '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
+      ),
+    ],
+    [
+      "email",
+      "Email",
+      "Copies file, then opens app",
+      ico(
+        '<path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><polyline points="22,6 12,13 2,6"/>',
+      ),
+    ],
   ];
   const overlay = document.createElement("div");
   overlay.className = "tag-editor-overlay track-share-overlay";
@@ -9454,7 +9584,14 @@ function _openShareCard(track) {
     if (act === "copy-file") {
       const res = await inv("share:copy-file", track.filePath);
       close();
-      _showActionToast(track.title, res?.success && res.file ? "file copied" : res?.success ? "path copied" : "copy failed");
+      _showActionToast(
+        track.title,
+        res?.success && res.file
+          ? "file copied"
+          : res?.success
+            ? "path copied"
+            : "copy failed",
+      );
     } else if (act === "folder") {
       close();
       inv("share:show-in-folder", track.filePath);
@@ -9506,7 +9643,10 @@ function _openShareCard(track) {
       }
       let res = exe ? await inv("share:launch-app", exe, track.filePath) : null;
       close();
-      _showActionToast(track.title, res?.success ? "queued in LANBeam" : "launch failed");
+      _showActionToast(
+        track.title,
+        res?.success ? "queued in LANBeam" : "launch failed",
+      );
     } else {
       const urls = {
         whatsapp: `https://wa.me/?text=${enc}`,
@@ -9566,7 +9706,10 @@ function _openTrackProperties(track) {
     ["File Size", fmtSize(track.fileSize)],
     ["Date Added", fmtDate(track.dateAdded)],
     ["Modified", fmtDate(track.dateModified)],
-    ["File Name", track.fileName || (track.filePath || "").split(/[\\/]/).pop()],
+    [
+      "File Name",
+      track.fileName || (track.filePath || "").split(/[\\/]/).pop(),
+    ],
     ["Location", track.filePath],
   ];
   const coverSrc = _resolveCoverArtSrc(track);
@@ -11111,7 +11254,6 @@ function _makeAlbumCard(album) {
   return card;
 }
 
-
 function _dupNormTitle(v) {
   return String(v || "")
     .toLowerCase()
@@ -11272,50 +11414,43 @@ function renderHelp() {
 
       <div class="help-sections">
         <div class="section-panel" id="help-updates-section">
-          <div class="section-panel-title">What's New in v1.1.7</div>
+          <div class="section-panel-title">What's New in v1.1.8</div>
 
           <div class="help-item">
-            <div class="help-item-title">🎵 EQ Animation in All Sections</div>
+            <div class="help-item-title">📥 Music Downloader Engine</div>
             <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
-                <li><strong>Universal Playing Indicator:</strong> The animated EQ bars now correctly appear on the playing track row in every section — Music Library, Artists, Albums, and Playlists.</li>
-                <li><strong>Persistent on Back-Navigation:</strong> Previously, navigating back and re-entering a detail view would lose the animation. It now instantly re-applies to the correct row every time the view is rendered.</li>
-                <li><strong>Bug Fixed:</strong> Playlist detail rows were missing their track ID attribute, making them invisible to the animation system — this is now corrected.</li>
+                <li><strong>Pure yt-dlp Audio Downloader:</strong> High-speed 320kbps MP3 audio download engine directly integrated into the Music Downloader tab.</li>
+                <li><strong>One-Click Download Cancel:</strong> Added instant abort/cancel control with stylish circular button during active downloads, cleaning up partial files immediately.</li>
+                <li><strong>Auto-Tagger & Library Hot-Reload:</strong> Downloaded tracks are automatically enriched with ID3 tags, album art, and hot-loaded right into your Music Library without restarting.</li>
               </ul>
             </div>
           </div>
 
           <div class="help-item">
-            <div class="help-item-title">🚀 Startup Section Setting</div>
+            <div class="help-item-title">⚡ Fast LANBeam Share Hand-off</div>
             <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
-                <li><strong>Choose Your Landing Page:</strong> Head to Settings and pick which section the app opens to on launch — Music Library (default), Artists, Albums, Playlists, or any other menu item.</li>
-                <li><strong>Instant Navigation:</strong> The selected section is loaded immediately after the splash screen without any delay.</li>
+                <li><strong>Priority Local Sharing:</strong> LANBeam is now the top action in the Song Right-Click &rarr; Share menu for seamless zero-cloud local transfers to phones and PCs.</li>
+                <li><strong>Auto-Install from GitHub:</strong> If LANBeam is not already installed on your PC, NovaTune automatically downloads and installs the latest release silently in seconds.</li>
+                <li><strong>Direct Queue & Focus:</strong> Launches or focuses your running LANBeam instance and appends tracks straight into the pending transfer queue.</li>
               </ul>
             </div>
           </div>
 
           <div class="help-item">
-            <div class="help-item-title">🃏 Realtime Playlist Card Updates</div>
+            <div class="help-item-title">🛠️ Bug Fixes & Improvements</div>
             <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
-                <li><strong>Instant Appearance:</strong> Newly created playlists now appear immediately in the Playlists section without needing to restart or log out.</li>
-                <li><strong>Always in Sync:</strong> Playlist cards stay up to date in real time after any create or modify action.</li>
-              </ul>
-            </div>
-          </div>
-
-          <div class="help-item">
-            <div class="help-item-title">📐 Virtual List Row Gap Fix</div>
-            <div class="help-item-body" style="padding-left: 15px;">
-              <ul style="padding-left: 10px;">
-                <li><strong>No More Gaps:</strong> Fixed uneven large gaps that appeared in the track list when new songs were added or sorted to the top of the library.</li>
+                <li><strong>More Context Commands & Properties:</strong> Enhanced right-click track menu actions, song details inspection, and file properties handling.</li>
+                <li><strong>Stability & Library Enhancements:</strong> Addressed track duplicate detection, improved search source fallbacks, and polished UI animations across dark themes.</li>
               </ul>
             </div>
           </div>
         </div>
 
         <div class="section-panel" id="help-updates-section-prev">
+          <div class="section-panel-title">Previously in v1.1.7</div>
           <div class="section-panel-title">Previously in v1.1.6</div>
 
           <div class="help-item">
@@ -11510,7 +11645,7 @@ function renderHelp() {
       </div>
 
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
-        NovaTune v1.1.7 &bull; Made by SIR ALEX for music lovers
+        NovaTune v1.1.8 &bull; Made by SIR ALEX for music lovers
       </div>
     </div>
   `);
@@ -14248,7 +14383,10 @@ async function playNext() {
         for (let i = 0; i < libTracks.length; i++) {
           if (libTracks[i].id !== curId) pool.push(libTracks[i]);
         }
-        state.queue = pool.length > 0 ? _fastShuffle(pool) : _fastShuffle(libTracks.slice());
+        state.queue =
+          pool.length > 0
+            ? _fastShuffle(pool)
+            : _fastShuffle(libTracks.slice());
         state.queueIndex = 0;
         state.queueSource = null;
       } else {
@@ -14262,7 +14400,9 @@ async function playNext() {
       } else {
         // Single-song queue: look up next song in library using active user sort logic
         if (libTracks.length > 1 && state.currentTrack) {
-          const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
+          const curIdx = libTracks.findIndex(
+            (t) => t.id === state.currentTrack.id,
+          );
           const nextIdx = curIdx >= 0 ? (curIdx + 1) % libTracks.length : 0;
           const after = libTracks.slice(nextIdx);
           const before = libTracks.slice(0, nextIdx);
@@ -14275,9 +14415,15 @@ async function playNext() {
       }
     } else {
       // Repeat is OFF & Shuffle is OFF:
-      if (state.queue.length === 1 && state.currentTrack && libTracks.length > 1) {
+      if (
+        state.queue.length === 1 &&
+        state.currentTrack &&
+        libTracks.length > 1
+      ) {
         // Queue was 1 song: continue with user's library sort order
-        const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
+        const curIdx = libTracks.findIndex(
+          (t) => t.id === state.currentTrack.id,
+        );
         if (curIdx >= 0 && curIdx + 1 < libTracks.length) {
           const after = libTracks.slice(curIdx + 1);
           const before = libTracks.slice(0, curIdx + 1);
@@ -14316,7 +14462,9 @@ async function playPrevious() {
       } else {
         const libTracks = _getSortedLibraryTracks();
         if (libTracks.length > 1 && state.currentTrack) {
-          const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
+          const curIdx = libTracks.findIndex(
+            (t) => t.id === state.currentTrack.id,
+          );
           const prevIdx = curIdx > 0 ? curIdx - 1 : libTracks.length - 1;
           const after = libTracks.slice(prevIdx);
           const before = libTracks.slice(0, prevIdx);
@@ -14420,9 +14568,7 @@ function _applyRepeatMode(mode) {
     const sorted = state.filteredTracks.length
       ? state.filteredTracks
       : state.tracks;
-    const currentIdx = sorted.findIndex(
-      (t) => t.id === state.currentTrack.id,
-    );
+    const currentIdx = sorted.findIndex((t) => t.id === state.currentTrack.id);
     if (currentIdx >= 0) {
       const after = sorted.slice(currentIdx);
       const before = sorted.slice(0, currentIdx);
@@ -14577,7 +14723,8 @@ function wireSeekCanvas(canvas, squiggly) {
     if (!(isFinite(d) && d > 0) || rc.width <= 0) return;
     const pct = Math.max(0, Math.min(1, (e.clientX - rc.left) / rc.width));
     _tip.textContent = formatTime(pct * d);
-    _tip.style.left = Math.max(28, Math.min(window.innerWidth - 28, e.clientX)) + "px";
+    _tip.style.left =
+      Math.max(28, Math.min(window.innerWidth - 28, e.clientX)) + "px";
     _tip.style.top = rc.top - 6 + "px";
     _tip.classList.add("show");
   });
@@ -15115,7 +15262,9 @@ function updateProgressText(cur, dur) {
   if (typeof cur === "number" && isFinite(cur)) _lastProgressCur = cur;
   if (typeof dur === "number" && isFinite(dur)) _lastProgressDur = dur;
 
-  const validCur = isFinite(_lastProgressCur) ? Math.max(0, _lastProgressCur) : 0;
+  const validCur = isFinite(_lastProgressCur)
+    ? Math.max(0, _lastProgressCur)
+    : 0;
   const validDur =
     isFinite(_lastProgressDur) && _lastProgressDur > 0 ? _lastProgressDur : 0;
 
@@ -16849,7 +16998,6 @@ function _openTagEditor(track) {
     const newGenre = overlay.querySelector("#tag-genre").value.trim();
     const newYear = overlay.querySelector("#tag-year").value.trim();
 
-
     saveBtn.disabled = true;
     saveBtn.textContent = "Saving...";
 
@@ -16896,7 +17044,7 @@ function _openTagEditor(track) {
             state.currentTrack._hasCoverArt = true;
           }
         }
-        
+
         // Re-render current section
         invalidateSectionCache();
         // Invalidate thumbnail cache for this track (cover art may have changed)
@@ -17029,8 +17177,12 @@ closePlaylistMenus = function () {
     max.innerHTML = m ? restoreSvg : maxSvg;
     max.setAttribute("aria-label", m ? "Restore" : "Maximize");
   };
-  document.getElementById("win-min").addEventListener("click", () => inv("window:minimize"));
-  document.getElementById("win-close").addEventListener("click", () => inv("window:close"));
+  document
+    .getElementById("win-min")
+    .addEventListener("click", () => inv("window:minimize"));
+  document
+    .getElementById("win-close")
+    .addEventListener("click", () => inv("window:close"));
   max.addEventListener("click", async () => {
     await inv("window:toggle-maximize");
     sync();
