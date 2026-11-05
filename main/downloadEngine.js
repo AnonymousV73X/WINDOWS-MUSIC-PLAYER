@@ -569,7 +569,9 @@ function searchITunesInternal(query, limit = 15) {
             durationMs: item.trackTimeMillis || 0,
             previewUrl: item.previewUrl || "",
             artworkUrl: artworkHigh || artwork100,
-            artworkThumbnail: artwork100 ? artwork100.replace(/100x100/g, "300x300") : "",
+            artworkThumbnail: artwork100
+              ? artwork100.replace(/100x100/g, "300x300")
+              : "",
             genre: item.primaryGenreName || "Music",
           };
         });
@@ -1322,7 +1324,11 @@ function _tagWithTagLib(filePath, info, artBuf) {
         t.performers = [artist];
         t.albumArtists = [artist];
       }
-      if (info.albumName && info.albumName.trim() && info.albumName !== "Unknown Album")
+      if (
+        info.albumName &&
+        info.albumName.trim() &&
+        info.albumName !== "Unknown Album"
+      )
         t.album = info.albumName.trim();
       const yr = Number(info.releaseYear);
       if (yr > 1900 && yr <= new Date().getFullYear() + 1) t.year = yr;
@@ -1370,7 +1376,8 @@ function _artImage(buf) {
 // ─── Post-download metadata injection ─────────────────────────────────────────
 function injectTrackInfoTags(filePath, trackInfo, artBuf) {
   try {
-    if (!/\.mp3$/i.test(filePath)) return _tagWithTagLib(filePath, trackInfo, artBuf);
+    if (!/\.mp3$/i.test(filePath))
+      return _tagWithTagLib(filePath, trackInfo, artBuf);
     const cleanTags = {};
 
     if (trackInfo.trackName && trackInfo.trackName.trim())
