@@ -1,13 +1,25 @@
 /**
  * NovaTune — Discovery & Download View
  * Ultra-lightweight UI component matching NovaTune's Spotify-dark aesthetics.
- * Features instant iTunes+Deezer search and one-click 320kbps MP3 download.
+ * Features instant iTunes+Deezer search and one-click M4A download.
  */
 
 class DiscoveryView {
   constructor(container, novaAPI, onPlayTrack, onCheckDuplicate, hooks = {}) {
     this.container = container;
     this.novaAPI = novaAPI;
+    this._fmt = "M4A";
+    try {
+      novaAPI
+        .invoke("settings:get-all")
+        .then((r) => {
+          if (r?.settings?.downloadFormat === "mp3") this._fmt = "MP3";
+        })
+        .catch(() => {});
+    } catch (_) {}
+    window.addEventListener("dlfmt-changed", (e) => {
+      this._fmt = e.detail === "mp3" ? "MP3" : "M4A";
+    });
     this.onPlayTrack = onPlayTrack;
     this.onCheckDuplicate = onCheckDuplicate;
     this.hooks = hooks || {};
@@ -236,7 +248,7 @@ class DiscoveryView {
             </span>
           </div>
           <p style="color: var(--text-muted); font-size: 14px; margin: 0 0 20px 0;">
-            Search any song and download high-fidelity 320kbps MP3s directly to your library.
+            Search any song and download high-quality M4A audio directly to your library.
           </p>
 
           <div class="discovery-search-wrap" style="position: relative; width: 100%; max-width: none; display: flex; align-items: center;">
@@ -480,7 +492,7 @@ class DiscoveryView {
           <polyline points="7 10 12 15 17 10" />
           <line x1="12" y1="15" x2="12" y2="3" />
         </svg>
-        <span>320k MP3</span>
+        <span>${this._fmt}</span>
       </button>
     `;
   }
