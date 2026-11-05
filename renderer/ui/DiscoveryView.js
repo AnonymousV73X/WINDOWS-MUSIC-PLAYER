@@ -9,6 +9,16 @@ class DiscoveryView {
     this.container = container;
     this.novaAPI = novaAPI;
     this._fmt = "M4A";
+    this._pf = new Set();
+    container.addEventListener("mouseover", (e) => {
+      const id = e.target.closest?.(".discovery-track-row")?.dataset?.id;
+      if (!id || this._pf.has(id)) return;
+      const t = this.tracks.find((x) => x.id === id);
+      if (t && t.videoId) {
+        this._pf.add(id);
+        novaAPI.invoke("discovery:prefetch", t.videoId).catch(() => {});
+      }
+    });
     try {
       novaAPI
         .invoke("settings:get-all")
