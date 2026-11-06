@@ -6734,8 +6734,15 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
     const musicDir = app.getPath("music") || path.join(app.getPath("userData"), "Downloads");
     const targetFolder = path.join(musicDir, "NovaTune Downloads");
 
+    const _tStart = Date.now();
+    let _tLast = _tStart;
     const onProgress = (prog) => {
       try {
+        const now = Date.now();
+        const stepMs = now - _tLast;
+        const totalMs = now - _tStart;
+        _tLast = now;
+        console.log(`[DownloadProgress] [+${(totalMs/1000).toFixed(1)}s (step: ${(stepMs/1000).toFixed(1)}s)] [${trackInfo.trackName || trackInfo.id}] ${prog.percent || 0}% | ${prog.status || ''} | ${prog.message || ''}`);
         event.sender.send("discovery:progress", {
           trackId: trackInfo.id,
           ...prog,

@@ -1,5 +1,5 @@
 /**
- * NovaTune — Renderer Entry Point  [v1.1.8.1]
+ * NovaTune — Renderer Entry Point  [v1.1.11]
  * Wires the user's custom UI to the Electron backend.
  * Uses window.novaAPI (from preload.js) for all IPC communication.
  *
@@ -3033,6 +3033,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   console.log("NovaTune ready!");
 
+  
+
   // Dismiss splash screen only after the audio engine has finished buffering
   // the restored track (or after a hard cap on HDD). This ensures
   // the play button is functional the instant the user sees the main UI.
@@ -4308,12 +4310,15 @@ function _wireAddFolder() {
     // When nothingChanged, the library in memory is already correct —
     // reloading it would just thrash the DOM + virtual list for no reason.
     if (anyChanged) {
-      // Task 4: Use partial update instead of full reload
+      // Rebuild the binary manifest so the decoder reads fresh data
       try {
         await window.novaAPI.invoke("library:rebuild-manifest");
       } catch (err) {
         console.warn("[Refresh] Manifest rebuild failed:", err.message);
       }
+      // Null the in-memory decoder so any fallback inside _partialLibraryUpdate
+      // that calls _loadLibrary() re-reads the new manifest from disk.
+      manifestDecoder = null;
       await _partialLibraryUpdate();
       _updateSidebarFolderInfo();
       console.log("[Refresh] Library updated (changes detected)");
@@ -6315,21 +6320,38 @@ async function _partialLibraryUpdate() {
       _sortTracks(state.sortKey, state.sortAsc);
     }
 
-    // Re-render without full reload
+    // Always rebuild sectionCache so Albums/Artists views see new content.
+    // FIX: was missing sectionCache.albums/.artists rebuild — Albums/Artists
+    // panel showed stale data until restart.
     invalidateSectionCache();
-    if (state.activeNavSection === "home") {
+    sectionCache.albums = getAlbumGroups();
+    sectionCache.artists = getArtistGroups();
+
+    // FIX: null out the manifest decoder so any _loadLibrary() fallback
+    // re-reads the freshly rebuilt manifest from disk rather than replaying
+    // the stale in-memory decoder from app startup.
+    manifestDecoder = null;
+
+    // Re-render whichever section is currently visible.
+    // FIX: use state.activeNavSection (not virtualList.mode) as the source
+    // of truth — virtualList.mode can lag behind nav state.
+    const sec = state.activeNavSection;
+    if (sec === "home") {
       renderHome();
-    } else if (virtualList.mode === "library" || virtualList.mode === "home") {
+    } else if (sec === "library") {
       renderTracks(state.filteredTracks, "library");
-    } else if (state.activeNavSection === "albums") {
+    } else if (sec === "albums") {
       _reRenderPanel("albums", renderAlbums);
-    } else if (state.activeNavSection === "artists") {
+    } else if (sec === "artists") {
       _reRenderPanel("artists", renderArtists);
-    } else if (state.activeNavSection === "playlists") {
+    } else if (sec === "playlists") {
       _reRenderPanel("playlists", renderPlaylists);
+    } else {
+      // Fallback: library view is always safe
+      renderTracks(state.filteredTracks, "library");
     }
 
-    // Rebuild search index
+    // Rebuild search index with new tracks
     buildSearchIndex();
 
     // Schedule thumbnail atlas build for new tracks
@@ -6338,10 +6360,12 @@ async function _partialLibraryUpdate() {
     }
 
     console.log(
-      `[PartialUpdate] Library now has ${state.tracks.length} tracks`,
+      `[PartialUpdate] Library now has ${state.tracks.length} tracks (+${newTracks.length} new, -${removedIds.length} removed)`,
     );
   } catch (err) {
     console.error("[PartialUpdate] Failed, falling back to full reload:", err);
+    // Null decoder so _loadLibrary reads fresh manifest from disk
+    manifestDecoder = null;
     await _loadLibrary();
   }
 }
@@ -11432,7 +11456,7 @@ function renderHelp() {
 
       <div class="help-sections">
         <div class="section-panel" id="help-updates-section">
-          <div class="section-panel-title">What's New in v1.1.8.1</div>
+          <div class="section-panel-title">What's New in v1.1.11</div>
 
           <div class="help-item">
             <div class="help-item-title">📥 Fast Music Downloader Engine</div>
@@ -13567,6 +13591,15 @@ function renderVirtualRows() {
 // All events are handled via delegation from the virtual-track-window.
 // Uses Bitmap Thumbnail Atlas: drawImage from ImageBitmap is ~5× faster
 // than decoding a full-res src per row.
+// Clear library selection whenever the view mode changes (e.g. switching to queue)
+let _lastVirtualListMode = null;
+function _checkClearSelectionOnModeChange() {
+  if (virtualList.mode !== _lastVirtualListMode) {
+    _lastVirtualListMode = virtualList.mode;
+    if (_libSelection.size > 0) _libSelectionClear();
+  }
+}
+
 function _populateSlot(row, track, idx) {
   const isActive = state.currentTrack && state.currentTrack.id === track.id;
   const artIdx = getArtIndex(track);
@@ -13580,11 +13613,13 @@ function _populateSlot(row, track, idx) {
   // out and back in, _populateSlot rebuilds it, so the is-playing class
   // must be re-added here, not just in _updatePlayPauseIcon.
   const isPlaying = isActive && state.isPlaying;
+  const isLibSelected = !isQueue && _libSelection.has(track.id);
   row.className =
     "track-row" +
     (isActive ? " active" : "") +
     (isPlaying ? " is-playing" : "") +
-    (isQueue ? " queue-row" : "");
+    (isQueue ? " queue-row" : "") +
+    (isLibSelected ? " lib-selected" : "");
   row.dataset.trackId = track.id;
   row.dataset.idx = idx;
   if (isQueue) row.dataset.queueIdx = idx;
@@ -13757,11 +13792,263 @@ function _populateSlot(row, track, idx) {
   // No addEventListener here — all events are delegated.
 }
 
+// ─── Inject multi-select CSS (once) ──────────────────────────────────
+(function _injectMultiSelectCSS() {
+  if (document.getElementById('nova-multiselect-css')) return;
+  const style = document.createElement('style');
+  style.id = 'nova-multiselect-css';
+  style.textContent = `
+    /* ── Selected row highlight (no checkbox — pure drag-lasso selection) ── */
+    .track-row.lib-selected {
+      background: rgba(var(--green-rgb, 29,185,84), 0.12) !important;
+      border-left: 3px solid var(--green, #1db954);
+    }
+    .track-row.lib-selected:hover {
+      background: rgba(var(--green-rgb, 29,185,84), 0.18) !important;
+    }
+    /* Prevent text selection cursor while drag-selecting */
+    #virtual-track-window.drag-selecting,
+    #virtual-track-window.drag-selecting * {
+      user-select: none !important;
+      -webkit-user-select: none !important;
+    }
+
+    /* ── Selection action bar ── */
+    .lib-selection-bar {
+      position: fixed;
+      bottom: 90px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface-2, #282828);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 32px;
+      padding: 8px 12px 8px 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+      z-index: 9000;
+      white-space: nowrap;
+      animation: lib-bar-in 0.2s ease;
+    }
+    @keyframes lib-bar-in {
+      from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+      to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+    .lib-sel-count {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary, #fff);
+      margin-right: 4px;
+    }
+    .lib-sel-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .lib-sel-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: none;
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+      background: rgba(255,255,255,0.08);
+      color: var(--text-primary, #fff);
+    }
+    .lib-sel-btn svg { width: 14px; height: 14px; flex-shrink: 0; }
+    .lib-sel-btn:hover { background: rgba(255,255,255,0.14); }
+    .lib-sel-share {
+      background: var(--green, #1db954);
+      color: #000;
+      font-weight: 600;
+    }
+    .lib-sel-share:hover { background: #1ed760; }
+    .lib-sel-delete { color: #ff5c5c; }
+    .lib-sel-delete:hover { background: rgba(255,92,92,0.15); }
+    .lib-sel-clear {
+      padding: 6px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.06);
+    }
+    .lib-sel-clear:hover { background: rgba(255,255,255,0.14); }
+  `;
+  document.head.appendChild(style);
+})();
+
 // ─── Virtual List Event Delegation ──────────────────────────────────
 // ONE listener per event type on the virtual-track-window container.
 // Reads dataset.trackId from the clicked row, looks up the track from
 // virtualList.items — zero per-row listener accumulation.
 let _delegationWired = false;
+
+// ─── Library Multi-Select — drag-to-select (File Explorer list-view style) ──
+// No checkboxes. User clicks+drags across rows to highlight them.
+// Right-click = single-track actions menu (existing). Plain click = play.
+const _libSelection = new Set(); // Set of selected trackIds
+
+function _libSelectionClear() {
+  _libSelection.clear();
+  _updateSelectionBar();
+  _refreshSelectionClasses();
+}
+
+function _libSelectionSelectAll() {
+  (virtualList.items || []).forEach((t) => _libSelection.add(t.id));
+  _updateSelectionBar();
+  _refreshSelectionClasses();
+}
+
+// Apply/remove .lib-selected class to all visible rows in the virtual window
+function _refreshSelectionClasses() {
+  const win = document.getElementById('virtual-track-window');
+  if (!win) return;
+  win.querySelectorAll('.track-row[data-track-id]').forEach((row) => {
+    if (_libSelection.has(row.dataset.trackId)) {
+      row.classList.add('lib-selected');
+    } else {
+      row.classList.remove('lib-selected');
+    }
+  });
+}
+
+// Show/hide the floating selection action bar
+function _updateSelectionBar() {
+  const count = _libSelection.size;
+  let bar = document.getElementById('lib-selection-bar');
+  if (count === 0) {
+    if (bar) bar.remove();
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'lib-selection-bar';
+    bar.className = 'lib-selection-bar';
+    bar.innerHTML = `
+      <span class="lib-sel-count"></span>
+      <div class="lib-sel-actions">
+        <button class="lib-sel-btn lib-sel-share" title="Share via LANBeam">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+          Share via LANBeam
+        </button>
+        <button class="lib-sel-btn lib-sel-delete" title="Delete selected">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          Delete
+        </button>
+        <button class="lib-sel-btn lib-sel-clear" title="Clear selection">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    `;
+    bar.querySelector('.lib-sel-share').addEventListener('click', (e) => {
+      e.stopPropagation();
+      _batchShareLanbeam([..._libSelection]);
+    });
+    bar.querySelector('.lib-sel-delete').addEventListener('click', (e) => {
+      e.stopPropagation();
+      _batchDeleteTracks([..._libSelection]);
+    });
+    bar.querySelector('.lib-sel-clear').addEventListener('click', (e) => {
+      e.stopPropagation();
+      _libSelectionClear();
+    });
+    const panel = document.getElementById('library-panel') ||
+                  document.getElementById('content-area') ||
+                  document.getElementById('main-content') ||
+                  document.body;
+    panel.appendChild(bar);
+  }
+  bar.querySelector('.lib-sel-count').textContent =
+    count === 1 ? '1 track selected' : `${count} tracks selected`;
+}
+
+// ─── Batch LANBeam share: resolve exe once, then send files one by one ───
+async function _batchShareLanbeam(trackIds) {
+  if (!trackIds || trackIds.length === 0) return;
+  const inv = (ch, ...a) => window.novaAPI.invoke(ch, ...a);
+  let exe = state.settings.lanbeamPath;
+  if (exe) {
+    const check = await inv('share:find-lanbeam');
+    if (!check?.success || check.path !== exe) {
+      exe = check?.success ? check.path : null;
+      if (exe) { state.settings.lanbeamPath = exe; await saveSetting('lanbeamPath', exe); }
+    }
+  }
+  if (!exe) {
+    const f = await inv('share:find-lanbeam');
+    if (f?.success) { exe = f.path; state.settings.lanbeamPath = exe; await saveSetting('lanbeamPath', exe); }
+  }
+  if (!exe) {
+    _showActionToast('LANBeam', 'downloading from GitHub…');
+    const installRes = await inv('share:install-lanbeam');
+    if (installRes?.success && installRes.path) {
+      exe = installRes.path; state.settings.lanbeamPath = exe; await saveSetting('lanbeamPath', exe);
+      _showActionToast('LANBeam', 'installed successfully!');
+    } else {
+      const pick = await inv('share:pick-app');
+      if (pick?.success) { exe = pick.path; state.settings.lanbeamPath = exe; await saveSetting('lanbeamPath', exe); }
+    }
+  }
+  if (!exe) { _showActionToast('LANBeam', 'could not find LANBeam'); return; }
+
+  const tracks = trackIds
+    .map((id) => (state.tracks || []).find((t) => t.id === id))
+    .filter(Boolean)
+    .filter((t) => t.filePath);
+
+  if (tracks.length === 0) { _showActionToast('LANBeam', 'no local files found'); return; }
+
+  _libSelectionClear();
+
+  let sent = 0;
+  for (const track of tracks) {
+    _showActionToast(
+      `Sending ${sent + 1}/${tracks.length}`,
+      track.title || track.filePath.split(/[\\/]/).pop()
+    );
+    const res = await inv('share:launch-app', exe, track.filePath);
+    if (res?.success) sent++;
+    await new Promise((r) => setTimeout(r, 350));
+  }
+  _showActionToast('LANBeam', `${sent}/${tracks.length} files queued`);
+}
+
+// ─── Batch delete with a single confirmation dialog ───────────────────
+async function _batchDeleteTracks(trackIds) {
+  if (!trackIds || trackIds.length === 0) return;
+  const count = trackIds.length;
+  const overlay = document.createElement('div');
+  overlay.className = 'tag-editor-overlay delete-confirm-overlay';
+  overlay.innerHTML = `
+    <div class="tag-editor-card delete-confirm-card">
+      <h3 style="color:#ff5c5c;">Delete ${count} Song${count !== 1 ? 's' : ''}</h3>
+      <p style="color:var(--text-secondary);margin:12px 0 20px;line-height:1.5;">
+        Permanently delete <strong style="color:var(--text-primary);">${count} track${count !== 1 ? 's' : ''}</strong> from your library?<br>
+        <span style="font-size:12px;opacity:0.7;">Files will be permanently removed from disk. This cannot be undone.</span>
+      </p>
+      <div class="tag-editor-actions">
+        <button class="btn-cancel" id="bdel-cancel">Cancel</button>
+        <button class="btn-save" id="bdel-confirm" style="background:#ff5c5c;">Delete ${count} Track${count !== 1 ? 's' : ''}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#bdel-cancel').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#bdel-confirm').addEventListener('click', async () => {
+    overlay.remove();
+    _libSelectionClear();
+    const toDelete = trackIds
+      .map((id) => (state.tracks || []).find((t) => t.id === id))
+      .filter(Boolean);
+    for (const track of toDelete) {
+      await _removeTrackFromLibrary(track);
+    }
+  });
+}
 
 function _wireVirtualDelegation() {
   if (_delegationWired) return; // wire once, never again
@@ -13817,7 +14104,7 @@ function _wireVirtualDelegation() {
     const track = virtualList.items[idx];
     if (!track || track.id !== trackId) return;
 
-    // If click was on the menu / drag-handle, handle separately
+    // If click was on the menu button, open actions menu
     if (e.target.closest(".track-menu")) {
       e.stopPropagation();
       const menuEl = e.target.closest(".track-menu");
@@ -13825,23 +14112,81 @@ function _wireVirtualDelegation() {
       return;
     }
 
-    // Normal row click — play the track
+    // If a drag-select just finished, eat this click — don't play
+    if (_dragJustFinished) {
+      _dragJustFinished = false;
+      return;
+    }
+
+    // Plain click — clear any selection and play the track
+    if (_libSelection.size > 0) _libSelectionClear();
+
     prefetchLyrics(track);
-    // Queue always starts with the clicked track, followed by the rest of the list.
-    // This ensures the queue view always shows: [now playing] → [up next...]
     if (virtualList.mode === "queue") {
-      // Already in queue view — keep current queue, just update index
       state.queue = [...state.queue];
       state.queueIndex = idx;
     } else {
-      // Library/home view — build queue from the rendered (sorted) list,
-      // starting at the clicked index so sort order is preserved.
       const sorted = virtualList.items;
       state.queue = sorted;
       state.queueIndex = idx;
-      state.queueSource = null; // playing from main library
+      state.queueSource = null;
     }
     playTrack(track);
+  });
+
+  // ── Drag-to-select (lasso) ────────────────────────────────────────────
+  // mousedown on a row starts tracking; mousemove with button held extends
+  // the selection range; mouseup finalises it.
+  let _dragSel = { active: false, startIdx: -1 };
+  let _dragJustFinished = false;
+
+  document.addEventListener("mousedown", (e) => {
+    if (virtualList.mode === "queue") return;
+    if (e.button !== 0) return; // left button only
+    const row = e.target.closest(".track-row[data-track-id]");
+    if (!row) return;
+    if (e.target.closest(".track-menu")) return;
+    const windowEl = row.closest("#virtual-track-window");
+    if (!windowEl) return;
+    _dragSel.active = false;
+    _dragSel.startIdx = parseInt(row.dataset.idx, 10);
+    _dragSel._win = windowEl;
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (_dragSel.startIdx < 0) return;
+    if (!(e.buttons & 1)) { _dragSel.startIdx = -1; return; } // button released
+    const row = e.target.closest(".track-row[data-track-id]");
+    if (!row) return;
+    const windowEl = row.closest("#virtual-track-window");
+    if (!windowEl) return;
+    const curIdx = parseInt(row.dataset.idx, 10);
+    if (curIdx === _dragSel.startIdx && !_dragSel.active) return; // haven't moved yet
+    if (!_dragSel.active && _dragSel._win) {
+      _dragSel._win.classList.add('drag-selecting');
+    }
+    _dragSel.active = true;
+    // Rebuild selection as the range from startIdx → curIdx
+    _libSelection.clear();
+    const lo = Math.min(_dragSel.startIdx, curIdx);
+    const hi = Math.max(_dragSel.startIdx, curIdx);
+    for (let i = lo; i <= hi; i++) {
+      const t = virtualList.items[i];
+      if (t) _libSelection.add(t.id);
+    }
+    _updateSelectionBar();
+    _refreshSelectionClasses();
+  });
+
+  document.addEventListener("mouseup", (e) => {
+    if (_dragSel.active) {
+      _dragJustFinished = true;
+      setTimeout(() => { _dragJustFinished = false; }, 0);
+      if (_dragSel._win) _dragSel._win.classList.remove('drag-selecting');
+    }
+    _dragSel.active = false;
+    _dragSel.startIdx = -1;
+    _dragSel._win = null;
   });
 
   // Right-click on a song row → same Actions menu as the 3-dots button
@@ -13880,6 +14225,34 @@ function _wireVirtualDelegation() {
       },
       track,
     );
+  });
+
+  // ── Library multi-select keyboard shortcuts ──
+  document.addEventListener("keydown", (e) => {
+    // Only active when library is visible and selection exists (or Ctrl+A)
+    if (virtualList.mode === "queue") return;
+    if (e.key === "Escape" && _libSelection.size > 0) {
+      e.preventDefault();
+      _libSelectionClear();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+      // Only intercept Ctrl+A when library panel is visible
+      const libPanel = document.getElementById("library-panel") ||
+                       document.querySelector(".library-panel") ||
+                       document.getElementById("virtual-track-window");
+      if (!libPanel) return;
+      if (!libPanel.offsetParent && libPanel.id !== "virtual-track-window") return;
+      const win = document.getElementById("virtual-track-window");
+      if (!win) return;
+      e.preventDefault();
+      _libSelectionSelectAll();
+      return;
+    }
+    if (e.key === "Delete" && _libSelection.size > 0) {
+      e.preventDefault();
+      _batchDeleteTracks([..._libSelection]);
+    }
   });
 
   // ── Queue drag-to-reorder delegation ──

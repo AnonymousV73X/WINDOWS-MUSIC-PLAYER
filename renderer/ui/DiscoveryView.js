@@ -346,7 +346,12 @@ class DiscoveryView {
       );
       if (searchId !== this._searchSeq) return;
       setBusy(false);
-      if (res && res.streamed) return;
+      if (res && res.success && Array.isArray(res.results) && res.results.length > 0) {
+        this.tracks = this._stableMerge(this.tracks, res.results);
+        this._renderResults(this.tracks);
+        return;
+      }
+      if (this.tracks && this.tracks.length > 0) return;
 
       if (res && res.success && Array.isArray(res.results)) {
         this.tracks = res.results;
@@ -453,6 +458,16 @@ class DiscoveryView {
   }
 
   _getDownloadButtonHtml(trackId, state) {
+    if (state.status === "queued") {
+      return `
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted, #888); font-weight: 500;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; opacity: 0.7;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span>Queued</span>
+          <button class="action-cancel-btn" data-id="${trackId}" data-tooltip="Cancel queued download" style="display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);color:#ff6b6b;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;" onmouseover="this.style.background='#ef4444';this.style.color='#fff';" onmouseout="this.style.background='rgba(239,68,68,0.12)';this.style.color='#ff6b6b';"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" style="width:9px;height:9px;"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>Cancel</button>
+        </div>
+      `;
+    }
+
     if (state.status === "downloading" || state.status === "resolving") {
       return `
         <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--green); font-weight: 500;">
@@ -622,8 +637,11 @@ class DiscoveryView {
       } catch (_) {}
     }
     this._cancelledIds?.delete(track.id);
-    this.downloadStates.set(track.id, { status: "resolving", percent: 5 });
-    this._updateTrackDownloadUI(track.id, { status: "resolving", percent: 5 });
+    const activeCount = Array.from(this.downloadStates.values()).filter(st => st && (st.status === "downloading" || st.status === "resolving" || st.status === "tagging" || st.status === "verifying")).length;
+    const initialStatus = activeCount >= 2 ? "queued" : "resolving";
+    const initialState = { status: initialStatus, percent: initialStatus === "queued" ? 2 : 5 };
+    this.downloadStates.set(track.id, initialState);
+    this._updateTrackDownloadUI(track.id, initialState);
 
     try {
       const res = await this.novaAPI.invoke("discovery:download", track);

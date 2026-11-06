@@ -37810,7 +37810,7 @@ var require_package = __commonJS({
   "package.json"(exports2, module2) {
     module2.exports = {
       name: "novatune",
-      version: "1.1.8",
+      version: "1.1.11",
       description: "NovaTune \u2014 A premium Windows music player with Spotify-dark aesthetics",
       main: "main/main.bundle.js",
       scripts: {
@@ -42918,8 +42918,15 @@ ${items}
         }
         const musicDir = app.getPath("music") || path.join(app.getPath("userData"), "Downloads");
         const targetFolder = path.join(musicDir, "NovaTune Downloads");
+        const _tStart = Date.now();
+        let _tLast = _tStart;
         const onProgress = (prog) => {
           try {
+            const now = Date.now();
+            const stepMs = now - _tLast;
+            const totalMs = now - _tStart;
+            _tLast = now;
+            console.log(`[DownloadProgress] [+${(totalMs / 1e3).toFixed(1)}s (step: ${(stepMs / 1e3).toFixed(1)}s)] [${trackInfo.trackName || trackInfo.id}] ${prog.percent || 0}% | ${prog.status || ""} | ${prog.message || ""}`);
             event.sender.send("discovery:progress", {
               trackId: trackInfo.id,
               ...prog

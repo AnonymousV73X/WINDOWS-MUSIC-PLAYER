@@ -901,8 +901,8 @@ async function searchITunes(query, limit = 80, onUpdate) {
   ]);
   const hasAny = () => Object.values(buckets).some((b) => b.length);
 
-  await Promise.race([all, _sleep(3000)]);
-  if (!hasAny()) await Promise.race([all, _sleep(5000)]);
+  // Wait up to 6s for all providers including YTM to ensure videoId is populated
+  await Promise.race([all, _sleep(6000)]);
 
   done = true;
   const final = emit();
@@ -1330,10 +1330,12 @@ async function _downloadWithYtDlpOnce(
     const args = [
       urlOrQuery,
       ...rtArgs,
+      "--extractor-args",
+      "youtube:player_skip=configs",
       ...(fmt === "m4a"
         ? [
             "-f",
-            "bestaudio[ext=m4a]/bestaudio",
+            "140/bestaudio[ext=m4a]/bestaudio",
             "-x",
             "--audio-format",
             "m4a",
@@ -1384,6 +1386,39 @@ async function _downloadWithYtDlpOnce(
       const lines = data.toString().split("\n");
       for (const line of lines) {
         const text = line.trim();
+        if (text.includes("[youtube] Extracting URL")) {
+          onProgress &&
+            onProgress({
+              status: "resolving",
+              percent: 10,
+              message: "Connecting to YouTube Music…",
+            });
+        } else if (text.includes("Downloading player")) {
+          onProgress &&
+            onProgress({
+              status: "resolving",
+              percent: 25,
+              message: "Resolving audio cipher…",
+            });
+        } else if (text.includes("Solving JS challenges")) {
+          onProgress &&
+            onProgress({
+              status: "resolving",
+              percent: 42,
+              message: "Unlocking audio stream…",
+            });
+        } else if (
+          text.includes("Downloading 1 format") ||
+          (text.includes("[download] Destination:") && !_loggedFirst)
+        ) {
+          onProgress &&
+            onProgress({
+              status: "downloading",
+              percent: 55,
+              message: "Stream ready, downloading audio…",
+            });
+        }
+
         const pMatch = text.match(/\[download\]\s+([0-9.]+)%/);
         if (pMatch && !_loggedFirst) {
           _loggedFirst = true;
@@ -1392,12 +1427,22 @@ async function _downloadWithYtDlpOnce(
           );
         }
         if (pMatch && onProgress) {
-          const pct = Math.min(95, Math.round(parseFloat(pMatch[1])));
+          const rawPct = parseFloat(pMatch[1]);
+          const scaledPct = Math.min(95, 55 + Math.round((rawPct * 40) / 100));
           onProgress({
             status: "downloading",
-            percent: 10 + Math.round((pct * 80) / 100),
-            message: `Downloading… ${pct}%`,
+            percent: scaledPct,
+            message: `Downloading audio… ${Math.round(rawPct)}%`,
           });
+        }
+
+        if (text.includes("[FixupM4a]") || text.includes("[ExtractAudio]")) {
+          onProgress &&
+            onProgress({
+              status: "processing",
+              percent: 96,
+              message: "Finalizing audio container…",
+            });
         }
         if (
           text.includes("[ExtractAudio] Destination:") ||
@@ -1932,6 +1977,43 @@ function injectTrackInfoTags(filePath, trackInfo, artBuf) {
   }
 }
 
+// ─── Concurrency Limiter & OS Temp Staging (Zero HDD Bottleneck) ─────────────
+const os = require("os");
+const MAX_CONCURRENT_DOWNLOADS = 2;
+let _activeCount = 0;
+const _waitQueue = [];
+
+function _acquireSlot(trackId) {
+  if (_activeCount < MAX_CONCURRENT_DOWNLOADS) {
+    _activeCount++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    _waitQueue.push({ trackId, resolve });
+  });
+}
+
+function _releaseSlot() {
+  _activeCount--;
+  if (_waitQueue.length > 0 && _activeCount < MAX_CONCURRENT_DOWNLOADS) {
+    _activeCount++;
+    const item = _waitQueue.shift();
+    if (item && item.resolve) item.resolve();
+  }
+}
+
+function _moveFileSafe(src, dest) {
+  try {
+    fs.renameSync(src, dest);
+  } catch (err) {
+    if (err.code === "EXDEV") {
+      fs.copyFileSync(src, dest);
+      fs.unlinkSync(src);
+    } else {
+      throw err;
+    }
+  }
+}
 async function downloadAndTagTrack(
   trackInfo,
   targetFolder,
@@ -1939,8 +2021,20 @@ async function downloadAndTagTrack(
   trackId,
   fmt = "m4a",
 ) {
+  if (onProgress && _activeCount >= MAX_CONCURRENT_DOWNLOADS) {
+    onProgress({
+      status: "queued",
+      percent: 2,
+      message: "Queued (in download queue)...",
+    });
+  }
   const ctx = { cancelled: false, proc: null, destBase: null };
   if (trackId) _downloads.set(trackId, ctx);
+  await _acquireSlot(trackId);
+  if (ctx.cancelled) {
+    _releaseSlot();
+    throw new Error("Download cancelled while queued");
+  }
   try {
     return await _downloadAndTagTrackInner(
       trackInfo,
@@ -1951,6 +2045,7 @@ async function downloadAndTagTrack(
       fmt,
     );
   } finally {
+    _releaseSlot();
     if (trackId && _downloads.get(trackId) === ctx) _downloads.delete(trackId);
   }
 }
@@ -1982,6 +2077,7 @@ async function _downloadAndTagTrackInner(
   // Strategy 1: Direct YouTube video download if videoId is present
   const videoId =
     trackInfo.videoId ||
+    trackInfo.ytmVideoId ||
     (trackInfo.id && trackInfo.id.startsWith("ytm_")
       ? trackInfo.id.replace("ytm_", "")
       : null);
@@ -2061,6 +2157,7 @@ async function _downloadAndTagTrackInner(
     try {
       const q = [trackInfo.artistName, trackInfo.trackName].filter(Boolean).join(" ").trim();
       if (q) {
+        onProgress({ status: "resolving", percent: 8, message: "Finding best stream match…" });
         const found = await searchYouTubeMusic(q, 5).catch(() => []);
         if (found && found.length > 0) {
           const matched = rankAndMerge(found, q);
@@ -2144,6 +2241,11 @@ function _cleanupPartials(destBase) {
 }
 
 function cancelDownload(trackId) {
+  const qIdx = _waitQueue.findIndex((item) => item.trackId === trackId);
+  if (qIdx !== -1) {
+    const [removed] = _waitQueue.splice(qIdx, 1);
+    if (removed && removed.resolve) removed.resolve();
+  }
   const ctx = _downloads.get(trackId);
   if (!ctx) return false;
   ctx.cancelled = true;
