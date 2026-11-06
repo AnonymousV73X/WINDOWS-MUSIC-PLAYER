@@ -92,6 +92,7 @@ const DEFAULT_SETTINGS = {
   alwaysOnTop: false,
   hardwareAcceleration: true,
   outputDevice: "default",
+  downloadFormat: "m4a",
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -6700,6 +6701,15 @@ ipcMain.handle("coverart:migrate-v114", async () => {
  */
 
 // ─── Music Discovery & Downloader IPC Handlers ───────────────────────
+setTimeout(() => {
+  try { DownloadEngine.prewarmDownloader(); } catch (_) {}
+}, 8000);
+
+ipcMain.handle("discovery:prefetch", async (event, videoId) => {
+  try { DownloadEngine.prefetchStream(videoId); } catch (_) {}
+  return true;
+});
+
 ipcMain.handle("discovery:search", async (event, query, searchId) => {
   try {
     if (!query || !query.trim()) return { success: true, results: [] };
@@ -6724,8 +6734,15 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
     const musicDir = app.getPath("music") || path.join(app.getPath("userData"), "Downloads");
     const targetFolder = path.join(musicDir, "NovaTune Downloads");
 
+    const _tStart = Date.now();
+    let _tLast = _tStart;
     const onProgress = (prog) => {
       try {
+        const now = Date.now();
+        const stepMs = now - _tLast;
+        const totalMs = now - _tStart;
+        _tLast = now;
+        console.log(`[DownloadProgress] [+${(totalMs/1000).toFixed(1)}s (step: ${(stepMs/1000).toFixed(1)}s)] [${trackInfo.trackName || trackInfo.id}] ${prog.percent || 0}% | ${prog.status || ''} | ${prog.message || ''}`);
         event.sender.send("discovery:progress", {
           trackId: trackInfo.id,
           ...prog,
@@ -6733,7 +6750,8 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
       } catch (_) {}
     };
 
-    const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress, trackInfo.id);
+    const fmt = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS }).downloadFormat === "mp3" ? "mp3" : "m4a";
+    const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress, trackInfo.id, fmt);
 
     // ── Task 4.1: Instant Single-Track Hot-Reload into Library ────────
     let parsedTrack = null;

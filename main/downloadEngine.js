@@ -1,5 +1,6 @@
 const { spawn } = require("child_process");
 const NodeID3 = require("node-id3");
+const TagLib = require("node-taglib-sharp");
 /**
  * NovaTune — Music Discovery & Download Engine [v3.0 - Universal Search]
  * Multi-Engine Aggregator:
@@ -213,6 +214,12 @@ function scrapeWatchDuration(videoId, timeoutMs = 2500) {
   });
 }
 
+function _ytArt(u, n) {
+  return u && /googleusercontent\.com|ggpht\.com/.test(u)
+    ? u.replace(/=(?:w\d+-h\d+|s\d+)[^?#]*$/, `=w${n}-h${n}-l90-rj`)
+    : u;
+}
+
 async function searchYouTubeMusic(query, limit = 40) {
   const baseClient = {
     client: {
@@ -343,8 +350,9 @@ async function searchYouTubeMusic(query, limit = 40) {
 
     const thumbs =
       r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
-    const art = thumbs[thumbs.length - 1]?.url || "";
-    const thumb = thumbs[0]?.url || art;
+    const raw = thumbs[thumbs.length - 1]?.url || "";
+    const art = _ytArt(raw, 600);
+    const thumb = _ytArt(thumbs[0]?.url || raw, 256);
 
     return {
       id: `ytm_${videoId}`,
@@ -394,8 +402,9 @@ async function searchYouTubeMusic(query, limit = 40) {
 
         const thumbs =
           card.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
-        const art = thumbs[thumbs.length - 1]?.url || "";
-        const thumb = thumbs[0]?.url || art;
+        const raw = thumbs[thumbs.length - 1]?.url || "";
+        const art = _ytArt(raw, 600);
+        const thumb = _ytArt(thumbs[0]?.url || raw, 256);
         const videoId =
           card.onTap?.watchEndpoint?.videoId ||
           card.buttons?.find(
@@ -546,7 +555,7 @@ function searchITunesInternal(query, limit = 15) {
         const results = (data?.results || []).map((item) => {
           const artwork100 = item.artworkUrl100 || "";
           const artworkHigh = artwork100
-            ? artwork100.replace(/100x100/g, "600x600")
+            ? artwork100.replace(/100x100/g, "1200x1200")
             : "";
           return {
             id: `itunes_${item.trackId}`,
@@ -560,7 +569,9 @@ function searchITunesInternal(query, limit = 15) {
             durationMs: item.trackTimeMillis || 0,
             previewUrl: item.previewUrl || "",
             artworkUrl: artworkHigh || artwork100,
-            artworkThumbnail: artwork100,
+            artworkThumbnail: artwork100
+              ? artwork100.replace(/100x100/g, "300x300")
+              : "",
             genre: item.primaryGenreName || "Music",
           };
         });
@@ -583,7 +594,7 @@ function searchDeezerInternal(query, limit = 15) {
             item.album?.cover_medium ||
             "";
           const thumb =
-            item.album?.cover_small || item.album?.cover_medium || "";
+            item.album?.cover_medium || item.album?.cover_small || "";
           return {
             id: `deezer_${item.id}`,
             source: "deezer",
@@ -829,6 +840,7 @@ async function searchITunes(query, limit = 80, onUpdate) {
     if (resolvedTitle) effectiveQuery = resolvedTitle;
   }
 
+  prewarmDownloader();
   const key = effectiveQuery.toLowerCase();
   const hit = SEARCH_CACHE.get(key);
   if (hit && Date.now() - hit.t < SEARCH_CACHE_TTL)
@@ -889,11 +901,15 @@ async function searchITunes(query, limit = 80, onUpdate) {
   ]);
   const hasAny = () => Object.values(buckets).some((b) => b.length);
 
-  await Promise.race([all, _sleep(3000)]);
-  if (!hasAny()) await Promise.race([all, _sleep(5000)]);
+  // Wait up to 6s for all providers including YTM to ensure videoId is populated
+  await Promise.race([all, _sleep(6000)]);
 
   done = true;
   const final = emit();
+  final
+    .filter((t) => t.videoId)
+    .slice(0, 8)
+    .forEach((t, i) => setTimeout(() => prefetchStream(t.videoId), i * 150));
 
   // Fill missing durations afterwards (non-blocking)
   const need = final.filter((t) => t.videoId && !t.durationMs).slice(0, 24);
@@ -930,7 +946,18 @@ async function searchITunes(query, limit = 80, onUpdate) {
 }
 
 // ─── Download & Store Orchestration ───────────────────────────────────────────
+function _managedDir() {
+  try {
+    const { app } = require("electron");
+    if (app) return path.join(app.getPath("userData"), "bin");
+  } catch (_) {}
+  return path.join(__dirname, "../bin");
+}
+
 function getYtDlpPath() {
+  const managed = path.join(_managedDir(), "yt-dlp.exe");
+  if (fs.existsSync(managed)) return managed;
+
   // 1. Packaged app: electron-builder puts extraResources next to the exe
   //    at <install>/resources/bin/yt-dlp.exe (process.resourcesPath)
   if (process.resourcesPath) {
@@ -1046,6 +1073,17 @@ function downloadYtDlpBinary(targetPath, onProgress) {
  * If completely missing from resources and local bin, downloads it to userData/bin/yt-dlp.exe.
  */
 async function ensureYtDlpAvailable(onProgress) {
+  // Keep a writable, self-updating copy in userData (bundled copy may be read-only)
+  try {
+    const managed = path.join(_managedDir(), "yt-dlp.exe");
+    if (!fs.existsSync(managed)) {
+      const src = getYtDlpPath();
+      if (src !== "yt-dlp" && fs.existsSync(src)) {
+        fs.mkdirSync(path.dirname(managed), { recursive: true });
+        fs.copyFileSync(src, managed);
+      }
+    }
+  } catch (_) {}
   const currentPath = getYtDlpPath();
   if (currentPath !== "yt-dlp" && fs.existsSync(currentPath)) {
     return currentPath;
@@ -1098,26 +1136,224 @@ async function ensureYtDlpAvailable(onProgress) {
   return targetPath;
 }
 
-async function downloadWithYtDlp(
+function _ver(bin) {
+  return new Promise((res) => {
+    try {
+      require("child_process").execFile(
+        bin,
+        ["--version"],
+        { windowsHide: true, timeout: 4000 },
+        (err, out) => res(err ? null : String(out).trim()),
+      );
+    } catch (_) {
+      res(null);
+    }
+  });
+}
+
+function _downloadFile(url, dest, hops = 0) {
+  return new Promise((resolve, reject) => {
+    if (hops > 6) return reject(new Error("Too many redirects"));
+    https
+      .get(
+        url,
+        { headers: { "User-Agent": "NovaTune Downloader" }, timeout: 30000 },
+        (res) => {
+          if (
+            res.statusCode >= 300 &&
+            res.statusCode < 400 &&
+            res.headers.location
+          ) {
+            res.resume();
+            return resolve(
+              _downloadFile(
+                new URL(res.headers.location, url).href,
+                dest,
+                hops + 1,
+              ),
+            );
+          }
+          if (res.statusCode !== 200) {
+            res.resume();
+            return reject(new Error(`HTTP ${res.statusCode}`));
+          }
+          const tmp = `${dest}.tmp`;
+          const ws = fs.createWriteStream(tmp);
+          res.pipe(ws);
+          ws.on("finish", () =>
+            ws.close(() => {
+              try {
+                if (fs.existsSync(dest)) fs.unlinkSync(dest);
+                fs.renameSync(tmp, dest);
+                resolve(dest);
+              } catch (e) {
+                reject(e);
+              }
+            }),
+          );
+          ws.on("error", reject);
+        },
+      )
+      .on("error", reject)
+      .on("timeout", function () {
+        this.destroy(new Error("timeout"));
+      });
+  });
+}
+
+// One-time silent install of Deno (yt-dlp's recommended JS runtime) into userData/bin
+async function ensureDeno() {
+  if (process.platform !== "win32") return null;
+  const dir = _managedDir();
+  const exe = path.join(dir, "deno.exe");
+  if (fs.existsSync(exe)) return exe;
+  fs.mkdirSync(dir, { recursive: true });
+  const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
+  const zip = path.join(dir, "deno.zip");
+  await _downloadFile(
+    `https://github.com/denoland/deno/releases/latest/download/deno-${arch}-pc-windows-msvc.zip`,
+    zip,
+  );
+  await new Promise((resolve) => {
+    const p = spawn("tar", ["-xf", zip, "-C", dir], {
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    p.on("close", resolve);
+    p.on("error", resolve);
+  });
+  try {
+    fs.unlinkSync(zip);
+  } catch (_) {}
+  return fs.existsSync(exe) ? exe : null;
+}
+
+let _jsRtP = null;
+function _jsRuntimeArgs() {
+  if (_jsRtP) return _jsRtP;
+  _jsRtP = (async () => {
+    const managed = path.join(_managedDir(), "deno.exe");
+    if (fs.existsSync(managed)) return ["--js-runtimes", `deno:${managed}`];
+    if (await _ver("deno")) return [];
+    const nv = await _ver("node");
+    return nv && parseInt(nv.replace(/^v/, ""), 10) >= 20
+      ? ["--js-runtimes", "node"]
+      : [];
+  })();
+  return _jsRtP;
+}
+
+// Self-update yt-dlp (managed copy only), at most once per 24h unless forced
+let _updP = null;
+function updateYtDlp(force = false) {
+  if (_updP) return _updP;
+  _updP = (async () => {
+    try {
+      const bin = await ensureYtDlpAvailable();
+      if (bin === "yt-dlp" || path.dirname(bin) !== _managedDir()) return;
+      const stamp = path.join(_managedDir(), "ytdlp-update.stamp");
+      let last = 0;
+      try {
+        last = Number(fs.readFileSync(stamp, "utf8")) || 0;
+      } catch (_) {}
+      if (!force && Date.now() - last < 24 * 3600 * 1000) return;
+      await new Promise((resolve) => {
+        const p = spawn(bin, ["-U"], { windowsHide: true, stdio: "ignore" });
+        const t = setTimeout(() => {
+          try {
+            p.kill();
+          } catch (_) {}
+          resolve();
+        }, 90000);
+        p.on("close", () => (clearTimeout(t), resolve()));
+        p.on("error", () => (clearTimeout(t), resolve()));
+      });
+      try {
+        fs.writeFileSync(stamp, String(Date.now()));
+      } catch (_) {}
+    } catch (_) {
+    } finally {
+      _updP = null;
+    }
+  })();
+  return _updP;
+}
+
+let _warmed = false;
+let _denoP = null;
+function prewarmDownloader() {
+  if (_warmed) return;
+  _warmed = true;
+  const p = (async () => {
+    if (await _ver("deno")) return;
+    const exe = await ensureDeno().catch(() => null);
+    if (exe) _jsRtP = null;
+  })();
+  _denoP = p;
+  p.finally(() => {
+    if (_denoP === p) _denoP = null;
+  });
+  updateYtDlp()
+    .then(() => ensureYtDlpAvailable())
+    .then((bin) => {
+      const w = spawn(bin, ["--version"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+      w.on("error", () => {});
+    })
+    .catch(() => {});
+}
+
+async function _downloadWithYtDlpOnce(
   urlOrQuery,
   destBase,
   onProgress,
   trackId,
   ctx,
+  fmt = "m4a",
 ) {
   const ytDlpBinary = await ensureYtDlpAvailable(onProgress);
+  // _updP (yt-dlp self-update) intentionally not awaited — don't block user downloads
+  if (_denoP) {
+    if (onProgress)
+      onProgress({
+        status: "installing",
+        percent: 3,
+        message: "Setting up downloader components (one-time)…",
+      });
+    await Promise.race([_denoP, _sleep(6000)]);
+  }
+  const rtArgs = await _jsRuntimeArgs();
 
   return new Promise((resolve, reject) => {
     const args = [
       urlOrQuery,
-      "-x",
-      "--audio-format",
-      "mp3",
-      "--audio-quality",
-      "0",
-      "--add-metadata",
-      "--concurrent-fragments",
-      "4",
+      ...rtArgs,
+      "--extractor-args",
+      "youtube:player_skip=configs",
+      ...(fmt === "m4a"
+        ? [
+            "-f",
+            "140/bestaudio[ext=m4a]/bestaudio",
+            "-x",
+            "--audio-format",
+            "m4a",
+            "--audio-quality",
+            "0",
+          ]
+        : [
+            "-f",
+            "bestaudio",
+            "-x",
+            "--audio-format",
+            "mp3",
+            "--audio-quality",
+            "320K",
+            "--postprocessor-args",
+            "ExtractAudio:-threads 0 -compression_level 7",
+          ]),
+      "--no-warnings",
       "-o",
       `${destBase}.%(ext)s`,
       "--no-playlist",
@@ -1136,6 +1372,8 @@ async function downloadWithYtDlp(
 
     try {
       proc = spawn(ytDlpBinary, args, { windowsHide: true });
+      var _tSpawn = Date.now();
+      var _loggedFirst = false;
       if (ctx) {
         ctx.proc = proc;
         ctx.destBase = destBase;
@@ -1148,14 +1386,63 @@ async function downloadWithYtDlp(
       const lines = data.toString().split("\n");
       for (const line of lines) {
         const text = line.trim();
+        if (text.includes("[youtube] Extracting URL")) {
+          onProgress &&
+            onProgress({
+              status: "resolving",
+              percent: 10,
+              message: "Connecting to YouTube Music…",
+            });
+        } else if (text.includes("Downloading player")) {
+          onProgress &&
+            onProgress({
+              status: "resolving",
+              percent: 25,
+              message: "Resolving audio cipher…",
+            });
+        } else if (text.includes("Solving JS challenges")) {
+          onProgress &&
+            onProgress({
+              status: "resolving",
+              percent: 42,
+              message: "Unlocking audio stream…",
+            });
+        } else if (
+          text.includes("Downloading 1 format") ||
+          (text.includes("[download] Destination:") && !_loggedFirst)
+        ) {
+          onProgress &&
+            onProgress({
+              status: "downloading",
+              percent: 55,
+              message: "Stream ready, downloading audio…",
+            });
+        }
+
         const pMatch = text.match(/\[download\]\s+([0-9.]+)%/);
+        if (pMatch && !_loggedFirst) {
+          _loggedFirst = true;
+          console.log(
+            `[DownloadEngine] yt-dlp first byte after ${Date.now() - _tSpawn}ms`,
+          );
+        }
         if (pMatch && onProgress) {
-          const pct = Math.min(95, Math.round(parseFloat(pMatch[1])));
+          const rawPct = parseFloat(pMatch[1]);
+          const scaledPct = Math.min(95, 55 + Math.round((rawPct * 40) / 100));
           onProgress({
             status: "downloading",
-            percent: 10 + Math.round((pct * 80) / 100),
-            message: `Downloading… ${pct}%`,
+            percent: scaledPct,
+            message: `Downloading audio… ${Math.round(rawPct)}%`,
           });
+        }
+
+        if (text.includes("[FixupM4a]") || text.includes("[ExtractAudio]")) {
+          onProgress &&
+            onProgress({
+              status: "processing",
+              percent: 96,
+              message: "Finalizing audio container…",
+            });
         }
         if (
           text.includes("[ExtractAudio] Destination:") ||
@@ -1179,7 +1466,7 @@ async function downloadWithYtDlp(
         return reject(e);
       }
       if (code === 0) {
-        const expectedMp3 = `${destBase}.mp3`;
+        const expectedMp3 = `${destBase}.${fmt}`;
         if (fs.existsSync(expectedMp3)) return resolve(expectedMp3);
         if (finalFile && fs.existsSync(finalFile)) return resolve(finalFile);
         const dir = path.dirname(destBase);
@@ -1203,6 +1490,294 @@ async function downloadWithYtDlp(
       reject(new Error(`Failed to launch downloader: ${err.message}`));
     });
   });
+}
+
+async function downloadWithYtDlp(
+  urlOrQuery,
+  destBase,
+  onProgress,
+  trackId,
+  ctx,
+  fmt = "m4a",
+) {
+  try {
+    return await _downloadWithYtDlpOnce(
+      urlOrQuery,
+      destBase,
+      onProgress,
+      trackId,
+      ctx,
+      fmt,
+    );
+  } catch (err) {
+    if (err.cancelled || (ctx && (ctx.cancelled || ctx._retried))) throw err;
+    if (
+      !/HTTP Error 40[13]|Sign in|nsig|Unable to extract|Requested format is not available|player response|signature/i.test(
+        err.message,
+      )
+    )
+      throw err;
+    if (ctx) ctx._retried = true;
+    if (onProgress)
+      onProgress({
+        status: "installing",
+        percent: 5,
+        message: "Updating downloader…",
+      });
+    await updateYtDlp(true);
+    return _downloadWithYtDlpOnce(
+      urlOrQuery,
+      destBase,
+      onProgress,
+      trackId,
+      ctx,
+      fmt,
+    );
+  }
+}
+
+// ─── Fast path: direct InnerTube stream + parallel ranged download (no yt-dlp) ─
+const _FAST_CLIENT = {
+  clientName: "ANDROID_VR",
+  clientVersion: "1.60.19",
+  deviceMake: "Oculus",
+  deviceModel: "Quest 3",
+  osName: "Android",
+  osVersion: "12L",
+  androidSdkVersion: 32,
+  hl: "en",
+  gl: "US",
+};
+const _FAST_UA =
+  "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip";
+const _FAST_IOS = {
+  clientName: "IOS",
+  clientVersion: "20.10.4",
+  deviceMake: "Apple",
+  deviceModel: "iPhone16,2",
+  osName: "iPhone",
+  osVersion: "18.3.2.22D82",
+  hl: "en",
+  gl: "US",
+};
+const _FAST_IOS_UA =
+  "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
+const _FAST_CLIENTS = [
+  { ctx: _FAST_CLIENT, ua: _FAST_UA, id: "28" },
+  { ctx: _FAST_IOS, ua: _FAST_IOS_UA, id: "5" },
+];
+const _STREAM_CACHE = new Map(); // videoId -> { t, p }
+let _fastFails = 0;
+
+function _postJson(url, body, headers, timeoutMs) {
+  return new Promise((resolve) => {
+    const data = JSON.stringify(body);
+    const u = new URL(url);
+    const req = https.request(
+      {
+        hostname: u.hostname,
+        path: u.pathname + u.search,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(data),
+          ...headers,
+        },
+        timeout: timeoutMs,
+        agent: HTTPS_AGENT,
+      },
+      (res) => {
+        let d = "";
+        res.setEncoding("utf8");
+        res.on("data", (c) => (d += c));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(d));
+          } catch (_) {
+            resolve(null);
+          }
+        });
+      },
+    );
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.write(data);
+    req.end();
+  });
+}
+
+async function _resolveWithClient(c, videoId) {
+  const j = await _postJson(
+    "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+    {
+      context: { client: c.ctx },
+      videoId,
+      contentCheckOk: true,
+      racyCheckOk: true,
+    },
+    {
+      "User-Agent": c.ua,
+      "X-YouTube-Client-Name": c.id,
+      "X-YouTube-Client-Version": c.ctx.clientVersion,
+      Origin: "https://www.youtube.com",
+    },
+    4000,
+  );
+  const fmts = j?.streamingData?.adaptiveFormats || [];
+  const a = fmts
+    .filter(
+      (f) =>
+        f.url &&
+        /^audio\/mp4/.test(f.mimeType || "") &&
+        Number(f.contentLength) > 0,
+    )
+    .sort((x, y) => (y.bitrate || 0) - (x.bitrate || 0))[0];
+  if (!a) return null;
+  return {
+    url: a.url,
+    size: Number(a.contentLength),
+    bitrate: a.bitrate || 0,
+    durSec: Number(j.videoDetails?.lengthSeconds) || 0,
+    ua: c.ua,
+  };
+}
+
+// Race all clients; first HQ result wins. Cached ~90min so prefetched clicks are instant.
+function _fastResolveAudio(videoId) {
+  const hit = _STREAM_CACHE.get(videoId);
+  if (hit && Date.now() - hit.t < 90 * 60 * 1000) return hit.p;
+  const p = new Promise((resolve) => {
+    let left = _FAST_CLIENTS.length;
+    for (const c of _FAST_CLIENTS) {
+      _resolveWithClient(c, videoId)
+        .catch(() => null)
+        .then((r) => {
+          if (r && r.bitrate >= 100000) resolve(r);
+          if (--left === 0) resolve(null);
+        });
+    }
+  });
+  _STREAM_CACHE.set(videoId, { t: Date.now(), p });
+  if (_STREAM_CACHE.size > 60)
+    _STREAM_CACHE.delete(_STREAM_CACHE.keys().next().value);
+  p.then((r) => {
+    if (!r && _STREAM_CACHE.get(videoId)?.p === p)
+      _STREAM_CACHE.delete(videoId);
+  });
+  return p;
+}
+
+function prefetchStream(videoId) {
+  if (!videoId || videoId.length < 5) return;
+  _fastResolveAudio(videoId).catch(() => {});
+}
+
+function _rangeGet(
+  url,
+  start,
+  end,
+  attempt = 0,
+  timeoutMs = 10000,
+  ua = _FAST_UA,
+) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = https.get(
+      url,
+      {
+        headers: {
+          "User-Agent": ua,
+          Range: `bytes=${start}-${end}`,
+        },
+        timeout: timeoutMs,
+        agent: HTTPS_AGENT,
+      },
+      (res) => {
+        if (res.statusCode !== 206 && res.statusCode !== 200) {
+          res.resume();
+          return reject(new Error(`HTTP ${res.statusCode}`));
+        }
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const b = Buffer.concat(chunks);
+          b.length === end - start + 1
+            ? resolve(b)
+            : reject(new Error("short chunk"));
+        });
+        res.on("error", reject);
+      },
+    );
+    req.on("error", reject);
+    req.on("timeout", () => req.destroy(new Error("timeout")));
+  }).catch((e) => {
+    if (attempt < 2)
+      return _rangeGet(url, start, end, attempt + 1, timeoutMs, ua);
+    throw e;
+  });
+}
+
+async function _fastDownload(url, size, dest, onProgress, ctx, ua) {
+  const fd = fs.openSync(dest, "w");
+  try {
+    const CH = 2 * 1024 * 1024;
+    let next = 0;
+    let got = 0;
+    let err = null;
+    const worker = async () => {
+      while (!err) {
+        if (ctx && ctx.cancelled) {
+          err = Object.assign(new Error("Download cancelled"), {
+            cancelled: true,
+          });
+          return;
+        }
+        const start = next;
+        if (start >= size) return;
+        next += CH;
+        const end = Math.min(start + CH, size) - 1;
+        try {
+          const buf = await _rangeGet(url, start, end, 0, 10000, ua);
+          fs.writeSync(fd, buf, 0, buf.length, start);
+          got += buf.length;
+          if (onProgress) {
+            const pct = Math.round((got / size) * 100);
+            onProgress({
+              status: "downloading",
+              percent: 10 + Math.round((pct * 80) / 100),
+              message: `Downloading… ${pct}%`,
+            });
+          }
+        } catch (e) {
+          err = e;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: 6 }, worker));
+    if (err) throw err;
+    if (got !== size) throw new Error("size mismatch");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function _validateAudio(file, expectedSec) {
+  try {
+    const f = TagLib.File.createFromPath(file);
+    try {
+      const ms = f.properties?.durationMilliseconds || 0;
+      return (
+        ms > 1000 && (!expectedSec || Math.abs(ms / 1000 - expectedSec) < 5)
+      );
+    } finally {
+      f.dispose();
+    }
+  } catch (_) {
+    return false;
+  }
 }
 
 function fetchArtworkBuffer(url, timeoutMs = 6000, hops = 0) {
@@ -1260,6 +1835,68 @@ function fetchArtworkBuffer(url, timeoutMs = 6000, hops = 0) {
   });
 }
 
+function _artCandidates(url) {
+  if (!url) return [];
+  const out = [];
+  if (/googleusercontent\.com|ggpht\.com/.test(url))
+    out.push(url.replace(/=(?:w\d+-h\d+|s\d+)[^?#]*$/, "=w1200-h1200-l100-rj"));
+  else if (/mzstatic\.com/.test(url))
+    out.push(url.replace(/\d+x\d+(bb)?\.(jpg|png)/i, "1200x1200bb.jpg"));
+  out.push(url);
+  return [...new Set(out)];
+}
+
+async function fetchBestArtwork(url) {
+  for (const u of _artCandidates(url)) {
+    const b = await fetchArtworkBuffer(u, 8000);
+    if (b) return b;
+  }
+  return null;
+}
+
+function _tagWithTagLib(filePath, info, artBuf) {
+  try {
+    const f = TagLib.File.createFromPath(filePath);
+    try {
+      const t = f.tag;
+      const artist =
+        info.artistName && info.artistName !== "Unknown Artist"
+          ? info.artistName.trim()
+          : "";
+      if (info.trackName && info.trackName.trim())
+        t.title = info.trackName.trim();
+      if (artist) {
+        t.performers = [artist];
+        t.albumArtists = [artist];
+      }
+      if (
+        info.albumName &&
+        info.albumName.trim() &&
+        info.albumName !== "Unknown Album"
+      )
+        t.album = info.albumName.trim();
+      const yr = Number(info.releaseYear);
+      if (yr > 1900 && yr <= new Date().getFullYear() + 1) t.year = yr;
+      if (info.genre && info.genre !== "Music" && info.genre.trim())
+        t.genres = [info.genre.trim()];
+      const img = _artImage(artBuf);
+      if (img) {
+        const pic = TagLib.Picture.fromData(
+          TagLib.ByteVector.fromByteArray(artBuf),
+        );
+        pic.mimeType = img.mime;
+        pic.type = TagLib.PictureType.FrontCover;
+        t.pictures = [pic];
+      }
+      f.save();
+    } finally {
+      f.dispose();
+    }
+  } catch (e) {
+    console.warn("[DownloadEngine] TagLib tagging failed:", e.message);
+  }
+}
+
 function _artImage(buf) {
   if (!buf) return null;
   let mime = null;
@@ -1284,7 +1921,8 @@ function _artImage(buf) {
 // ─── Post-download metadata injection ─────────────────────────────────────────
 function injectTrackInfoTags(filePath, trackInfo, artBuf) {
   try {
-    if (!filePath.endsWith(".mp3")) return;
+    if (!/\.mp3$/i.test(filePath))
+      return _tagWithTagLib(filePath, trackInfo, artBuf);
     const cleanTags = {};
 
     if (trackInfo.trackName && trackInfo.trackName.trim())
@@ -1339,14 +1977,64 @@ function injectTrackInfoTags(filePath, trackInfo, artBuf) {
   }
 }
 
+// ─── Concurrency Limiter & OS Temp Staging (Zero HDD Bottleneck) ─────────────
+const os = require("os");
+const MAX_CONCURRENT_DOWNLOADS = 2;
+let _activeCount = 0;
+const _waitQueue = [];
+
+function _acquireSlot(trackId) {
+  if (_activeCount < MAX_CONCURRENT_DOWNLOADS) {
+    _activeCount++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    _waitQueue.push({ trackId, resolve });
+  });
+}
+
+function _releaseSlot() {
+  _activeCount--;
+  if (_waitQueue.length > 0 && _activeCount < MAX_CONCURRENT_DOWNLOADS) {
+    _activeCount++;
+    const item = _waitQueue.shift();
+    if (item && item.resolve) item.resolve();
+  }
+}
+
+function _moveFileSafe(src, dest) {
+  try {
+    fs.renameSync(src, dest);
+  } catch (err) {
+    if (err.code === "EXDEV") {
+      fs.copyFileSync(src, dest);
+      fs.unlinkSync(src);
+    } else {
+      throw err;
+    }
+  }
+}
 async function downloadAndTagTrack(
   trackInfo,
   targetFolder,
   onProgress,
   trackId,
+  fmt = "m4a",
 ) {
+  if (onProgress && _activeCount >= MAX_CONCURRENT_DOWNLOADS) {
+    onProgress({
+      status: "queued",
+      percent: 2,
+      message: "Queued (in download queue)...",
+    });
+  }
   const ctx = { cancelled: false, proc: null, destBase: null };
   if (trackId) _downloads.set(trackId, ctx);
+  await _acquireSlot(trackId);
+  if (ctx.cancelled) {
+    _releaseSlot();
+    throw new Error("Download cancelled while queued");
+  }
   try {
     return await _downloadAndTagTrackInner(
       trackInfo,
@@ -1354,8 +2042,10 @@ async function downloadAndTagTrack(
       onProgress,
       trackId,
       ctx,
+      fmt,
     );
   } finally {
+    _releaseSlot();
     if (trackId && _downloads.get(trackId) === ctx) _downloads.delete(trackId);
   }
 }
@@ -1366,6 +2056,7 @@ async function _downloadAndTagTrackInner(
   onProgress,
   trackId,
   ctx,
+  fmt = "m4a",
 ) {
   onProgress({
     status: "resolving",
@@ -1381,14 +2072,52 @@ async function _downloadAndTagTrackInner(
   if (!fs.existsSync(targetFolder))
     fs.mkdirSync(targetFolder, { recursive: true });
 
-  const artPromise = fetchArtworkBuffer(trackInfo.artworkUrl);
+  const artPromise = fetchBestArtwork(trackInfo.artworkUrl);
 
   // Strategy 1: Direct YouTube video download if videoId is present
   const videoId =
     trackInfo.videoId ||
+    trackInfo.ytmVideoId ||
     (trackInfo.id && trackInfo.id.startsWith("ytm_")
       ? trackInfo.id.replace("ytm_", "")
       : null);
+  if (videoId && videoId.length >= 5 && fmt === "m4a" && _fastFails < 5) {
+    const out = `${destBase}.m4a`;
+    const t0 = Date.now();
+    try {
+      ctx.destBase = destBase;
+      const r = await _fastResolveAudio(videoId);
+      console.log(
+        `[DownloadEngine] fast resolve ${Date.now() - t0}ms`,
+        r ? `${r.bitrate}bps` : "none",
+      );
+      if (!r || r.bitrate < 100000) throw new Error("no hq direct stream");
+      // Probe first: if the URL stalls/403s, bail to yt-dlp in ~3s instead of retrying chunks
+      await _rangeGet(r.url, 0, Math.min(32767, r.size - 1), 0, 1500, r.ua);
+      await _fastDownload(r.url, r.size, out, onProgress, ctx, r.ua);
+      if (!_validateAudio(out, r.durSec)) throw new Error("invalid audio");
+      injectTrackInfoTags(out, trackInfo, await artPromise);
+      _fastFails = 0;
+      console.log(`[DownloadEngine] fast path OK in ${Date.now() - t0}ms`);
+      onProgress({
+        status: "done",
+        percent: 100,
+        message: "Done!",
+        filePath: out,
+      });
+      return out;
+    } catch (fastErr) {
+      try {
+        if (fs.existsSync(out)) fs.unlinkSync(out);
+      } catch (_) {}
+      if (fastErr.cancelled || ctx.cancelled) throw fastErr;
+      _fastFails++;
+      console.warn(
+        "[DownloadEngine] fast path failed, using yt-dlp:",
+        fastErr.message,
+      );
+    }
+  }
   if (videoId && videoId.length >= 5) {
     try {
       onProgress({
@@ -1397,14 +2126,15 @@ async function _downloadAndTagTrackInner(
         message: "Downloading audio via yt-dlp…",
       });
       const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      const downloadedPath = await downloadWithYtDlp(
+            const downloadedPath = await downloadWithYtDlp(
         targetUrl,
         destBase,
         onProgress,
         trackId,
         ctx,
+        fmt,
       );
-      injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
+            injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
       onProgress({
         status: "done",
         percent: 100,
@@ -1421,6 +2151,48 @@ async function _downloadAndTagTrackInner(
     }
   }
 
+  // Strategy 1.5: Resolve videoId via exact ranked search matching before falling back to ytsearch
+  let effectiveVideoId = videoId;
+  if (!effectiveVideoId) {
+    try {
+      const q = [trackInfo.artistName, trackInfo.trackName].filter(Boolean).join(" ").trim();
+      if (q) {
+        onProgress({ status: "resolving", percent: 8, message: "Finding best stream match…" });
+        const found = await searchYouTubeMusic(q, 5).catch(() => []);
+        if (found && found.length > 0) {
+          const matched = rankAndMerge(found, q);
+          if (matched && matched.length > 0 && matched[0].videoId) {
+            effectiveVideoId = matched[0].videoId;
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (effectiveVideoId && effectiveVideoId.length >= 5) {
+    try {
+      const targetUrl = `https://www.youtube.com/watch?v=${effectiveVideoId}`;
+      const downloadedPath = await downloadWithYtDlp(
+        targetUrl,
+        destBase,
+        onProgress,
+        trackId,
+        ctx,
+        fmt,
+      );
+      injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
+      onProgress({
+        status: "done",
+        percent: 100,
+        message: "Done!",
+        filePath: downloadedPath,
+      });
+      return downloadedPath;
+    } catch (err) {
+      if (err.cancelled || ctx.cancelled) throw err;
+    }
+  }
+
   // Strategy 2: Accurate search query with yt-dlp
   const searchQuery = `ytsearch1:${trackInfo.artistName} - ${trackInfo.trackName} audio`;
   onProgress({
@@ -1428,14 +2200,15 @@ async function _downloadAndTagTrackInner(
     percent: 10,
     message: "Searching and downloading via yt-dlp…",
   });
-  const downloadedPath = await downloadWithYtDlp(
+    const downloadedPath = await downloadWithYtDlp(
     searchQuery,
     destBase,
     onProgress,
     trackId,
     ctx,
+    fmt,
   );
-  injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
+    injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
   onProgress({
     status: "done",
     percent: 100,
@@ -1468,6 +2241,11 @@ function _cleanupPartials(destBase) {
 }
 
 function cancelDownload(trackId) {
+  const qIdx = _waitQueue.findIndex((item) => item.trackId === trackId);
+  if (qIdx !== -1) {
+    const [removed] = _waitQueue.splice(qIdx, 1);
+    if (removed && removed.resolve) removed.resolve();
+  }
   const ctx = _downloads.get(trackId);
   if (!ctx) return false;
   ctx.cancelled = true;
@@ -1498,5 +2276,7 @@ module.exports = {
   downloadAndTagTrack,
   getYtDlpPath,
   ensureYtDlpAvailable,
+  prewarmDownloader,
+  prefetchStream,
   cancelDownload,
 };

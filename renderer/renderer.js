@@ -1,5 +1,5 @@
 /**
- * NovaTune — Renderer Entry Point  [v1.1.7]
+ * NovaTune — Renderer Entry Point  [v1.1.11]
  * Wires the user's custom UI to the Electron backend.
  * Uses window.novaAPI (from preload.js) for all IPC communication.
  *
@@ -851,11 +851,12 @@ class SquigglyProgress {
       ctx.beginPath();
       ctx.moveTo(greyStart, cy);
       ctx.lineTo(greyEnd, cy);
-      ctx.strokeStyle = (this.overlay && this.themeMode !== "light")
-        ? "rgba(255,255,255,0.18)"
-        : (this.themeMode === "light"
-          ? "rgba(0,0,0,0.22)"
-          : "rgba(255,255,255,0.18)");
+      ctx.strokeStyle =
+        this.overlay && this.themeMode !== "light"
+          ? "rgba(255,255,255,0.18)"
+          : this.themeMode === "light"
+            ? "rgba(0,0,0,0.22)"
+            : "rgba(255,255,255,0.18)";
       ctx.lineWidth = 2.3;
       ctx.lineCap = "round";
       ctx.stroke();
@@ -864,7 +865,10 @@ class SquigglyProgress {
     if (progress > 0 && totalProgressPx > leftInset + thumbR * 2) {
       ctx.beginPath();
       ctx.arc(leftInset, cy, this.strokeWidth / 2, 0, Math.PI * 2);
-      ctx.fillStyle = (this.overlay && this.themeMode !== "light") ? "rgba(255,255,255,0.4)" : this.waveColor;
+      ctx.fillStyle =
+        this.overlay && this.themeMode !== "light"
+          ? "rgba(255,255,255,0.4)"
+          : this.waveColor;
       ctx.fill();
     }
 
@@ -878,7 +882,8 @@ class SquigglyProgress {
       ctx.beginPath();
       ctx.moveTo(leftInset, cy);
       ctx.lineTo(waveEndPx, cy);
-      ctx.strokeStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
+      ctx.strokeStyle =
+        this.overlay && this.themeMode !== "light" ? "#fff" : this.waveColor;
       ctx.lineWidth = this.strokeWidth;
       ctx.lineCap = "round";
       ctx.stroke();
@@ -927,7 +932,8 @@ class SquigglyProgress {
       const envelope = computeAmp(waveEndPx);
       ctx.lineTo(waveEndPx, cy + Math.sin(k * waveEndPx + phase) * envelope);
     }
-    ctx.strokeStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
+    ctx.strokeStyle =
+      this.overlay && this.themeMode !== "light" ? "#fff" : this.waveColor;
     ctx.lineWidth = this.strokeWidth;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -1291,7 +1297,8 @@ class SquigglyProgress {
       const cr = this.overlay ? 3.5 : 4.5;
       ctx.arc(x, cy, cr, 0, Math.PI * 2);
     }
-    ctx.fillStyle = (this.overlay && this.themeMode !== "light") ? "#fff" : this.waveColor;
+    ctx.fillStyle =
+      this.overlay && this.themeMode !== "light" ? "#fff" : this.waveColor;
     ctx.fill();
   }
 
@@ -3026,6 +3033,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   console.log("NovaTune ready!");
 
+  
+
   // Dismiss splash screen only after the audio engine has finished buffering
   // the restored track (or after a hard cap on HDD). This ensures
   // the play button is functional the instant the user sees the main UI.
@@ -3294,8 +3303,8 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     if (state.currentTrack) {
       const anchor = state.overlayOpen
-        ? ($("ov-add-btn") || $("ov-more-btn") || $("ov-title"))
-        : ($("np-menu-btn") || $("np-title") || document.body);
+        ? $("ov-add-btn") || $("ov-more-btn") || $("ov-title")
+        : $("np-menu-btn") || $("np-title") || document.body;
       if (anchor) openPlaylistMenu(anchor, state.currentTrack);
     }
     return;
@@ -3435,21 +3444,37 @@ document.addEventListener("keydown", (e) => {
   }
 
   // ─── 12. 1 or R → Repeat One (toggle) ─────────────────────────
-  if ((e.key === "1" || e.code === "KeyR") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  if (
+    (e.key === "1" || e.code === "KeyR") &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey
+  ) {
     e.preventDefault();
     _setRepeatMode("one");
     return;
   }
 
   // ─── 13. 0 or O → Repeat All (toggle) ─────────────────────────
-  if ((e.key === "0" || e.code === "KeyO") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  if (
+    (e.key === "0" || e.code === "KeyO") &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey
+  ) {
     e.preventDefault();
     _setRepeatMode("all");
     return;
   }
 
   // ─── 14. ArrowUp / ArrowDown → Volume Up / Down ──────────────
-  if (e.code === "ArrowUp" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+  if (
+    e.code === "ArrowUp" &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey &&
+    !e.shiftKey
+  ) {
     e.preventDefault();
     state.volume = Math.max(0, Math.min(1, state.volume + 0.05));
     audioEngine.setVolume(state.volume);
@@ -3457,7 +3482,13 @@ document.addEventListener("keydown", (e) => {
     _persistVolumeDebounced();
     return;
   }
-  if (e.code === "ArrowDown" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+  if (
+    e.code === "ArrowDown" &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey &&
+    !e.shiftKey
+  ) {
     e.preventDefault();
     state.volume = Math.max(0, Math.min(1, state.volume - 0.05));
     audioEngine.setVolume(state.volume);
@@ -3635,9 +3666,14 @@ function _wireSidebar() {
     window.novaAPI.on("library:track-added", async (newTrack) => {
       try {
         if (!newTrack || !newTrack.id) return;
-        console.log("[library:track-added] Ingesting downloaded track into renderer state:", newTrack.title);
+        console.log(
+          "[library:track-added] Ingesting downloaded track into renderer state:",
+          newTrack.title,
+        );
         // Avoid duplicate additions
-        const existingIdx = state.tracks.findIndex((t) => t.id === newTrack.id || t.filePath === newTrack.filePath);
+        const existingIdx = state.tracks.findIndex(
+          (t) => t.id === newTrack.id || t.filePath === newTrack.filePath,
+        );
         if (existingIdx !== -1) {
           state.tracks[existingIdx] = newTrack;
         } else {
@@ -3645,17 +3681,24 @@ function _wireSidebar() {
         }
         state.filteredTracks = [...state.tracks];
         if (state.sortKey) _sortTracks();
-        if (typeof invalidateSectionCache === "function") invalidateSectionCache();
+        if (typeof invalidateSectionCache === "function")
+          invalidateSectionCache();
         if (typeof buildSearchIndex === "function") buildSearchIndex();
         if (typeof _panelDirty !== "undefined") {
           _panelDirty["home"] = true;
           _panelDirty["albums"] = true;
           _panelDirty["artists"] = true;
         }
-        if (typeof _updateSidebarFolderInfo === "function") _updateSidebarFolderInfo();
-        console.log(`[library:track-added] Library updated! Total tracks: ${state.tracks.length}`);
+        if (typeof _updateSidebarFolderInfo === "function")
+          _updateSidebarFolderInfo();
+        console.log(
+          `[library:track-added] Library updated! Total tracks: ${state.tracks.length}`,
+        );
       } catch (err) {
-        console.warn("[library:track-added] Failed to update library state:", err);
+        console.warn(
+          "[library:track-added] Failed to update library state:",
+          err,
+        );
       }
     });
   }
@@ -3764,7 +3807,8 @@ function _updateToolbarVisibility(section) {
   const lyricsToggle = $("lyrics-toggle-btn");
   const playlistImportBtn = $("playlist-import-btn");
   if (playlistImportBtn) {
-    playlistImportBtn.style.display = (section === "playlists") ? "inline-flex" : "none";
+    playlistImportBtn.style.display =
+      section === "playlists" ? "inline-flex" : "none";
   }
   // Only show shuffle & play and sort-by in home and library sections
   const showShuffleAndSort = section === "home" || section === "library";
@@ -3803,7 +3847,8 @@ function _updateToolbarVisibility(section) {
 }
 
 function _navigateTo(section) {
-  const _dlB = $("sidebar-download-btn"), _hlB = $("sidebar-help-btn");
+  const _dlB = $("sidebar-download-btn"),
+    _hlB = $("sidebar-help-btn");
   if (_dlB) _dlB.classList.toggle("active", section === "discovery");
   if (_hlB) _hlB.classList.toggle("active", section === "help");
   const title = $("content-title");
@@ -3828,7 +3873,7 @@ function _navigateTo(section) {
       title.textContent = "Music Downloader";
       _showCached("discovery", renderDiscovery);
       break;
-      case "library":
+    case "library":
       title.textContent = "Music";
       _showVirtual();
       renderTracks(state.filteredTracks, "library");
@@ -4265,12 +4310,15 @@ function _wireAddFolder() {
     // When nothingChanged, the library in memory is already correct —
     // reloading it would just thrash the DOM + virtual list for no reason.
     if (anyChanged) {
-      // Task 4: Use partial update instead of full reload
+      // Rebuild the binary manifest so the decoder reads fresh data
       try {
         await window.novaAPI.invoke("library:rebuild-manifest");
       } catch (err) {
         console.warn("[Refresh] Manifest rebuild failed:", err.message);
       }
+      // Null the in-memory decoder so any fallback inside _partialLibraryUpdate
+      // that calls _loadLibrary() re-reads the new manifest from disk.
+      manifestDecoder = null;
       await _partialLibraryUpdate();
       _updateSidebarFolderInfo();
       console.log("[Refresh] Library updated (changes detected)");
@@ -4462,7 +4510,13 @@ function _wireShufflePlay() {
 }
 
 // ─── Library Loading ─────────────────────────────────────────────
-const _NO_COL_HEADER_SECTIONS = ["discovery", "home", "settings", "equalizer", "help"];
+const _NO_COL_HEADER_SECTIONS = [
+  "discovery",
+  "home",
+  "settings",
+  "equalizer",
+  "help",
+];
 function _colHeadersAllowed() {
   return !_NO_COL_HEADER_SECTIONS.includes(state.activeNavSection);
 }
@@ -6266,21 +6320,38 @@ async function _partialLibraryUpdate() {
       _sortTracks(state.sortKey, state.sortAsc);
     }
 
-    // Re-render without full reload
+    // Always rebuild sectionCache so Albums/Artists views see new content.
+    // FIX: was missing sectionCache.albums/.artists rebuild — Albums/Artists
+    // panel showed stale data until restart.
     invalidateSectionCache();
-    if (state.activeNavSection === "home") {
+    sectionCache.albums = getAlbumGroups();
+    sectionCache.artists = getArtistGroups();
+
+    // FIX: null out the manifest decoder so any _loadLibrary() fallback
+    // re-reads the freshly rebuilt manifest from disk rather than replaying
+    // the stale in-memory decoder from app startup.
+    manifestDecoder = null;
+
+    // Re-render whichever section is currently visible.
+    // FIX: use state.activeNavSection (not virtualList.mode) as the source
+    // of truth — virtualList.mode can lag behind nav state.
+    const sec = state.activeNavSection;
+    if (sec === "home") {
       renderHome();
-    } else if (virtualList.mode === "library" || virtualList.mode === "home") {
+    } else if (sec === "library") {
       renderTracks(state.filteredTracks, "library");
-    } else if (state.activeNavSection === "albums") {
+    } else if (sec === "albums") {
       _reRenderPanel("albums", renderAlbums);
-    } else if (state.activeNavSection === "artists") {
+    } else if (sec === "artists") {
       _reRenderPanel("artists", renderArtists);
-    } else if (state.activeNavSection === "playlists") {
+    } else if (sec === "playlists") {
       _reRenderPanel("playlists", renderPlaylists);
+    } else {
+      // Fallback: library view is always safe
+      renderTracks(state.filteredTracks, "library");
     }
 
-    // Rebuild search index
+    // Rebuild search index with new tracks
     buildSearchIndex();
 
     // Schedule thumbnail atlas build for new tracks
@@ -6289,10 +6360,12 @@ async function _partialLibraryUpdate() {
     }
 
     console.log(
-      `[PartialUpdate] Library now has ${state.tracks.length} tracks`,
+      `[PartialUpdate] Library now has ${state.tracks.length} tracks (+${newTracks.length} new, -${removedIds.length} removed)`,
     );
   } catch (err) {
     console.error("[PartialUpdate] Failed, falling back to full reload:", err);
+    // Null decoder so _loadLibrary reads fresh manifest from disk
+    manifestDecoder = null;
     await _loadLibrary();
   }
 }
@@ -7720,6 +7793,13 @@ function renderSettings() {
           </div>
         </div>
         <div class="settings-row settings-row--wrap">
+          <span>Download format <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(M4A = instant, original quality &bull; MP3 320k = universal)</span></span>
+          <div class="settings-btn-group">
+            <button type="button" class="dlfmt-btn settings-toggle-btn${state.settings.downloadFormat === "mp3" ? " active" : ""}" data-mode="mp3">MP3</button>
+            <button type="button" class="dlfmt-btn settings-toggle-btn${state.settings.downloadFormat !== "mp3" ? " active" : ""}" data-mode="m4a">M4A</button>
+          </div>
+        </div>
+        <div class="settings-row settings-row--wrap">
           <span>Side menu (compact view)</span>
           <div class="settings-btn-group">
             <button type="button" class="nav-mode-btn settings-toggle-btn${(state.settings.navMode || "hover") === "hover" ? " active" : ""}" data-mode="hover">On Hover</button>
@@ -7792,11 +7872,24 @@ function renderSettings() {
           <span>Startup section</span>
           <div class="nova-dropdown" id="setting-start-section" data-value="${state.settings.startSection || "library"}" style="position:relative;min-width:220px;">
             <button type="button" class="nova-dropdown__trigger" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-2,var(--surface));color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;transition:border-color .15s;">
-              <span class="nova-dropdown__label">${{"library":"Music Library (Default)","artists":"Artists","albums":"Albums","playlists":"Playlists","home":"Home","queue":"Play Queue","equalizer":"Equalizer"}[state.settings.startSection || "library"]}</span>
+              <span class="nova-dropdown__label">${{ library: "Music Library (Default)", artists: "Artists", albums: "Albums", playlists: "Playlists", home: "Home", queue: "Play Queue", equalizer: "Equalizer" }[state.settings.startSection || "library"]}</span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.7;transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
             <ul class="nova-dropdown__menu" style="display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:100%;background:var(--surface-2,var(--surface));border:1px solid var(--border);border-radius:8px;padding:6px;margin:0;list-style:none;z-index:999;box-shadow:0 8px 24px rgba(0,0,0,.4);flex-direction:column;gap:4px;">
-              ${[["library","Music Library (Default)"],["artists","Artists"],["albums","Albums"],["playlists","Playlists"],["home","Home"],["queue","Play Queue"],["equalizer","Equalizer"]].map(([v,l])=>`<li data-value="${v}" style="padding:9px 12px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;color:var(--text-primary);transition:background .15s, color .15s;${(state.settings.startSection||"library")===v?"background:color-mix(in srgb, var(--green, #1ed760) 14%, transparent);color:var(--green, #1ed760);font-weight:600;":""}">${(state.settings.startSection||"library")===v?'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>':''}<span>${l}</span></li>`).join("")}
+              ${[
+                ["library", "Music Library (Default)"],
+                ["artists", "Artists"],
+                ["albums", "Albums"],
+                ["playlists", "Playlists"],
+                ["home", "Home"],
+                ["queue", "Play Queue"],
+                ["equalizer", "Equalizer"],
+              ]
+                .map(
+                  ([v, l]) =>
+                    `<li data-value="${v}" style="padding:9px 12px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;color:var(--text-primary);transition:background .15s, color .15s;${(state.settings.startSection || "library") === v ? "background:color-mix(in srgb, var(--green, #1ed760) 14%, transparent);color:var(--green, #1ed760);font-weight:600;" : ""}">${(state.settings.startSection || "library") === v ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ""}<span>${l}</span></li>`,
+                )
+                .join("")}
             </ul>
           </div>
         </div>
@@ -7899,11 +7992,21 @@ function renderSettings() {
   const startSectionDropdown = $("setting-start-section");
 
   if (startSectionDropdown) {
-    const trigger = startSectionDropdown.querySelector(".nova-dropdown__trigger");
+    const trigger = startSectionDropdown.querySelector(
+      ".nova-dropdown__trigger",
+    );
     const menu = startSectionDropdown.querySelector(".nova-dropdown__menu");
     const label = startSectionDropdown.querySelector(".nova-dropdown__label");
     const chevron = trigger.querySelector("svg");
-    const LABELS = { library:"Music Library (Default)", artists:"Artists", albums:"Albums", playlists:"Playlists", home:"Home", queue:"Play Queue", equalizer:"Equalizer" };
+    const LABELS = {
+      library: "Music Library (Default)",
+      artists: "Artists",
+      albums: "Albums",
+      playlists: "Playlists",
+      home: "Home",
+      queue: "Play Queue",
+      equalizer: "Equalizer",
+    };
 
     const closeMenu = () => {
       menu.style.display = "none";
@@ -7914,7 +8017,9 @@ function renderSettings() {
     trigger.addEventListener("click", (e) => {
       e.stopPropagation();
       const open = menu.style.display === "flex";
-      if (open) { closeMenu(); } else {
+      if (open) {
+        closeMenu();
+      } else {
         menu.style.display = "flex";
         chevron.style.transform = "rotate(180deg)";
         trigger.style.borderColor = "var(--green, #1ed760)";
@@ -7930,14 +8035,21 @@ function renderSettings() {
       label.textContent = LABELS[val];
       startSectionDropdown.dataset.value = val;
       // Highlight selected item
-      menu.querySelectorAll("li").forEach(item => {
+      menu.querySelectorAll("li").forEach((item) => {
         const sel = item.dataset.value === val;
-        item.style.background = sel ? "color-mix(in srgb, var(--green, #1ed760) 14%, transparent)" : "";
-        item.style.color = sel ? "var(--green, #1ed760)" : "var(--text-primary)";
+        item.style.background = sel
+          ? "color-mix(in srgb, var(--green, #1ed760) 14%, transparent)"
+          : "";
+        item.style.color = sel
+          ? "var(--green, #1ed760)"
+          : "var(--text-primary)";
         item.style.fontWeight = sel ? "600" : "";
         let svg = item.querySelector("svg");
         if (sel && !svg) {
-          item.insertAdjacentHTML("afterbegin", '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>');
+          item.insertAdjacentHTML(
+            "afterbegin",
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+          );
         } else if (!sel && svg) {
           svg.remove();
         }
@@ -8019,6 +8131,17 @@ function renderSettings() {
     if (state.activeNavSection === "home") {
       _reRenderPanel("home", renderHome);
     }
+  });
+
+  document.querySelectorAll(".dlfmt-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mode = btn.dataset.mode;
+      document.querySelectorAll(".dlfmt-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.mode === mode);
+      });
+      saveSetting("downloadFormat", mode);
+      window.dispatchEvent(new CustomEvent("dlfmt-changed", { detail: mode }));
+    });
   });
 
   document.querySelectorAll(".vol-mode-btn").forEach((btn) => {
@@ -9403,13 +9526,62 @@ function _openShareCard(track) {
   const ico = (d) =>
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
   const items = [
-    ["lanbeam", "LANBeam", "Send file over LAN", ico('<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>')],
-    ["copy-file", "Copy File", "Paste into any app", ico('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>')],
-    ["folder", "Show in Folder", "Drag it into any app", ico('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>')],
-    ["copy-text", "Copy Name", "Song title & artist", ico('<path d="M4 7V4h16v3"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>')],
-    ["whatsapp", "WhatsApp", "Copies file, then opens app", ico('<path d="M21 11.5a8.4 8.4 0 0 1-12.4 7.4L3 21l2.1-5.5A8.4 8.4 0 1 1 21 11.5z"/>')],
-    ["telegram", "Telegram", "Copies file, then opens app", ico('<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>')],
-    ["email", "Email", "Copies file, then opens app", ico('<path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><polyline points="22,6 12,13 2,6"/>')],
+    [
+      "lanbeam",
+      "LANBeam",
+      "Send file over LAN",
+      ico(
+        '<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
+      ),
+    ],
+    [
+      "copy-file",
+      "Copy File",
+      "Paste into any app",
+      ico(
+        '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+      ),
+    ],
+    [
+      "folder",
+      "Show in Folder",
+      "Drag it into any app",
+      ico(
+        '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
+      ),
+    ],
+    [
+      "copy-text",
+      "Copy Name",
+      "Song title & artist",
+      ico(
+        '<path d="M4 7V4h16v3"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>',
+      ),
+    ],
+    [
+      "whatsapp",
+      "WhatsApp",
+      "Copies file, then opens app",
+      ico(
+        '<path d="M21 11.5a8.4 8.4 0 0 1-12.4 7.4L3 21l2.1-5.5A8.4 8.4 0 1 1 21 11.5z"/>',
+      ),
+    ],
+    [
+      "telegram",
+      "Telegram",
+      "Copies file, then opens app",
+      ico(
+        '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
+      ),
+    ],
+    [
+      "email",
+      "Email",
+      "Copies file, then opens app",
+      ico(
+        '<path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><polyline points="22,6 12,13 2,6"/>',
+      ),
+    ],
   ];
   const overlay = document.createElement("div");
   overlay.className = "tag-editor-overlay track-share-overlay";
@@ -9454,7 +9626,14 @@ function _openShareCard(track) {
     if (act === "copy-file") {
       const res = await inv("share:copy-file", track.filePath);
       close();
-      _showActionToast(track.title, res?.success && res.file ? "file copied" : res?.success ? "path copied" : "copy failed");
+      _showActionToast(
+        track.title,
+        res?.success && res.file
+          ? "file copied"
+          : res?.success
+            ? "path copied"
+            : "copy failed",
+      );
     } else if (act === "folder") {
       close();
       inv("share:show-in-folder", track.filePath);
@@ -9506,7 +9685,10 @@ function _openShareCard(track) {
       }
       let res = exe ? await inv("share:launch-app", exe, track.filePath) : null;
       close();
-      _showActionToast(track.title, res?.success ? "queued in LANBeam" : "launch failed");
+      _showActionToast(
+        track.title,
+        res?.success ? "queued in LANBeam" : "launch failed",
+      );
     } else {
       const urls = {
         whatsapp: `https://wa.me/?text=${enc}`,
@@ -9566,7 +9748,10 @@ function _openTrackProperties(track) {
     ["File Size", fmtSize(track.fileSize)],
     ["Date Added", fmtDate(track.dateAdded)],
     ["Modified", fmtDate(track.dateModified)],
-    ["File Name", track.fileName || (track.filePath || "").split(/[\\/]/).pop()],
+    [
+      "File Name",
+      track.fileName || (track.filePath || "").split(/[\\/]/).pop(),
+    ],
     ["Location", track.filePath],
   ];
   const coverSrc = _resolveCoverArtSrc(track);
@@ -11111,7 +11296,6 @@ function _makeAlbumCard(album) {
   return card;
 }
 
-
 function _dupNormTitle(v) {
   return String(v || "")
     .toLowerCase()
@@ -11272,50 +11456,43 @@ function renderHelp() {
 
       <div class="help-sections">
         <div class="section-panel" id="help-updates-section">
-          <div class="section-panel-title">What's New in v1.1.7</div>
+          <div class="section-panel-title">What's New in v1.1.11</div>
 
           <div class="help-item">
-            <div class="help-item-title">🎵 EQ Animation in All Sections</div>
+            <div class="help-item-title">📥 Fast Music Downloader Engine</div>
             <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
-                <li><strong>Universal Playing Indicator:</strong> The animated EQ bars now correctly appear on the playing track row in every section — Music Library, Artists, Albums, and Playlists.</li>
-                <li><strong>Persistent on Back-Navigation:</strong> Previously, navigating back and re-entering a detail view would lose the animation. It now instantly re-applies to the correct row every time the view is rendered.</li>
-                <li><strong>Bug Fixed:</strong> Playlist detail rows were missing their track ID attribute, making them invisible to the animation system — this is now corrected.</li>
+                <li><strong>Pure yt-dlp Audio Downloader:</strong> High-speed 320kbps MP3 audio download engine directly integrated into the Music Downloader tab.</li>
+                <li><strong>One-Click Download Cancel:</strong> Added instant abort/cancel control with stylish circular button during active downloads, cleaning up partial files immediately.</li>
+                <li><strong>Auto-Tagger & Library Hot-Reload:</strong> Downloaded tracks are automatically enriched with ID3 tags, album art, and hot-loaded right into your Music Library without restarting.</li>
               </ul>
             </div>
           </div>
 
           <div class="help-item">
-            <div class="help-item-title">🚀 Startup Section Setting</div>
+            <div class="help-item-title">⚡ Fast LANBeam Share Hand-off</div>
             <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
-                <li><strong>Choose Your Landing Page:</strong> Head to Settings and pick which section the app opens to on launch — Music Library (default), Artists, Albums, Playlists, or any other menu item.</li>
-                <li><strong>Instant Navigation:</strong> The selected section is loaded immediately after the splash screen without any delay.</li>
+                <li><strong>Priority Local Sharing:</strong> LANBeam is now the top action in the Song Right-Click &rarr; Share menu for seamless zero-cloud local transfers to phones and PCs.</li>
+                <li><strong>Auto-Install from GitHub:</strong> If LANBeam is not already installed on your PC, NovaTune automatically downloads and installs the latest release silently in seconds.</li>
+                <li><strong>Direct Queue & Focus:</strong> Launches or focuses your running LANBeam instance and appends tracks straight into the pending transfer queue.</li>
               </ul>
             </div>
           </div>
 
           <div class="help-item">
-            <div class="help-item-title">🃏 Realtime Playlist Card Updates</div>
+            <div class="help-item-title">🛠️ Bug Fixes & Improvements</div>
             <div class="help-item-body" style="padding-left: 15px;">
               <ul style="padding-left: 10px;">
-                <li><strong>Instant Appearance:</strong> Newly created playlists now appear immediately in the Playlists section without needing to restart or log out.</li>
-                <li><strong>Always in Sync:</strong> Playlist cards stay up to date in real time after any create or modify action.</li>
-              </ul>
-            </div>
-          </div>
-
-          <div class="help-item">
-            <div class="help-item-title">📐 Virtual List Row Gap Fix</div>
-            <div class="help-item-body" style="padding-left: 15px;">
-              <ul style="padding-left: 10px;">
-                <li><strong>No More Gaps:</strong> Fixed uneven large gaps that appeared in the track list when new songs were added or sorted to the top of the library.</li>
+                <li><strong>More Context Commands & Properties:</strong> Enhanced right-click track menu actions, song details inspection, and file properties handling.</li>
+                <li><strong>Stability & Library Enhancements:</strong> Addressed track duplicate detection, improved search source fallbacks, and polished UI animations across dark themes.</li>
               </ul>
             </div>
           </div>
         </div>
 
         <div class="section-panel" id="help-updates-section-prev">
+          <div class="section-panel-title">Previously in v1.1.7</div>
           <div class="section-panel-title">Previously in v1.1.6</div>
 
           <div class="help-item">
@@ -11510,7 +11687,7 @@ function renderHelp() {
       </div>
 
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
-        NovaTune v1.1.7 &bull; Made by SIR ALEX for music lovers
+        NovaTune v1.1.8 &bull; Made by SIR ALEX for music lovers
       </div>
     </div>
   `);
@@ -13414,6 +13591,15 @@ function renderVirtualRows() {
 // All events are handled via delegation from the virtual-track-window.
 // Uses Bitmap Thumbnail Atlas: drawImage from ImageBitmap is ~5× faster
 // than decoding a full-res src per row.
+// Clear library selection whenever the view mode changes (e.g. switching to queue)
+let _lastVirtualListMode = null;
+function _checkClearSelectionOnModeChange() {
+  if (virtualList.mode !== _lastVirtualListMode) {
+    _lastVirtualListMode = virtualList.mode;
+    if (_libSelection.size > 0) _libSelectionClear();
+  }
+}
+
 function _populateSlot(row, track, idx) {
   const isActive = state.currentTrack && state.currentTrack.id === track.id;
   const artIdx = getArtIndex(track);
@@ -13427,11 +13613,13 @@ function _populateSlot(row, track, idx) {
   // out and back in, _populateSlot rebuilds it, so the is-playing class
   // must be re-added here, not just in _updatePlayPauseIcon.
   const isPlaying = isActive && state.isPlaying;
+  const isLibSelected = !isQueue && _libSelection.has(track.id);
   row.className =
     "track-row" +
     (isActive ? " active" : "") +
     (isPlaying ? " is-playing" : "") +
-    (isQueue ? " queue-row" : "");
+    (isQueue ? " queue-row" : "") +
+    (isLibSelected ? " lib-selected" : "");
   row.dataset.trackId = track.id;
   row.dataset.idx = idx;
   if (isQueue) row.dataset.queueIdx = idx;
@@ -13604,11 +13792,263 @@ function _populateSlot(row, track, idx) {
   // No addEventListener here — all events are delegated.
 }
 
+// ─── Inject multi-select CSS (once) ──────────────────────────────────
+(function _injectMultiSelectCSS() {
+  if (document.getElementById('nova-multiselect-css')) return;
+  const style = document.createElement('style');
+  style.id = 'nova-multiselect-css';
+  style.textContent = `
+    /* ── Selected row highlight (no checkbox — pure drag-lasso selection) ── */
+    .track-row.lib-selected {
+      background: rgba(var(--green-rgb, 29,185,84), 0.12) !important;
+      border-left: 3px solid var(--green, #1db954);
+    }
+    .track-row.lib-selected:hover {
+      background: rgba(var(--green-rgb, 29,185,84), 0.18) !important;
+    }
+    /* Prevent text selection cursor while drag-selecting */
+    #virtual-track-window.drag-selecting,
+    #virtual-track-window.drag-selecting * {
+      user-select: none !important;
+      -webkit-user-select: none !important;
+    }
+
+    /* ── Selection action bar ── */
+    .lib-selection-bar {
+      position: fixed;
+      bottom: 90px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface-2, #282828);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 32px;
+      padding: 8px 12px 8px 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+      z-index: 9000;
+      white-space: nowrap;
+      animation: lib-bar-in 0.2s ease;
+    }
+    @keyframes lib-bar-in {
+      from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+      to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+    .lib-sel-count {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary, #fff);
+      margin-right: 4px;
+    }
+    .lib-sel-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .lib-sel-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: none;
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+      background: rgba(255,255,255,0.08);
+      color: var(--text-primary, #fff);
+    }
+    .lib-sel-btn svg { width: 14px; height: 14px; flex-shrink: 0; }
+    .lib-sel-btn:hover { background: rgba(255,255,255,0.14); }
+    .lib-sel-share {
+      background: var(--green, #1db954);
+      color: #000;
+      font-weight: 600;
+    }
+    .lib-sel-share:hover { background: #1ed760; }
+    .lib-sel-delete { color: #ff5c5c; }
+    .lib-sel-delete:hover { background: rgba(255,92,92,0.15); }
+    .lib-sel-clear {
+      padding: 6px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.06);
+    }
+    .lib-sel-clear:hover { background: rgba(255,255,255,0.14); }
+  `;
+  document.head.appendChild(style);
+})();
+
 // ─── Virtual List Event Delegation ──────────────────────────────────
 // ONE listener per event type on the virtual-track-window container.
 // Reads dataset.trackId from the clicked row, looks up the track from
 // virtualList.items — zero per-row listener accumulation.
 let _delegationWired = false;
+
+// ─── Library Multi-Select — drag-to-select (File Explorer list-view style) ──
+// No checkboxes. User clicks+drags across rows to highlight them.
+// Right-click = single-track actions menu (existing). Plain click = play.
+const _libSelection = new Set(); // Set of selected trackIds
+
+function _libSelectionClear() {
+  _libSelection.clear();
+  _updateSelectionBar();
+  _refreshSelectionClasses();
+}
+
+function _libSelectionSelectAll() {
+  (virtualList.items || []).forEach((t) => _libSelection.add(t.id));
+  _updateSelectionBar();
+  _refreshSelectionClasses();
+}
+
+// Apply/remove .lib-selected class to all visible rows in the virtual window
+function _refreshSelectionClasses() {
+  const win = document.getElementById('virtual-track-window');
+  if (!win) return;
+  win.querySelectorAll('.track-row[data-track-id]').forEach((row) => {
+    if (_libSelection.has(row.dataset.trackId)) {
+      row.classList.add('lib-selected');
+    } else {
+      row.classList.remove('lib-selected');
+    }
+  });
+}
+
+// Show/hide the floating selection action bar
+function _updateSelectionBar() {
+  const count = _libSelection.size;
+  let bar = document.getElementById('lib-selection-bar');
+  if (count === 0) {
+    if (bar) bar.remove();
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'lib-selection-bar';
+    bar.className = 'lib-selection-bar';
+    bar.innerHTML = `
+      <span class="lib-sel-count"></span>
+      <div class="lib-sel-actions">
+        <button class="lib-sel-btn lib-sel-share" title="Share via LANBeam">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+          Share via LANBeam
+        </button>
+        <button class="lib-sel-btn lib-sel-delete" title="Delete selected">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          Delete
+        </button>
+        <button class="lib-sel-btn lib-sel-clear" title="Clear selection">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    `;
+    bar.querySelector('.lib-sel-share').addEventListener('click', (e) => {
+      e.stopPropagation();
+      _batchShareLanbeam([..._libSelection]);
+    });
+    bar.querySelector('.lib-sel-delete').addEventListener('click', (e) => {
+      e.stopPropagation();
+      _batchDeleteTracks([..._libSelection]);
+    });
+    bar.querySelector('.lib-sel-clear').addEventListener('click', (e) => {
+      e.stopPropagation();
+      _libSelectionClear();
+    });
+    const panel = document.getElementById('library-panel') ||
+                  document.getElementById('content-area') ||
+                  document.getElementById('main-content') ||
+                  document.body;
+    panel.appendChild(bar);
+  }
+  bar.querySelector('.lib-sel-count').textContent =
+    count === 1 ? '1 track selected' : `${count} tracks selected`;
+}
+
+// ─── Batch LANBeam share: resolve exe once, then send files one by one ───
+async function _batchShareLanbeam(trackIds) {
+  if (!trackIds || trackIds.length === 0) return;
+  const inv = (ch, ...a) => window.novaAPI.invoke(ch, ...a);
+  let exe = state.settings.lanbeamPath;
+  if (exe) {
+    const check = await inv('share:find-lanbeam');
+    if (!check?.success || check.path !== exe) {
+      exe = check?.success ? check.path : null;
+      if (exe) { state.settings.lanbeamPath = exe; await saveSetting('lanbeamPath', exe); }
+    }
+  }
+  if (!exe) {
+    const f = await inv('share:find-lanbeam');
+    if (f?.success) { exe = f.path; state.settings.lanbeamPath = exe; await saveSetting('lanbeamPath', exe); }
+  }
+  if (!exe) {
+    _showActionToast('LANBeam', 'downloading from GitHub…');
+    const installRes = await inv('share:install-lanbeam');
+    if (installRes?.success && installRes.path) {
+      exe = installRes.path; state.settings.lanbeamPath = exe; await saveSetting('lanbeamPath', exe);
+      _showActionToast('LANBeam', 'installed successfully!');
+    } else {
+      const pick = await inv('share:pick-app');
+      if (pick?.success) { exe = pick.path; state.settings.lanbeamPath = exe; await saveSetting('lanbeamPath', exe); }
+    }
+  }
+  if (!exe) { _showActionToast('LANBeam', 'could not find LANBeam'); return; }
+
+  const tracks = trackIds
+    .map((id) => (state.tracks || []).find((t) => t.id === id))
+    .filter(Boolean)
+    .filter((t) => t.filePath);
+
+  if (tracks.length === 0) { _showActionToast('LANBeam', 'no local files found'); return; }
+
+  _libSelectionClear();
+
+  let sent = 0;
+  for (const track of tracks) {
+    _showActionToast(
+      `Sending ${sent + 1}/${tracks.length}`,
+      track.title || track.filePath.split(/[\\/]/).pop()
+    );
+    const res = await inv('share:launch-app', exe, track.filePath);
+    if (res?.success) sent++;
+    await new Promise((r) => setTimeout(r, 350));
+  }
+  _showActionToast('LANBeam', `${sent}/${tracks.length} files queued`);
+}
+
+// ─── Batch delete with a single confirmation dialog ───────────────────
+async function _batchDeleteTracks(trackIds) {
+  if (!trackIds || trackIds.length === 0) return;
+  const count = trackIds.length;
+  const overlay = document.createElement('div');
+  overlay.className = 'tag-editor-overlay delete-confirm-overlay';
+  overlay.innerHTML = `
+    <div class="tag-editor-card delete-confirm-card">
+      <h3 style="color:#ff5c5c;">Delete ${count} Song${count !== 1 ? 's' : ''}</h3>
+      <p style="color:var(--text-secondary);margin:12px 0 20px;line-height:1.5;">
+        Permanently delete <strong style="color:var(--text-primary);">${count} track${count !== 1 ? 's' : ''}</strong> from your library?<br>
+        <span style="font-size:12px;opacity:0.7;">Files will be permanently removed from disk. This cannot be undone.</span>
+      </p>
+      <div class="tag-editor-actions">
+        <button class="btn-cancel" id="bdel-cancel">Cancel</button>
+        <button class="btn-save" id="bdel-confirm" style="background:#ff5c5c;">Delete ${count} Track${count !== 1 ? 's' : ''}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#bdel-cancel').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#bdel-confirm').addEventListener('click', async () => {
+    overlay.remove();
+    _libSelectionClear();
+    const toDelete = trackIds
+      .map((id) => (state.tracks || []).find((t) => t.id === id))
+      .filter(Boolean);
+    for (const track of toDelete) {
+      await _removeTrackFromLibrary(track);
+    }
+  });
+}
 
 function _wireVirtualDelegation() {
   if (_delegationWired) return; // wire once, never again
@@ -13664,7 +14104,7 @@ function _wireVirtualDelegation() {
     const track = virtualList.items[idx];
     if (!track || track.id !== trackId) return;
 
-    // If click was on the menu / drag-handle, handle separately
+    // If click was on the menu button, open actions menu
     if (e.target.closest(".track-menu")) {
       e.stopPropagation();
       const menuEl = e.target.closest(".track-menu");
@@ -13672,23 +14112,81 @@ function _wireVirtualDelegation() {
       return;
     }
 
-    // Normal row click — play the track
+    // If a drag-select just finished, eat this click — don't play
+    if (_dragJustFinished) {
+      _dragJustFinished = false;
+      return;
+    }
+
+    // Plain click — clear any selection and play the track
+    if (_libSelection.size > 0) _libSelectionClear();
+
     prefetchLyrics(track);
-    // Queue always starts with the clicked track, followed by the rest of the list.
-    // This ensures the queue view always shows: [now playing] → [up next...]
     if (virtualList.mode === "queue") {
-      // Already in queue view — keep current queue, just update index
       state.queue = [...state.queue];
       state.queueIndex = idx;
     } else {
-      // Library/home view — build queue from the rendered (sorted) list,
-      // starting at the clicked index so sort order is preserved.
       const sorted = virtualList.items;
       state.queue = sorted;
       state.queueIndex = idx;
-      state.queueSource = null; // playing from main library
+      state.queueSource = null;
     }
     playTrack(track);
+  });
+
+  // ── Drag-to-select (lasso) ────────────────────────────────────────────
+  // mousedown on a row starts tracking; mousemove with button held extends
+  // the selection range; mouseup finalises it.
+  let _dragSel = { active: false, startIdx: -1 };
+  let _dragJustFinished = false;
+
+  document.addEventListener("mousedown", (e) => {
+    if (virtualList.mode === "queue") return;
+    if (e.button !== 0) return; // left button only
+    const row = e.target.closest(".track-row[data-track-id]");
+    if (!row) return;
+    if (e.target.closest(".track-menu")) return;
+    const windowEl = row.closest("#virtual-track-window");
+    if (!windowEl) return;
+    _dragSel.active = false;
+    _dragSel.startIdx = parseInt(row.dataset.idx, 10);
+    _dragSel._win = windowEl;
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (_dragSel.startIdx < 0) return;
+    if (!(e.buttons & 1)) { _dragSel.startIdx = -1; return; } // button released
+    const row = e.target.closest(".track-row[data-track-id]");
+    if (!row) return;
+    const windowEl = row.closest("#virtual-track-window");
+    if (!windowEl) return;
+    const curIdx = parseInt(row.dataset.idx, 10);
+    if (curIdx === _dragSel.startIdx && !_dragSel.active) return; // haven't moved yet
+    if (!_dragSel.active && _dragSel._win) {
+      _dragSel._win.classList.add('drag-selecting');
+    }
+    _dragSel.active = true;
+    // Rebuild selection as the range from startIdx → curIdx
+    _libSelection.clear();
+    const lo = Math.min(_dragSel.startIdx, curIdx);
+    const hi = Math.max(_dragSel.startIdx, curIdx);
+    for (let i = lo; i <= hi; i++) {
+      const t = virtualList.items[i];
+      if (t) _libSelection.add(t.id);
+    }
+    _updateSelectionBar();
+    _refreshSelectionClasses();
+  });
+
+  document.addEventListener("mouseup", (e) => {
+    if (_dragSel.active) {
+      _dragJustFinished = true;
+      setTimeout(() => { _dragJustFinished = false; }, 0);
+      if (_dragSel._win) _dragSel._win.classList.remove('drag-selecting');
+    }
+    _dragSel.active = false;
+    _dragSel.startIdx = -1;
+    _dragSel._win = null;
   });
 
   // Right-click on a song row → same Actions menu as the 3-dots button
@@ -13727,6 +14225,34 @@ function _wireVirtualDelegation() {
       },
       track,
     );
+  });
+
+  // ── Library multi-select keyboard shortcuts ──
+  document.addEventListener("keydown", (e) => {
+    // Only active when library is visible and selection exists (or Ctrl+A)
+    if (virtualList.mode === "queue") return;
+    if (e.key === "Escape" && _libSelection.size > 0) {
+      e.preventDefault();
+      _libSelectionClear();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+      // Only intercept Ctrl+A when library panel is visible
+      const libPanel = document.getElementById("library-panel") ||
+                       document.querySelector(".library-panel") ||
+                       document.getElementById("virtual-track-window");
+      if (!libPanel) return;
+      if (!libPanel.offsetParent && libPanel.id !== "virtual-track-window") return;
+      const win = document.getElementById("virtual-track-window");
+      if (!win) return;
+      e.preventDefault();
+      _libSelectionSelectAll();
+      return;
+    }
+    if (e.key === "Delete" && _libSelection.size > 0) {
+      e.preventDefault();
+      _batchDeleteTracks([..._libSelection]);
+    }
   });
 
   // ── Queue drag-to-reorder delegation ──
@@ -14248,7 +14774,10 @@ async function playNext() {
         for (let i = 0; i < libTracks.length; i++) {
           if (libTracks[i].id !== curId) pool.push(libTracks[i]);
         }
-        state.queue = pool.length > 0 ? _fastShuffle(pool) : _fastShuffle(libTracks.slice());
+        state.queue =
+          pool.length > 0
+            ? _fastShuffle(pool)
+            : _fastShuffle(libTracks.slice());
         state.queueIndex = 0;
         state.queueSource = null;
       } else {
@@ -14262,7 +14791,9 @@ async function playNext() {
       } else {
         // Single-song queue: look up next song in library using active user sort logic
         if (libTracks.length > 1 && state.currentTrack) {
-          const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
+          const curIdx = libTracks.findIndex(
+            (t) => t.id === state.currentTrack.id,
+          );
           const nextIdx = curIdx >= 0 ? (curIdx + 1) % libTracks.length : 0;
           const after = libTracks.slice(nextIdx);
           const before = libTracks.slice(0, nextIdx);
@@ -14275,9 +14806,15 @@ async function playNext() {
       }
     } else {
       // Repeat is OFF & Shuffle is OFF:
-      if (state.queue.length === 1 && state.currentTrack && libTracks.length > 1) {
+      if (
+        state.queue.length === 1 &&
+        state.currentTrack &&
+        libTracks.length > 1
+      ) {
         // Queue was 1 song: continue with user's library sort order
-        const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
+        const curIdx = libTracks.findIndex(
+          (t) => t.id === state.currentTrack.id,
+        );
         if (curIdx >= 0 && curIdx + 1 < libTracks.length) {
           const after = libTracks.slice(curIdx + 1);
           const before = libTracks.slice(0, curIdx + 1);
@@ -14316,7 +14853,9 @@ async function playPrevious() {
       } else {
         const libTracks = _getSortedLibraryTracks();
         if (libTracks.length > 1 && state.currentTrack) {
-          const curIdx = libTracks.findIndex((t) => t.id === state.currentTrack.id);
+          const curIdx = libTracks.findIndex(
+            (t) => t.id === state.currentTrack.id,
+          );
           const prevIdx = curIdx > 0 ? curIdx - 1 : libTracks.length - 1;
           const after = libTracks.slice(prevIdx);
           const before = libTracks.slice(0, prevIdx);
@@ -14420,9 +14959,7 @@ function _applyRepeatMode(mode) {
     const sorted = state.filteredTracks.length
       ? state.filteredTracks
       : state.tracks;
-    const currentIdx = sorted.findIndex(
-      (t) => t.id === state.currentTrack.id,
-    );
+    const currentIdx = sorted.findIndex((t) => t.id === state.currentTrack.id);
     if (currentIdx >= 0) {
       const after = sorted.slice(currentIdx);
       const before = sorted.slice(0, currentIdx);
@@ -14577,7 +15114,8 @@ function wireSeekCanvas(canvas, squiggly) {
     if (!(isFinite(d) && d > 0) || rc.width <= 0) return;
     const pct = Math.max(0, Math.min(1, (e.clientX - rc.left) / rc.width));
     _tip.textContent = formatTime(pct * d);
-    _tip.style.left = Math.max(28, Math.min(window.innerWidth - 28, e.clientX)) + "px";
+    _tip.style.left =
+      Math.max(28, Math.min(window.innerWidth - 28, e.clientX)) + "px";
     _tip.style.top = rc.top - 6 + "px";
     _tip.classList.add("show");
   });
@@ -15115,7 +15653,9 @@ function updateProgressText(cur, dur) {
   if (typeof cur === "number" && isFinite(cur)) _lastProgressCur = cur;
   if (typeof dur === "number" && isFinite(dur)) _lastProgressDur = dur;
 
-  const validCur = isFinite(_lastProgressCur) ? Math.max(0, _lastProgressCur) : 0;
+  const validCur = isFinite(_lastProgressCur)
+    ? Math.max(0, _lastProgressCur)
+    : 0;
   const validDur =
     isFinite(_lastProgressDur) && _lastProgressDur > 0 ? _lastProgressDur : 0;
 
@@ -16849,7 +17389,6 @@ function _openTagEditor(track) {
     const newGenre = overlay.querySelector("#tag-genre").value.trim();
     const newYear = overlay.querySelector("#tag-year").value.trim();
 
-
     saveBtn.disabled = true;
     saveBtn.textContent = "Saving...";
 
@@ -16896,7 +17435,7 @@ function _openTagEditor(track) {
             state.currentTrack._hasCoverArt = true;
           }
         }
-        
+
         // Re-render current section
         invalidateSectionCache();
         // Invalidate thumbnail cache for this track (cover art may have changed)
@@ -17029,8 +17568,12 @@ closePlaylistMenus = function () {
     max.innerHTML = m ? restoreSvg : maxSvg;
     max.setAttribute("aria-label", m ? "Restore" : "Maximize");
   };
-  document.getElementById("win-min").addEventListener("click", () => inv("window:minimize"));
-  document.getElementById("win-close").addEventListener("click", () => inv("window:close"));
+  document
+    .getElementById("win-min")
+    .addEventListener("click", () => inv("window:minimize"));
+  document
+    .getElementById("win-close")
+    .addEventListener("click", () => inv("window:close"));
   max.addEventListener("click", async () => {
     await inv("window:toggle-maximize");
     sync();

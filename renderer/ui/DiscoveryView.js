@@ -1,13 +1,35 @@
 /**
  * NovaTune — Discovery & Download View
  * Ultra-lightweight UI component matching NovaTune's Spotify-dark aesthetics.
- * Features instant iTunes+Deezer search and one-click 320kbps MP3 download.
+ * Features instant iTunes+Deezer search and one-click M4A download.
  */
 
 class DiscoveryView {
   constructor(container, novaAPI, onPlayTrack, onCheckDuplicate, hooks = {}) {
     this.container = container;
     this.novaAPI = novaAPI;
+    this._fmt = "M4A";
+    this._pf = new Set();
+    container.addEventListener("mouseover", (e) => {
+      const id = e.target.closest?.(".discovery-track-row")?.dataset?.id;
+      if (!id || this._pf.has(id)) return;
+      const t = this.tracks.find((x) => x.id === id);
+      if (t && t.videoId) {
+        this._pf.add(id);
+        novaAPI.invoke("discovery:prefetch", t.videoId).catch(() => {});
+      }
+    });
+    try {
+      novaAPI
+        .invoke("settings:get-all")
+        .then((r) => {
+          if (r?.settings?.downloadFormat === "mp3") this._fmt = "MP3";
+        })
+        .catch(() => {});
+    } catch (_) {}
+    window.addEventListener("dlfmt-changed", (e) => {
+      this._fmt = e.detail === "mp3" ? "MP3" : "M4A";
+    });
     this.onPlayTrack = onPlayTrack;
     this.onCheckDuplicate = onCheckDuplicate;
     this.hooks = hooks || {};
@@ -236,7 +258,7 @@ class DiscoveryView {
             </span>
           </div>
           <p style="color: var(--text-muted); font-size: 14px; margin: 0 0 20px 0;">
-            Search any song and download high-fidelity 320kbps MP3s directly to your library.
+            Search any song and download high-quality M4A audio directly to your library.
           </p>
 
           <div class="discovery-search-wrap" style="position: relative; width: 100%; max-width: none; display: flex; align-items: center;">
@@ -324,7 +346,12 @@ class DiscoveryView {
       );
       if (searchId !== this._searchSeq) return;
       setBusy(false);
-      if (res && res.streamed) return;
+      if (res && res.success && Array.isArray(res.results) && res.results.length > 0) {
+        this.tracks = this._stableMerge(this.tracks, res.results);
+        this._renderResults(this.tracks);
+        return;
+      }
+      if (this.tracks && this.tracks.length > 0) return;
 
       if (res && res.success && Array.isArray(res.results)) {
         this.tracks = res.results;
@@ -431,12 +458,22 @@ class DiscoveryView {
   }
 
   _getDownloadButtonHtml(trackId, state) {
+    if (state.status === "queued") {
+      return `
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted, #888); font-weight: 500;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; opacity: 0.7;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span>Queued</span>
+          <button class="action-cancel-btn" data-id="${trackId}" data-tooltip="Cancel queued download" style="display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);color:#ff6b6b;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;" onmouseover="this.style.background='#ef4444';this.style.color='#fff';" onmouseout="this.style.background='rgba(239,68,68,0.12)';this.style.color='#ff6b6b';"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" style="width:9px;height:9px;"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>Cancel</button>
+        </div>
+      `;
+    }
+
     if (state.status === "downloading" || state.status === "resolving") {
       return `
         <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--green); font-weight: 500;">
           <div style="width: 14px; height: 14px; border: 2px solid color-mix(in srgb, var(--green) 30%, transparent); border-top-color: var(--green); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
           <span>${state.percent || 10}%</span>
-          <button class="action-cancel-btn" data-id="${trackId}" title="Cancel download" style="display:flex;align-items:center;gap:5px;padding:4px 10px 4px 8px;border-radius:999px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);color:#ff6b6b;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;transition:background .15s,color .15s,transform .1s;" onmouseover="this.style.background='#ef4444';this.style.color='#fff';" onmouseout="this.style.background='rgba(239,68,68,0.12)';this.style.color='#ff6b6b';" onmousedown="this.style.transform='scale(0.95)'" onmouseup="this.style.transform=''"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" style="width:10px;height:10px;"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>Cancel</button>
+          <button class="action-cancel-btn" data-id="${trackId}" data-tooltip="Cancel download" style="display:flex;align-items:center;gap:5px;padding:4px 10px 4px 8px;border-radius:999px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);color:#ff6b6b;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;transition:background .15s,color .15s,transform .1s;" onmouseover="this.style.background='#ef4444';this.style.color='#fff';" onmouseout="this.style.background='rgba(239,68,68,0.12)';this.style.color='#ff6b6b';" onmousedown="this.style.transform='scale(0.95)'" onmouseup="this.style.transform=''"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" style="width:10px;height:10px;"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>Cancel</button>
         </div>
       `;
     }
@@ -480,7 +517,7 @@ class DiscoveryView {
           <polyline points="7 10 12 15 17 10" />
           <line x1="12" y1="15" x2="12" y2="3" />
         </svg>
-        <span>320k MP3</span>
+        <span>${this._fmt}</span>
       </button>
     `;
   }
@@ -600,8 +637,11 @@ class DiscoveryView {
       } catch (_) {}
     }
     this._cancelledIds?.delete(track.id);
-    this.downloadStates.set(track.id, { status: "resolving", percent: 5 });
-    this._updateTrackDownloadUI(track.id, { status: "resolving", percent: 5 });
+    const activeCount = Array.from(this.downloadStates.values()).filter(st => st && (st.status === "downloading" || st.status === "resolving" || st.status === "tagging" || st.status === "verifying")).length;
+    const initialStatus = activeCount >= 2 ? "queued" : "resolving";
+    const initialState = { status: initialStatus, percent: initialStatus === "queued" ? 2 : 5 };
+    this.downloadStates.set(track.id, initialState);
+    this._updateTrackDownloadUI(track.id, initialState);
 
     try {
       const res = await this.novaAPI.invoke("discovery:download", track);

@@ -37810,7 +37810,7 @@ var require_package = __commonJS({
   "package.json"(exports2, module2) {
     module2.exports = {
       name: "novatune",
-      version: "1.1.7",
+      version: "1.1.11",
       description: "NovaTune \u2014 A premium Windows music player with Spotify-dark aesthetics",
       main: "main/main.bundle.js",
       scripts: {
@@ -37949,7 +37949,8 @@ var require_ipc = __commonJS({
       miniPlayer: false,
       alwaysOnTop: false,
       hardwareAcceleration: true,
-      outputDevice: "default"
+      outputDevice: "default",
+      downloadFormat: "m4a"
     };
     var _coverArtByIdCache = /* @__PURE__ */ new Map();
     var db = null;
@@ -42880,6 +42881,19 @@ ${items}
         return { success: false, error: err.message };
       }
     });
+    setTimeout(() => {
+      try {
+        DownloadEngine.prewarmDownloader();
+      } catch (_) {
+      }
+    }, 8e3);
+    ipcMain.handle("discovery:prefetch", async (event, videoId) => {
+      try {
+        DownloadEngine.prefetchStream(videoId);
+      } catch (_) {
+      }
+      return true;
+    });
     ipcMain.handle("discovery:search", async (event, query, searchId) => {
       try {
         if (!query || !query.trim()) return { success: true, results: [] };
@@ -42904,8 +42918,15 @@ ${items}
         }
         const musicDir = app.getPath("music") || path.join(app.getPath("userData"), "Downloads");
         const targetFolder = path.join(musicDir, "NovaTune Downloads");
+        const _tStart = Date.now();
+        let _tLast = _tStart;
         const onProgress = (prog) => {
           try {
+            const now = Date.now();
+            const stepMs = now - _tLast;
+            const totalMs = now - _tStart;
+            _tLast = now;
+            console.log(`[DownloadProgress] [+${(totalMs / 1e3).toFixed(1)}s (step: ${(stepMs / 1e3).toFixed(1)}s)] [${trackInfo.trackName || trackInfo.id}] ${prog.percent || 0}% | ${prog.status || ""} | ${prog.message || ""}`);
             event.sender.send("discovery:progress", {
               trackId: trackInfo.id,
               ...prog
@@ -42913,7 +42934,8 @@ ${items}
           } catch (_) {
           }
         };
-        const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress, trackInfo.id);
+        const fmt = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS }).downloadFormat === "mp3" ? "mp3" : "m4a";
+        const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress, trackInfo.id, fmt);
         let parsedTrack = null;
         try {
           const stats = fs.statSync(savedPath);
