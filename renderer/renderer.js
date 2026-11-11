@@ -11454,7 +11454,7 @@ function renderHelp() {
 
       <div class="help-sections">
         <div class="section-panel" id="help-updates-section">
-          <div class="section-panel-title">What's New in v2.0</div>
+          <div class="section-panel-title">What's New in v2.0.0</div>
 
           <div class="help-item">
             <div class="help-item-title">📥 Fast Music Downloader Engine</div>
