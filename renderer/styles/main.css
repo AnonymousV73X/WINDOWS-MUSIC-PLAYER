@@ -2577,11 +2577,8 @@ textarea {
   cursor: default;
   transition: background 0.06s;
   contain: content;
-  /* PERFORMANCE: Promote to GPU layer for zero-cost translateY repositioning.
-     Without this, each scroll frame triggers a full repaint of the row.
-     With this, translateY changes are handled by the compositor thread,
-     not the main thread — zero jank even at 120fps. */
-  will-change: transform;
+  /* No will-change: it would promote every recycled row to its own
+     compositor layer (100+ layers) and make scrolling stutter. */
   /* position:absolute + transform:translateY set by JS — compositing-only repositioning */
 }
 
