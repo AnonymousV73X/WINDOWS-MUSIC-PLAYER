@@ -156,9 +156,11 @@ function _updateSplashStatus(subsystem, status, message) {
     if (!(e.ctrlKey || e.metaKey) || e.repeat) return;
     const key = e.key.toLowerCase();
     const id =
-      key === "r" ? "sidebar-quick-refresh-btn"
-      : e.key === "F5" ? "sidebar-refresh-btn"
-      : null;
+      key === "r"
+        ? "sidebar-quick-refresh-btn"
+        : e.key === "F5"
+          ? "sidebar-refresh-btn"
+          : null;
     if (!id) return;
     e.preventDefault();
     const btn = document.getElementById(id);
