@@ -151,6 +151,19 @@ function _updateSplashStatus(subsystem, status, message) {
     if (!(e.ctrlKey || e.metaKey)) return;
     if (["+", "=", "-", "_", "0"].includes(e.key)) e.preventDefault();
   });
+  // Ctrl+R → quick refresh, Ctrl+F5 → full (heavy) refresh
+  window.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.repeat) return;
+    const key = e.key.toLowerCase();
+    const id =
+      key === "r" ? "sidebar-quick-refresh-btn"
+      : e.key === "F5" ? "sidebar-refresh-btn"
+      : null;
+    if (!id) return;
+    e.preventDefault();
+    const btn = document.getElementById(id);
+    if (btn && !btn.classList.contains("spinning")) btn.click();
+  });
   window.addEventListener("contextmenu", (e) => {
     if (
       e.target.closest &&
@@ -11742,6 +11755,8 @@ function renderHelp() {
             <div class="help-shortcut"><kbd>Ctrl+L</kbd><span>Switch to Light Mode</span></div>
             <div class="help-shortcut"><kbd>Ctrl+D</kbd><span>Switch to Dark Mode</span></div>
             <div class="help-shortcut"><kbd>Ctrl+F</kbd> / <kbd>/</kbd><span>Focus Search</span></div>
+            <div class="help-shortcut"><kbd>Ctrl+R</kbd><span>Quick Refresh (New Songs)</span></div>
+            <div class="help-shortcut"><kbd>Ctrl+F5</kbd><span>Full Refresh</span></div>
             <div class="help-shortcut"><kbd>Esc</kbd><span>Close Overlay / Dialog</span></div>
             <div class="help-shortcut"><kbd>F11</kbd><span>Close Overlay</span></div>
           </div>
