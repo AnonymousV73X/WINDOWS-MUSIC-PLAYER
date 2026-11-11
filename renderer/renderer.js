@@ -16848,17 +16848,17 @@ function _buildNoLyricsHTML(isOverlay = false) {
           <rect x="13" y="0" width="3" height="8" rx="1.2" fill="#4d4d4d"/>
           <rect x="14.5" y="7" width="7" height="6" fill="#6f6f6f"/>
           <circle cx="18" cy="12" r="9" fill="#1c1c1c"/>
-          <circle cx="18" cy="12" r="8" fill="none" stroke="#6a6a6a" stroke-width="1"/>
+          <circle cx="18" cy="12" r="8" fill="none" stroke-width="1" style="stroke:color-mix(in srgb, var(--green,#1db954) 30%, #6a6a6a)"/>
           <path d="M18 12 C18 40 19 52 12 66" fill="none" stroke="#8d8d8d" stroke-width="2.8" stroke-linecap="round"/>
           <path d="M18.7 14 C18.7 40 19.7 52 12.7 65" fill="none" stroke="#e0e0e0" stroke-width="0.9" stroke-linecap="round" opacity="0.8"/>
           <circle cx="18" cy="12" r="5.2" fill="#a9a9a9"/>
           <circle cx="18" cy="12" r="5.2" fill="none" stroke="#ececec" stroke-width="0.6" opacity="0.7"/>
-          <circle cx="18" cy="12" r="2" fill="#3b3b3b"/>
+          <circle cx="18" cy="12" r="2" style="fill:color-mix(in srgb, var(--green,#1db954) 55%, #3b3b3b)"/>
           <g transform="translate(12 66) rotate(18)">
             <rect x="-4.2" y="-1" width="8.4" height="13" rx="1.6" fill="#2a2a2a"/>
             <rect x="-4.2" y="-1" width="2.2" height="13" rx="1" fill="#555"/>
             <rect x="-3" y="10" width="6" height="5" rx="0.8" fill="#141414"/>
-            <rect x="-3" y="10" width="6" height="1" fill="#d9a441"/>
+            <rect x="-3" y="10" width="6" height="1" style="fill:var(--green,#1db954)"/>
           </g>
         </svg></div>
         <div class="lyrics-nolyrics-visualizer" data-accent="${accentColor}">
