@@ -9583,3 +9583,8 @@ textarea,
 * {
   overscroll-behavior: contain;
 }
+
+/* While scrolling: no hover/hit-testing on rows (avoids per-frame style recalcs) */
+.track-area.is-scrolling .virtual-track-window {
+  pointer-events: none;
+}

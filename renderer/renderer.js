@@ -13527,6 +13527,7 @@ function _ensureSlotPool() {
   virtualList.poolSize = Math.max(virtualList.poolSize, needed);
 }
 
+let _scrollEndTimer = 0;
 function scheduleVirtualRender() {
   // ── Velocity-gated overscan ──
   const now = performance.now();
@@ -13549,6 +13550,17 @@ function scheduleVirtualRender() {
     _lastScrollTime = now;
   }
 
+  if (area && !area.classList.contains("is-scrolling")) {
+    const _w = $("virtual-track-window");
+    if (!_w || !_w.classList.contains("drag-selecting"))
+      area.classList.add("is-scrolling");
+  }
+  clearTimeout(_scrollEndTimer);
+  _scrollEndTimer = setTimeout(() => {
+    const a = $("track-area");
+    if (a) a.classList.remove("is-scrolling");
+  }, 120);
+
   clearTimeout(_velocityIdleTimer);
   _velocityIdleTimer = setTimeout(() => {
     if (VIRTUAL_ROW_BUFFER !== VIRTUAL_ROW_BUFFER_BASE) {
@@ -13557,6 +13569,13 @@ function scheduleVirtualRender() {
       renderVirtualRows();
     }
     _scrollVelocity = 0;
+    // Fill in thumbnails that were deferred during the fast scroll.
+    for (const [trackId, slot] of virtualList.activeSlots) {
+      if (!slot._thumbDeferred) continue;
+      const i = parseInt(slot.dataset.idx, 10);
+      const t = virtualList.items[i];
+      if (t && t.id === trackId) _populateSlot(slot, t, i);
+    }
   }, 150);
 
   if (virtualList.raf) return;
@@ -13759,7 +13778,12 @@ function _populateSlot(row, track, idx) {
   //   sees SOMETHING within ~50ms of the row scrolling into view.
   let artHtml;
   const bitmap = thumbnailAtlas.get(track.id);
-  if (bitmap) {
+  const _deferThumb = !bitmap && _scrollVelocity > VELOCITY_THRESHOLD;
+  row._thumbDeferred = _deferThumb;
+  if (_deferThumb) {
+    // Fast scroll: skip image loads / bitmap builds; filled in when idle.
+    artHtml = `<div class="art-placeholder art-${artIdx}">${isActive ? "" : "🎵"}</div>`;
+  } else if (bitmap) {
     // Canvas size matches CSS size (42×42 track-thumb) × DPR for crispness.
     // The bitmap is already THUMBNAIL_SIZE×THUMBNAIL_SIZE pixels.
     const canvasW = THUMB_DPR * 42;
@@ -13877,21 +13901,49 @@ function _populateSlot(row, track, idx) {
     row._isInitialized = true;
   }
 
-  row._nameNode.textContent = displayTitle;
-  row._artistNode.textContent = getArtistText(track);
-  row._yearNode.textContent = track.year || "";
-  row._albumNode.textContent = track.album || "Unknown Album";
-  row._durationNode.textContent = formatTime(track.duration);
-  row._thumbNode.innerHTML = `${thumbInner}${artHtml}${eqHtml}`;
-  row._menuNode.className = menuClass;
-  row._menuNode.innerHTML = menuSvg;
+  const _set = (node, v) => {
+    if (node.textContent !== v) node.textContent = v;
+  };
+  _set(row._nameNode, displayTitle);
+  _set(row._artistNode, getArtistText(track));
+  _set(row._yearNode, String(track.year || ""));
+  _set(row._albumNode, track.album || "Unknown Album");
+  _set(row._durationNode, formatTime(track.duration));
+  // Fast path: same thumb layout → keep the canvas, just redraw the bitmap.
+  let _fastDrawn = false;
+  if (
+    bitmap &&
+    !isQueue &&
+    row._thumbMode === "bitmap" &&
+    row._thumbActive === isActive &&
+    row._thumbCanvas &&
+    row._thumbCanvas.isConnected
+  ) {
+    const cv = row._thumbCanvas;
+    cv.dataset.bitmapId = track.id;
+    const cx = cv.getContext("2d");
+    cx.clearRect(0, 0, cv.width, cv.height);
+    cx.drawImage(bitmap, 0, 0, THUMB_DPR * 42, THUMB_DPR * 42);
+    _fastDrawn = true;
+  } else {
+    row._thumbNode.innerHTML = `${thumbInner}${artHtml}${eqHtml}`;
+    row._thumbMode = bitmap && !_deferThumb ? "bitmap" : "other";
+    row._thumbActive = isActive;
+    row._thumbCanvas = null;
+  }
+  if (row._menuClass !== menuClass) {
+    row._menuNode.className = menuClass;
+    row._menuNode.innerHTML = menuSvg;
+    row._menuClass = menuClass;
+  }
 
   // ── Draw bitmap to canvas if atlas entry exists ──
-  if (bitmap) {
+  if (bitmap && !_fastDrawn) {
     const canvas = row.querySelector(".track-thumb-canvas");
     if (canvas) {
       const ctx = canvas.getContext("2d");
       ctx.drawImage(bitmap, 0, 0, THUMB_DPR * 42, THUMB_DPR * 42);
+      row._thumbCanvas = canvas;
     }
   }
 
