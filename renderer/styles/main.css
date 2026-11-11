@@ -71,20 +71,22 @@
   height: 100%;
   color: var(--green, #1ed760) !important;
   opacity: 0;
-  will-change: opacity;
-  animation: splash-icon-cycle 12s linear infinite;
+  visibility: hidden;
+  transition:
+    opacity 0.3s ease,
+    visibility 0s linear 0.3s;
 }
-.splash-cycle-icon:nth-of-type(1) {
-  animation-delay: 0s;
+/* Pre-JS fallback: only the first icon is shown. */
+.splash-icon-wrap:not(.is-cycling) .splash-cycle-icon:first-of-type {
+  opacity: 1;
+  visibility: visible;
 }
-.splash-cycle-icon:nth-of-type(2) {
-  animation-delay: -3s;
-}
-.splash-cycle-icon:nth-of-type(3) {
-  animation-delay: -6s;
-}
-.splash-cycle-icon:nth-of-type(4) {
-  animation-delay: -9s;
+.splash-cycle-icon.is-active {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 0.3s ease,
+    visibility 0s;
 }
 .splash-icon-glow {
   position: absolute;
