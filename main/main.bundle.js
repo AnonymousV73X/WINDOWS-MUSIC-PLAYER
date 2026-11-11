@@ -37810,7 +37810,7 @@ var require_package = __commonJS({
   "package.json"(exports2, module2) {
     module2.exports = {
       name: "novatune",
-      version: "1.1.11",
+      version: "2.0.0",
       description: "NovaTune \u2014 A premium Windows music player with Spotify-dark aesthetics",
       main: "main/main.bundle.js",
       scripts: {
@@ -37823,7 +37823,7 @@ var require_package = __commonJS({
         zip: "node zip.js"
       },
       author: "NovaTune",
-      license: "MIT",
+      license: "FOR SALE",
       devDependencies: {
         electron: "^28.1.0",
         "electron-builder": "^24.9.1",
