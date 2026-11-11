@@ -1832,6 +1832,8 @@ function scrollToCurrentTrack() {
   }
 }
 // ─── Scroll-to-playing pill ────────────────────────────────────────
+let _pillRaf = 0;
+const _pillIdxCache = { items: null, len: -1, id: null, idx: -1 };
 function _updateScrollPill() {
   const pill = document.getElementById("scroll-to-track-pill");
   if (!pill) return;
@@ -1842,9 +1844,18 @@ function _updateScrollPill() {
     pill.classList.add("hidden");
     return;
   }
-  const idx = virtualList.items.findIndex(
-    (t) => t.id === state.currentTrack.id,
-  );
+  const _c = _pillIdxCache;
+  if (
+    _c.items !== virtualList.items ||
+    _c.len !== virtualList.items.length ||
+    _c.id !== state.currentTrack.id
+  ) {
+    _c.items = virtualList.items;
+    _c.len = virtualList.items.length;
+    _c.id = state.currentTrack.id;
+    _c.idx = virtualList.items.findIndex((t) => t.id === state.currentTrack.id);
+  }
+  const idx = _c.idx;
   if (idx < 0) {
     pill.classList.add("hidden");
     return;
@@ -1860,7 +1871,13 @@ function _updateScrollPill() {
     rowTop + VIRTUAL_ROW_HEIGHT <= area.scrollTop + area.clientHeight;
   if (inView) {
     pill.classList.add("hidden");
+  } else if (
+    pill._key === state.currentTrack.id + ":" + state.isPlaying &&
+    !pill.classList.contains("hidden")
+  ) {
+    return; // already up to date — nothing to rewrite while scrolling
   } else {
+    pill._key = state.currentTrack.id + ":" + state.isPlaying;
     // Update art
     const pillArt = document.getElementById("scroll-pill-art");
     const pillTitle = document.getElementById("scroll-pill-title");
@@ -1927,11 +1944,15 @@ document.addEventListener("DOMContentLoaded", () => {
     area.addEventListener(
       "scroll",
       () => {
-        if (
-          state.activeNavSection === "library" ||
-          state.activeNavSection === "queue"
-        )
-          _updateScrollPill();
+        if (_pillRaf) return;
+        _pillRaf = requestAnimationFrame(() => {
+          _pillRaf = 0;
+          if (
+            state.activeNavSection === "library" ||
+            state.activeNavSection === "queue"
+          )
+            _updateScrollPill();
+        });
       },
       { passive: true },
     );
