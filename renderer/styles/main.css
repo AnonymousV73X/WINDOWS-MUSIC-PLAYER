@@ -3143,52 +3143,27 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
 /* Tonearm — rests beside the disc when paused, swings onto it when playing */
 .lyrics-tonearm {
   position: absolute;
-  top: calc(var(--v) * -0.06);
-  right: calc(var(--v) * -0.16);
-  width: calc(var(--v) * 0.22);
-  height: calc(var(--v) * 0.8);
-  transform-origin: 50% 12%;
-  transform: rotate(0deg);
-  transition: transform 0.9s cubic-bezier(0.4, 0, 0.2, 1);
+  top: calc(var(--v) * -0.08);
+  right: calc(var(--v) * -0.2);
+  width: calc(var(--v) * 0.36);
+  height: calc(var(--v) * 0.9);
+  transform-origin: 50% 13.33%;
+  transform: rotate(-10deg);
+  transition: transform 1.1s cubic-bezier(0.3, 0.1, 0.2, 1);
   z-index: 4;
   pointer-events: none;
-  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45));
-  background: radial-gradient(
-    circle at 50% 12%,
-    #2b2b2b 0,
-    #2b2b2b calc(var(--v) * 0.045),
-    #8a8a8a calc(var(--v) * 0.047),
-    #8a8a8a calc(var(--v) * 0.058),
-    transparent calc(var(--v) * 0.06)
-  );
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.5));
 }
 
-.lyrics-tonearm::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 12%;
-  width: calc(var(--v) * 0.03);
-  height: 70%;
-  transform: translateX(-50%);
-  border-radius: 2px;
-  background: linear-gradient(to right, #bdbdbd, #7a7a7a);
-}
-
-.lyrics-tonearm::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 80%;
-  width: calc(var(--v) * 0.07);
-  height: calc(var(--v) * 0.1);
-  transform: translateX(-50%) rotate(14deg);
-  border-radius: 2px;
-  background: linear-gradient(to bottom, #d0d0d0, #8c8c8c);
+.lyrics-tonearm svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
 }
 
 body.is-playing .lyrics-tonearm {
-  transform: rotate(24deg);
+  transform: rotate(14deg);
 }
 
 /* Overlay variant — larger vinyl for the full-screen view */
