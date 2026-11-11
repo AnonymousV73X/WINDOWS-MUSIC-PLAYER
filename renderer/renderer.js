@@ -1,3 +1,4 @@
+
 /**
  * NovaTune — Renderer Entry Point  [v1.1.11]
  * Wires the user's custom UI to the Electron backend.
@@ -16843,6 +16844,7 @@ function _buildNoLyricsHTML(isOverlay = false) {
     <div class="lyrics-empty-anim${overlayClass}">
       <div class="lyrics-nolyrics-vinyl">
         ${coverSrc ? `<img src="${coverSrc}" alt="" class="lyrics-nolyrics-cover" onerror="this.style.display='none'">` : ""}
+        <div class="lyrics-tonearm"></div>
         <div class="lyrics-nolyrics-visualizer" data-accent="${accentColor}">
           <div class="nolyric-bar" style="--i:0"></div>
           <div class="nolyric-bar" style="--i:1"></div>
