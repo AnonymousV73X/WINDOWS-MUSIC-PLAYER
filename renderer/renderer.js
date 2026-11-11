@@ -14928,6 +14928,13 @@ function togglePlayPause(forceState) {
   }
 }
 
+// Click the no-lyrics vinyl to pause/resume (delegated: markup is re-rendered).
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".lyrics-nolyrics-vinyl")) return;
+  if (!state.currentTrack) return;
+  togglePlayPause();
+});
+
 function _fastShuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = (Math.random() * (i + 1)) | 0;
