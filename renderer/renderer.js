@@ -7544,7 +7544,9 @@ function _applyUiScale(scale) {
  * "firefly"  = glowing pulsing head with a fading light-trail behind it
  */
 function _applySquigglyThumbStyle(style) {
-  const s = ["amoeba", "snake", "pacman", "ant", "firefly"].includes(style)
+  const s = ["amoeba", "boring", "snake", "pacman", "ant", "firefly"].includes(
+    style,
+  )
     ? style
     : "circle";
   if (squigglyNP) squigglyNP.setThumbStyle(s);
