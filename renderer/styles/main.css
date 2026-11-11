@@ -3072,6 +3072,7 @@ body:not(.is-playing) .nolyric-bar {
 
 /* ── Task 2: No-lyrics cover art + visualizer ── */
 .lyrics-nolyrics-vinyl {
+  cursor: pointer;
   --v: 100px;
   position: relative;
   width: var(--v);
