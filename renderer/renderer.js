@@ -4452,7 +4452,7 @@ function _wireAddFolder() {
       // Directly inject the new tracks into the live library — no secondary
       // round-trip needed since quick-scan already returned the track objects.
       await _applyIDBThumbs(allNewTracks);
-      state.tracks.push(...allNewTracks);
+      state.tracks.push(..._dropKnownTracks(allNewTracks));
       state.filteredTracks = [...state.tracks];
       if (state.sortKey) _sortTracks(state.sortKey, state.sortAsc);
       invalidateSectionCache();
@@ -6352,7 +6352,7 @@ async function _partialLibraryUpdate() {
 
     // Add new tracks
     if (newTracks.length > 0) {
-      state.tracks.push(...newTracks);
+      state.tracks.push(..._dropKnownTracks(newTracks));
     }
 
     // Update filtered tracks
@@ -6569,7 +6569,7 @@ async function _loadRemainingPages(startPage, pageSize, totalTracks) {
       });
       if (result?.success && result.tracks?.length > 0) {
         await _applyIDBThumbs(result.tracks);
-        state.tracks.push(...result.tracks);
+        state.tracks.push(..._dropKnownTracks(result.tracks));
       }
     } catch (err) {
       console.warn(`[progressive] Failed to load page ${page}:`, err.message);
@@ -13368,13 +13368,45 @@ function getArtIndex(track) {
   return Math.abs(hash) % 5; // match CSS art‑gradient classes (0‑4)
 }
 
+// Slots are keyed by track id — a duplicate id in the list leaves an empty
+// gap at its first index. Returns the same array when already unique.
+function _uniqueById(list) {
+  const seen = new Set();
+  let dup = false;
+  for (let i = 0; i < list.length; i++) {
+    const id = list[i] && list[i].id;
+    if (seen.has(id)) {
+      dup = true;
+      break;
+    }
+    seen.add(id);
+  }
+  if (!dup) return list;
+  seen.clear();
+  return list.filter((t) => {
+    if (!t || seen.has(t.id)) return false;
+    seen.add(t.id);
+    return true;
+  });
+}
+
+// Drop incoming tracks already in state.tracks (and dupes within the batch).
+function _dropKnownTracks(incoming) {
+  const known = new Set(state.tracks.map((t) => t.id));
+  return incoming.filter((t) => {
+    if (!t || known.has(t.id)) return false;
+    known.add(t.id);
+    return true;
+  });
+}
+
 function renderTracks(list, mode = "library") {
   const container = $("track-list");
   const headers = $("col-headers");
   if (headers) headers.style.display = _colHeadersAllowed() ? "" : "none";
   container.className = "virtual-track-list";
   container.innerHTML = "";
-  virtualList.items = Array.isArray(list) ? list : [];
+  virtualList.items = _uniqueById(Array.isArray(list) ? list : []);
   virtualList.mode = mode;
   if (virtualList.raf) {
     cancelAnimationFrame(virtualList.raf);
