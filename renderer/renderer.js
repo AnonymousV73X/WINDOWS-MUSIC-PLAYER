@@ -137,6 +137,34 @@ function _updateSplashStatus(subsystem, status, message) {
   setTimeout(swap, 3000);
 })();
 
+// Native-app feel: no zoom, no stray browser context menu, no file-drop
+// navigation. Inputs keep their native menu (cut/copy/paste).
+(function _lockBrowserBehaviors() {
+  window.addEventListener(
+    "wheel",
+    (e) => {
+      if (e.ctrlKey || e.metaKey) e.preventDefault();
+    },
+    { passive: false },
+  );
+  window.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (["+", "=", "-", "_", "0"].includes(e.key)) e.preventDefault();
+  });
+  window.addEventListener("contextmenu", (e) => {
+    if (
+      e.target.closest &&
+      e.target.closest(
+        "input, textarea, [contenteditable='true'], .lyrics-body",
+      )
+    )
+      return;
+    e.preventDefault();
+  });
+  window.addEventListener("dragover", (e) => e.preventDefault());
+  window.addEventListener("drop", (e) => e.preventDefault());
+})();
+
 function _renderSplashStatus() {
   const panel = document.getElementById("splash-status");
   if (!panel) return; // splash may already be removed

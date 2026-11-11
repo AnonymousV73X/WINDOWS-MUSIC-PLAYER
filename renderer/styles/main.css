@@ -9545,3 +9545,44 @@ body.expanded-sidebar .sidebar-search {
 .seek-hover-tip.show {
   opacity: 1;
 }
+
+/* ── Native-app feel ───────────────────────────────────────────── */
+html,
+body {
+  overscroll-behavior: none;
+  cursor: default;
+}
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+img,
+svg,
+canvas {
+  -webkit-user-drag: none;
+}
+a,
+button,
+[role="button"],
+.track-row,
+.playlist-song-row {
+  cursor: pointer;
+}
+button:focus:not(:focus-visible),
+[tabindex]:focus:not(:focus-visible) {
+  outline: none;
+}
+/* Text stays selectable only where it's content the user types or reads */
+input,
+textarea,
+[contenteditable="true"],
+.lyrics-body,
+.lyrics-editor,
+.selectable {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+/* Every scroll region is contained — no bounce / scroll chaining */
+* {
+  overscroll-behavior: contain;
+}
