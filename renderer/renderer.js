@@ -9433,7 +9433,7 @@ function closePlaylistMenus() {
  * Shows: Add to Playlist →, Add Next to Queue, Tag Editor, Delete Song.
  * "Add to Playlist" opens a sub-popup with playlist list.
  */
-function openActionsMenu(anchor, track) {
+function openActionsMenu(anchor, track, opts = {}) {
   // TOGGLE BEHAVIOR: same anchor → close
   if (_playlistMenuOpener && _playlistMenuOpener === anchor) {
     closePlaylistMenus();
@@ -9471,6 +9471,14 @@ function openActionsMenu(anchor, track) {
       Properties
     </button>
     <div class="context-menu-divider"></div>
+    ${
+      opts.onRemove
+        ? `<button type="button" class="context-menu-danger" data-action="remove-from-card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex-shrink:0;vertical-align:-2px;"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      ${escapeHtml(opts.removeLabel || "Remove")}
+    </button>`
+        : ""
+    }
     <button type="button" class="context-menu-danger" data-action="delete">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex-shrink:0;vertical-align:-2px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
       ${isInQueue ? "Remove from Queue" : "Delete Song"}
@@ -9583,6 +9591,13 @@ function openActionsMenu(anchor, track) {
     if (btn.dataset.action === "properties") {
       closePlaylistMenus();
       _openTrackProperties(track);
+      return;
+    }
+
+    // ── Card-specific: remove from playlist/card ──
+    if (btn.dataset.action === "remove-from-card") {
+      closePlaylistMenus();
+      await opts.onRemove?.();
       return;
     }
 
@@ -13348,24 +13363,9 @@ function renderPlaylistDetail(playlistId) {
       state.queueIndex = 0;
       playTrack(track);
     });
-    dotsBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      // Toggle remove pill
-      const existing = row.querySelector(".playlist-remove-pill");
-      if (existing) {
-        existing.remove();
-        return;
-      }
-      // Close any other open pills
-      document
-        .querySelectorAll(".playlist-remove-pill")
-        .forEach((p) => p.remove());
-      const pill = document.createElement("button");
-      pill.className = "playlist-remove-pill";
-      pill.type = "button";
-      pill.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg> Remove`;
-      pill.addEventListener("click", async (ev) => {
-        ev.stopPropagation();
+    row._menuOpts = {
+      removeLabel: "Remove from Playlist",
+      onRemove: async () => {
         const result = await window.novaAPI.invoke(
           "playlist:remove-track",
           playlist.id,
@@ -13376,15 +13376,17 @@ function renderPlaylistDetail(playlistId) {
             (p) => p.id === playlist.id,
           );
           if (playlistIdx >= 0) state.playlists[playlistIdx] = result.playlist;
-          // Invalidate collage cache since track list changed
           _invalidateCollageCache(playlist.id);
           _syncHeartButton();
           _activePanelTarget = _getPanel("playlists");
           renderPlaylistDetail(playlist.id);
           _activePanelTarget = null;
         }
-      });
-      row.appendChild(pill);
+      },
+    };
+    dotsBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openActionsMenu(dotsBtn, track, row._menuOpts);
     });
     list.appendChild(row);
   });
@@ -14432,6 +14434,7 @@ function _wireVirtualDelegation() {
         }),
       },
       track,
+      row._menuOpts || {},
     );
   });
 
