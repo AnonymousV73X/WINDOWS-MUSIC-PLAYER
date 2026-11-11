@@ -156,11 +156,9 @@ function _updateSplashStatus(subsystem, status, message) {
     if (!(e.ctrlKey || e.metaKey) || e.repeat) return;
     const key = e.key.toLowerCase();
     const id =
-      key === "r"
-        ? "sidebar-quick-refresh-btn"
-        : e.key === "F5"
-          ? "sidebar-refresh-btn"
-          : null;
+      key === "r" ? "sidebar-quick-refresh-btn"
+      : e.key === "F5" ? "sidebar-refresh-btn"
+      : null;
     if (!id) return;
     e.preventDefault();
     const btn = document.getElementById(id);
@@ -11579,7 +11577,50 @@ function renderHelp() {
 
       <div class="help-sections">
         <div class="section-panel" id="help-updates-section">
-          <div class="section-panel-title">What's New in v1.1.11</div>
+          <div class="section-panel-title">What's New in v2.0.1</div>
+
+          <div class="help-item">
+            <div class="help-item-title">🎛️ Song Actions Everywhere</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>Full Actions Menu in Playlists:</strong> Song rows in playlist cards now open the same Actions menu as the Music Library (button or right-click), with a dedicated <strong>Remove from Playlist</strong> option kept right inside it.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="help-item">
+            <div class="help-item-title">💿 Interactive Vinyl &amp; Tonearm</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>Realistic Tonearm:</strong> The no-lyrics vinyl now has a detailed tonearm that rests beside the record when paused and swings onto it when playing, subtly tinted with your accent color.</li>
+                <li><strong>Click to Play / Pause:</strong> Click the vinyl to pause or resume the current song.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="help-item">
+            <div class="help-item-title">⌨️ Refresh Shortcuts</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>Ctrl+R:</strong> Quick Refresh &mdash; picks up new songs only.</li>
+                <li><strong>Ctrl+F5:</strong> Full Refresh &mdash; rescans your whole library.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="help-item">
+            <div class="help-item-title">🛠️ Bug Fixes &amp; Improvements</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>Tooltips Always on Top:</strong> Tooltips now render above every card and panel, and are never clipped by overflow.</li>
+                <li><strong>Boring Progress Style:</strong> The Boring style now shows a true straight progress bar instead of falling back to the squiggle.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-panel" id="help-updates-section-prev-1111">
+          <div class="section-panel-title">Previously in v1.1.11</div>
 
           <div class="help-item">
             <div class="help-item-title">📥 Fast Music Downloader Engine</div>
