@@ -152,13 +152,7 @@ function _updateSplashStatus(subsystem, status, message) {
     if (["+", "=", "-", "_", "0"].includes(e.key)) e.preventDefault();
   });
   window.addEventListener("contextmenu", (e) => {
-    if (
-      e.target.closest &&
-      e.target.closest(
-        "input, textarea, [contenteditable='true'], .lyrics-body",
-      )
-    )
-      return;
+    if (e.target.closest && e.target.closest("input, textarea, [contenteditable='true'], .lyrics-body")) return;
     e.preventDefault();
   });
   window.addEventListener("dragover", (e) => e.preventDefault());
@@ -1412,7 +1406,7 @@ const VIRTUAL_ROW_HEIGHT = 58;
 // 15 rows × 58px = 870px of overscan above + below viewport.
 // This means rows are pre-rendered almost a full screen before they
 // scroll into view, eliminating the "blank space then rows show" stutter.
-const VIRTUAL_ROW_BUFFER_BASE = 15;
+const VIRTUAL_ROW_BUFFER_BASE = 10;
 let VIRTUAL_ROW_BUFFER = VIRTUAL_ROW_BUFFER_BASE;
 let searchDebounceTimer = null;
 let scrollEndTimer = null;
@@ -3103,6 +3097,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   // which would init the AudioContext without the source node connected.
 
   console.log("NovaTune ready!");
+
+  
 
   // Dismiss splash screen only after the audio engine has finished buffering
   // the restored track (or after a hard cap on HDD). This ensures
@@ -13519,7 +13515,6 @@ function _ensureSlotPool() {
     row.style.right = "0";
     row.style.height = VIRTUAL_ROW_HEIGHT + "px";
     row.style.transform = "translateY(0)";
-    row.style.willChange = "transform";
     row.style.display = "none";
     row._trackId = null;
     pool.push(row);
@@ -13543,7 +13538,7 @@ function scheduleVirtualRender() {
         // 15 × 3 = 45 rows of overscan = ~2600px above + below.
         // This is a lot of DOM but each row is just a <div> with innerHTML —
         // the bitmap canvas is only drawn if the bitmap exists.
-        VIRTUAL_ROW_BUFFER = VIRTUAL_ROW_BUFFER_BASE * 3;
+        VIRTUAL_ROW_BUFFER = VIRTUAL_ROW_BUFFER_BASE * 2;
       }
     }
     _lastScrollTop = currentScrollTop;
@@ -13623,7 +13618,6 @@ function renderVirtualRows() {
       row.style.right = "0";
       row.style.height = VIRTUAL_ROW_HEIGHT + "px";
       row.style.transform = "translateY(0)";
-      row.style.willChange = "transform";
       row.style.display = "none";
       row._trackId = null;
       virtualList.slotPool.push(row);
@@ -13674,7 +13668,6 @@ function renderVirtualRows() {
       slot.style.left = "0";
       slot.style.right = "0";
       slot.style.height = VIRTUAL_ROW_HEIGHT + "px";
-      slot.style.willChange = "transform";
       slot._trackId = null;
       virtualList.slotPool.push(slot);
     }
@@ -13903,9 +13896,9 @@ function _populateSlot(row, track, idx) {
 
 // ─── Inject multi-select CSS (once) ──────────────────────────────────
 (function _injectMultiSelectCSS() {
-  if (document.getElementById("nova-multiselect-css")) return;
-  const style = document.createElement("style");
-  style.id = "nova-multiselect-css";
+  if (document.getElementById('nova-multiselect-css')) return;
+  const style = document.createElement('style');
+  style.id = 'nova-multiselect-css';
   style.textContent = `
     /* ── Selected row highlight (no checkbox — pure drag-lasso selection) ── */
     .track-row.lib-selected {
@@ -14014,13 +14007,13 @@ function _libSelectionSelectAll() {
 
 // Apply/remove .lib-selected class to all visible rows in the virtual window
 function _refreshSelectionClasses() {
-  const win = document.getElementById("virtual-track-window");
+  const win = document.getElementById('virtual-track-window');
   if (!win) return;
-  win.querySelectorAll(".track-row[data-track-id]").forEach((row) => {
+  win.querySelectorAll('.track-row[data-track-id]').forEach((row) => {
     if (_libSelection.has(row.dataset.trackId)) {
-      row.classList.add("lib-selected");
+      row.classList.add('lib-selected');
     } else {
-      row.classList.remove("lib-selected");
+      row.classList.remove('lib-selected');
     }
   });
 }
@@ -14028,15 +14021,15 @@ function _refreshSelectionClasses() {
 // Show/hide the floating selection action bar
 function _updateSelectionBar() {
   const count = _libSelection.size;
-  let bar = document.getElementById("lib-selection-bar");
+  let bar = document.getElementById('lib-selection-bar');
   if (count === 0) {
     if (bar) bar.remove();
     return;
   }
   if (!bar) {
-    bar = document.createElement("div");
-    bar.id = "lib-selection-bar";
-    bar.className = "lib-selection-bar";
+    bar = document.createElement('div');
+    bar.id = 'lib-selection-bar';
+    bar.className = 'lib-selection-bar';
     bar.innerHTML = `
       <span class="lib-sel-count"></span>
       <div class="lib-sel-actions">
@@ -14053,27 +14046,26 @@ function _updateSelectionBar() {
         </button>
       </div>
     `;
-    bar.querySelector(".lib-sel-share").addEventListener("click", (e) => {
+    bar.querySelector('.lib-sel-share').addEventListener('click', (e) => {
       e.stopPropagation();
       _batchShareLanbeam([..._libSelection]);
     });
-    bar.querySelector(".lib-sel-delete").addEventListener("click", (e) => {
+    bar.querySelector('.lib-sel-delete').addEventListener('click', (e) => {
       e.stopPropagation();
       _batchDeleteTracks([..._libSelection]);
     });
-    bar.querySelector(".lib-sel-clear").addEventListener("click", (e) => {
+    bar.querySelector('.lib-sel-clear').addEventListener('click', (e) => {
       e.stopPropagation();
       _libSelectionClear();
     });
-    const panel =
-      document.getElementById("library-panel") ||
-      document.getElementById("content-area") ||
-      document.getElementById("main-content") ||
-      document.body;
+    const panel = document.getElementById('library-panel') ||
+                  document.getElementById('content-area') ||
+                  document.getElementById('main-content') ||
+                  document.body;
     panel.appendChild(bar);
   }
-  bar.querySelector(".lib-sel-count").textContent =
-    count === 1 ? "1 track selected" : `${count} tracks selected`;
+  bar.querySelector('.lib-sel-count').textContent =
+    count === 1 ? '1 track selected' : `${count} tracks selected`;
 }
 
 // ─── Batch LANBeam share: resolve exe once, then send files one by one ───
@@ -14082,54 +14074,35 @@ async function _batchShareLanbeam(trackIds) {
   const inv = (ch, ...a) => window.novaAPI.invoke(ch, ...a);
   let exe = state.settings.lanbeamPath;
   if (exe) {
-    const check = await inv("share:find-lanbeam");
+    const check = await inv('share:find-lanbeam');
     if (!check?.success || check.path !== exe) {
       exe = check?.success ? check.path : null;
-      if (exe) {
-        state.settings.lanbeamPath = exe;
-        await saveSetting("lanbeamPath", exe);
-      }
+      if (exe) { state.settings.lanbeamPath = exe; await saveSetting('lanbeamPath', exe); }
     }
   }
   if (!exe) {
-    const f = await inv("share:find-lanbeam");
-    if (f?.success) {
-      exe = f.path;
-      state.settings.lanbeamPath = exe;
-      await saveSetting("lanbeamPath", exe);
-    }
+    const f = await inv('share:find-lanbeam');
+    if (f?.success) { exe = f.path; state.settings.lanbeamPath = exe; await saveSetting('lanbeamPath', exe); }
   }
   if (!exe) {
-    _showActionToast("LANBeam", "downloading from GitHub…");
-    const installRes = await inv("share:install-lanbeam");
+    _showActionToast('LANBeam', 'downloading from GitHub…');
+    const installRes = await inv('share:install-lanbeam');
     if (installRes?.success && installRes.path) {
-      exe = installRes.path;
-      state.settings.lanbeamPath = exe;
-      await saveSetting("lanbeamPath", exe);
-      _showActionToast("LANBeam", "installed successfully!");
+      exe = installRes.path; state.settings.lanbeamPath = exe; await saveSetting('lanbeamPath', exe);
+      _showActionToast('LANBeam', 'installed successfully!');
     } else {
-      const pick = await inv("share:pick-app");
-      if (pick?.success) {
-        exe = pick.path;
-        state.settings.lanbeamPath = exe;
-        await saveSetting("lanbeamPath", exe);
-      }
+      const pick = await inv('share:pick-app');
+      if (pick?.success) { exe = pick.path; state.settings.lanbeamPath = exe; await saveSetting('lanbeamPath', exe); }
     }
   }
-  if (!exe) {
-    _showActionToast("LANBeam", "could not find LANBeam");
-    return;
-  }
+  if (!exe) { _showActionToast('LANBeam', 'could not find LANBeam'); return; }
 
   const tracks = trackIds
     .map((id) => (state.tracks || []).find((t) => t.id === id))
     .filter(Boolean)
     .filter((t) => t.filePath);
 
-  if (tracks.length === 0) {
-    _showActionToast("LANBeam", "no local files found");
-    return;
-  }
+  if (tracks.length === 0) { _showActionToast('LANBeam', 'no local files found'); return; }
 
   _libSelectionClear();
 
@@ -14137,41 +14110,37 @@ async function _batchShareLanbeam(trackIds) {
   for (const track of tracks) {
     _showActionToast(
       `Sending ${sent + 1}/${tracks.length}`,
-      track.title || track.filePath.split(/[\\/]/).pop(),
+      track.title || track.filePath.split(/[\\/]/).pop()
     );
-    const res = await inv("share:launch-app", exe, track.filePath);
+    const res = await inv('share:launch-app', exe, track.filePath);
     if (res?.success) sent++;
     await new Promise((r) => setTimeout(r, 350));
   }
-  _showActionToast("LANBeam", `${sent}/${tracks.length} files queued`);
+  _showActionToast('LANBeam', `${sent}/${tracks.length} files queued`);
 }
 
 // ─── Batch delete with a single confirmation dialog ───────────────────
 async function _batchDeleteTracks(trackIds) {
   if (!trackIds || trackIds.length === 0) return;
   const count = trackIds.length;
-  const overlay = document.createElement("div");
-  overlay.className = "tag-editor-overlay delete-confirm-overlay";
+  const overlay = document.createElement('div');
+  overlay.className = 'tag-editor-overlay delete-confirm-overlay';
   overlay.innerHTML = `
     <div class="tag-editor-card delete-confirm-card">
-      <h3 style="color:#ff5c5c;">Delete ${count} Song${count !== 1 ? "s" : ""}</h3>
+      <h3 style="color:#ff5c5c;">Delete ${count} Song${count !== 1 ? 's' : ''}</h3>
       <p style="color:var(--text-secondary);margin:12px 0 20px;line-height:1.5;">
-        Permanently delete <strong style="color:var(--text-primary);">${count} track${count !== 1 ? "s" : ""}</strong> from your library?<br>
+        Permanently delete <strong style="color:var(--text-primary);">${count} track${count !== 1 ? 's' : ''}</strong> from your library?<br>
         <span style="font-size:12px;opacity:0.7;">Files will be permanently removed from disk. This cannot be undone.</span>
       </p>
       <div class="tag-editor-actions">
         <button class="btn-cancel" id="bdel-cancel">Cancel</button>
-        <button class="btn-save" id="bdel-confirm" style="background:#ff5c5c;">Delete ${count} Track${count !== 1 ? "s" : ""}</button>
+        <button class="btn-save" id="bdel-confirm" style="background:#ff5c5c;">Delete ${count} Track${count !== 1 ? 's' : ''}</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
-  overlay
-    .querySelector("#bdel-cancel")
-    .addEventListener("click", () => overlay.remove());
-  overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) overlay.remove();
-  });
-  overlay.querySelector("#bdel-confirm").addEventListener("click", async () => {
+  overlay.querySelector('#bdel-cancel').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#bdel-confirm').addEventListener('click', async () => {
     overlay.remove();
     _libSelectionClear();
     const toDelete = trackIds
@@ -14288,10 +14257,7 @@ function _wireVirtualDelegation() {
 
   document.addEventListener("mousemove", (e) => {
     if (_dragSel.startIdx < 0) return;
-    if (!(e.buttons & 1)) {
-      _dragSel.startIdx = -1;
-      return;
-    } // button released
+    if (!(e.buttons & 1)) { _dragSel.startIdx = -1; return; } // button released
     const row = e.target.closest(".track-row[data-track-id]");
     if (!row) return;
     const windowEl = row.closest("#virtual-track-window");
@@ -14299,7 +14265,7 @@ function _wireVirtualDelegation() {
     const curIdx = parseInt(row.dataset.idx, 10);
     if (curIdx === _dragSel.startIdx && !_dragSel.active) return; // haven't moved yet
     if (!_dragSel.active && _dragSel._win) {
-      _dragSel._win.classList.add("drag-selecting");
+      _dragSel._win.classList.add('drag-selecting');
     }
     _dragSel.active = true;
     // Rebuild selection as the range from startIdx → curIdx
@@ -14317,10 +14283,8 @@ function _wireVirtualDelegation() {
   document.addEventListener("mouseup", (e) => {
     if (_dragSel.active) {
       _dragJustFinished = true;
-      setTimeout(() => {
-        _dragJustFinished = false;
-      }, 0);
-      if (_dragSel._win) _dragSel._win.classList.remove("drag-selecting");
+      setTimeout(() => { _dragJustFinished = false; }, 0);
+      if (_dragSel._win) _dragSel._win.classList.remove('drag-selecting');
     }
     _dragSel.active = false;
     _dragSel.startIdx = -1;
@@ -14376,13 +14340,11 @@ function _wireVirtualDelegation() {
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
       // Only intercept Ctrl+A when library panel is visible
-      const libPanel =
-        document.getElementById("library-panel") ||
-        document.querySelector(".library-panel") ||
-        document.getElementById("virtual-track-window");
+      const libPanel = document.getElementById("library-panel") ||
+                       document.querySelector(".library-panel") ||
+                       document.getElementById("virtual-track-window");
       if (!libPanel) return;
-      if (!libPanel.offsetParent && libPanel.id !== "virtual-track-window")
-        return;
+      if (!libPanel.offsetParent && libPanel.id !== "virtual-track-window") return;
       const win = document.getElementById("virtual-track-window");
       if (!win) return;
       e.preventDefault();
