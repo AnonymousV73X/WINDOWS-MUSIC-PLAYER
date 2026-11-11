@@ -16857,10 +16857,8 @@ function _buildNoLyricsHTML(isOverlay = false) {
           <g transform="translate(12 66) rotate(18)">
             <rect x="-4.2" y="-1" width="8.4" height="13" rx="1.6" fill="#2a2a2a"/>
             <rect x="-4.2" y="-1" width="2.2" height="13" rx="1" fill="#555"/>
-            <path d="M4 2 L9 -1.5" stroke="#9a9a9a" stroke-width="1.2" stroke-linecap="round"/>
             <rect x="-3" y="10" width="6" height="5" rx="0.8" fill="#141414"/>
             <rect x="-3" y="10" width="6" height="1" fill="#d9a441"/>
-            <path d="M-0.7 15 L0 18.5 L0.7 15 Z" fill="#eee"/>
           </g>
         </svg></div>
         <div class="lyrics-nolyrics-visualizer" data-accent="${accentColor}">
