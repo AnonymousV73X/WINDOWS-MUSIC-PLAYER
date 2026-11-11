@@ -7955,14 +7955,14 @@ body.is-playing .ov-play svg,
    sidebar and render those tooltips as real DOM nodes appended to
    <body> instead (see initSidebarTooltipPortal in renderer.js), which
    are free to overflow the sidebar's bounds. */
-.sidebar [data-tooltip]::before,
-.sidebar [data-tooltip]::after {
-  display: none;
+[data-tooltip]::before,
+[data-tooltip]::after {
+  display: none !important;
 }
 
 .sidebar-tooltip-portal {
   position: fixed;
-  z-index: 20000;
+  z-index: 2147483647;
   background: #282828;
   color: #fff;
   font-size: 11px;

@@ -4248,12 +4248,15 @@ function _sortTracks() {
 // reused and repositioned on each hover.
 let _sidebarTooltipEl = null;
 function _initSidebarTooltipPortal() {
-  const sidebar = $("sidebar");
-  if (!sidebar) return;
+  // Global portal tooltip: every [data-tooltip] in the app renders as a
+  // <body>-level node (max z-index, position:fixed) so no ancestor overflow
+  // or stacking context can clip or cover it. Flips below when no room above.
+  let current = null;
 
   function show(target) {
     const text = target.getAttribute("data-tooltip");
     if (!text) return;
+    current = target;
     if (!_sidebarTooltipEl) {
       _sidebarTooltipEl = document.createElement("div");
       _sidebarTooltipEl.className = "sidebar-tooltip-portal";
@@ -4261,46 +4264,44 @@ function _initSidebarTooltipPortal() {
     }
     _sidebarTooltipEl.textContent = text;
     const rect = target.getBoundingClientRect();
-    // Position above and horizontally centered on the target, then clamp
-    // so it can overflow the sidebar freely but still stays on-screen.
     _sidebarTooltipEl.style.left = "0px";
     _sidebarTooltipEl.style.top = "0px";
     _sidebarTooltipEl.classList.add("visible");
-    // Measure after content/visibility is set so offsetWidth is accurate.
     const tw = _sidebarTooltipEl.offsetWidth;
     const th = _sidebarTooltipEl.offsetHeight;
     let left = rect.left + rect.width / 2 - tw / 2;
     left = Math.max(6, Math.min(left, window.innerWidth - tw - 6));
-    const top = rect.top - th - 10;
+    let top = rect.top - th - 10;
+    if (top < 6) top = rect.bottom + 10;
+    top = Math.max(6, Math.min(top, window.innerHeight - th - 6));
     _sidebarTooltipEl.style.left = `${left}px`;
-    _sidebarTooltipEl.style.top = `${Math.max(6, top)}px`;
+    _sidebarTooltipEl.style.top = `${top}px`;
   }
 
   function hide() {
+    current = null;
     if (_sidebarTooltipEl) _sidebarTooltipEl.classList.remove("visible");
   }
 
-  // Delegate so dynamically-added sidebar content (folder list, etc.)
-  // still gets tooltips without re-binding listeners.
-  sidebar.addEventListener(
+  document.addEventListener(
     "mouseover",
     (e) => {
-      const target = e.target.closest("[data-tooltip]");
-      if (target && sidebar.contains(target)) show(target);
+      const target = e.target.closest?.("[data-tooltip]");
+      if (target) show(target);
+      else if (current) hide();
     },
     true,
   );
-  sidebar.addEventListener(
+  document.addEventListener(
     "mouseout",
     (e) => {
-      const target = e.target.closest("[data-tooltip]");
-      if (target && sidebar.contains(target)) hide();
+      if (current && !current.contains(e.relatedTarget)) hide();
     },
     true,
   );
-  // Also hide on scroll so a stale tooltip doesn't float away from its
-  // (now-scrolled) target.
-  sidebar.addEventListener("scroll", hide);
+  document.addEventListener("mousedown", hide, true);
+  window.addEventListener("scroll", hide, true);
+  window.addEventListener("blur", hide);
 }
 
 function _wireAddFolder() {
