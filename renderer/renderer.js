@@ -14990,8 +14990,13 @@ function togglePlayPause(forceState) {
 
 // Click the no-lyrics vinyl to pause/resume (delegated: markup is re-rendered).
 document.addEventListener("click", (e) => {
-  if (!e.target.closest(".lyrics-nolyrics-vinyl")) return;
+  const vinyl = e.target.closest(".lyrics-nolyrics-vinyl");
+  if (!vinyl) return;
   if (!state.currentTrack) return;
+  const ov = vinyl.closest(".np-overlay");
+  if (ov && !ov.classList.contains("open")) return;
+  const lp = vinyl.closest(".lyrics-panel");
+  if (lp && (lp.classList.contains("closed") || (lp.classList.contains("floating") && !lp.classList.contains("float-open")))) return;
   togglePlayPause();
 });
 
