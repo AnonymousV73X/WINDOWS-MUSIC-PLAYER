@@ -15108,14 +15108,13 @@ async function playNext() {
           state.queueIndex = 0;
           state.queueSource = null;
         } else {
-          state.queueIndex = state.queue.length - 1;
-          audioEngine.pause();
-          return;
+          state.queueIndex = 0;
         }
+      } else if (state.queue && state.queue.length > 0) {
+        // Queue finished: loop/restart the queue from the current section rather than falling silent
+        state.queueIndex = 0;
       } else {
-        state.queueIndex = state.queue.length - 1;
-        audioEngine.pause();
-        return;
+        state.queueIndex = 0;
       }
     }
   }
