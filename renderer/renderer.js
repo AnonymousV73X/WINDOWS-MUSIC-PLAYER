@@ -156,9 +156,11 @@ function _updateSplashStatus(subsystem, status, message) {
     if (!(e.ctrlKey || e.metaKey) || e.repeat) return;
     const key = e.key.toLowerCase();
     const id =
-      key === "r" ? "sidebar-quick-refresh-btn"
-      : e.key === "F5" ? "sidebar-refresh-btn"
-      : null;
+      key === "r"
+        ? "sidebar-quick-refresh-btn"
+        : e.key === "F5"
+          ? "sidebar-refresh-btn"
+          : null;
     if (!id) return;
     e.preventDefault();
     const btn = document.getElementById(id);
@@ -14996,7 +14998,13 @@ document.addEventListener("click", (e) => {
   const ov = vinyl.closest(".np-overlay");
   if (ov && !ov.classList.contains("open")) return;
   const lp = vinyl.closest(".lyrics-panel");
-  if (lp && (lp.classList.contains("closed") || (lp.classList.contains("floating") && !lp.classList.contains("float-open")))) return;
+  if (
+    lp &&
+    (lp.classList.contains("closed") ||
+      (lp.classList.contains("floating") &&
+        !lp.classList.contains("float-open")))
+  )
+    return;
   togglePlayPause();
 });
 
