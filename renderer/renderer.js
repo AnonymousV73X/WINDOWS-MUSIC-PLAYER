@@ -17319,7 +17319,7 @@ function _createFloatingNavCard() {
 
   const card = document.createElement("div");
   card.id = "floating-nav-card";
-  card.className = "floating-nav-card";ssss
+  card.className = "floating-nav-card";
 
   // Mark the currently active section
   const activeSection = state.activeNavSection || "library";
