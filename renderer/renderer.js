@@ -243,6 +243,12 @@ function _renderSplashStatus() {
 }
 
 // ─── State ─────────────────────────────────────────────────────────
+let _cachedSettings = {};
+try {
+  const _raw = localStorage.getItem("novatune_settings");
+  if (_raw) _cachedSettings = JSON.parse(_raw) || {};
+} catch (_) {}
+
 const state = {
   tracks: [],
   filteredTracks: [],
@@ -255,8 +261,8 @@ const state = {
   volume: 0.5,
   currentView: "library",
   currentTab: "songs",
-  sortKey: "dateAdded",
-  sortAsc: false,
+  sortKey: _cachedSettings.sortKey || "dateAdded",
+  sortAsc: typeof _cachedSettings.sortAsc === "boolean" ? _cachedSettings.sortAsc : false,
   overlayOpen: false,
   sidebarOpen: false,
   activeNavSection: "library",
@@ -266,7 +272,7 @@ const state = {
   playingPlaylistId: null,
   _playingFromPlaylistCard: false,
   queueSource: null, // { type: 'artist'|'album'|'playlist', name: string } | null (null = music library)
-  settings: {},
+  settings: _cachedSettings,
   equalizer: new Array(10).fill(0),
   eqEnabled: true,
   volumeBoost: 1.0,
@@ -4247,6 +4253,24 @@ function _sortTracks() {
     let vb = b[key];
     if (va === undefined || va === null) va = "";
     if (vb === undefined || vb === null) vb = "";
+
+    // Numeric comparison for duration, year, trackNumber, bitrate, fileSize
+    if (
+      key === "duration" ||
+      key === "year" ||
+      key === "trackNumber" ||
+      key === "bitrate" ||
+      key === "fileSize" ||
+      key === "sampleRate" ||
+      key === "dateAdded"
+    ) {
+      const na = Number(va) || 0;
+      const nb = Number(vb) || 0;
+      if (na < nb) return state.sortAsc ? -1 : 1;
+      if (na > nb) return state.sortAsc ? 1 : -1;
+      return 0;
+    }
+
     if (typeof va === "string") va = va.toLowerCase();
     if (typeof vb === "string") vb = vb.toLowerCase();
     if (va < vb) return state.sortAsc ? -1 : 1;
@@ -5159,6 +5183,8 @@ async function _resolveCoverArt(track) {
   // use nova-media://art/{trackId} to serve it from the main process's SQLite cache.
   // This is the key fix that makes ALL embedded cover art display without re-fetching.
   if (!track.coverArt && track._hasCoverArt) {
+    // Validate the embedded art is a real image — not an SVG placeholder.
+    // We trust nova-media://art/ protocol which serves raw bytes from DB; just set URL.
     track.coverArt = `nova-media://art/${encodeURIComponent(track.id)}`;
     _applyCoverArtToTrack(track);
     return;
@@ -5251,6 +5277,101 @@ async function _resolveCoverArt(track) {
         })
         .catch(() => {});
     }
+  }
+}
+
+/**
+ * Robust per-track cover art refill.
+ * Calls coverart:refill-track IPC (validates real image, searches filesystem + iTunes/Deezer).
+ * force=true clears existing art first (from actions menu "Refill Cover Art").
+ */
+function _showCoverArtToast(msg) {
+  const existing = document.querySelector(".action-toast");
+  if (existing) existing.remove();
+  const toast = document.createElement("div");
+  toast.className = "action-toast";
+  toast.innerHTML = `<span>${escapeHtml(msg)}</span>`;
+  document.body.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.add("action-toast-exit");
+    setTimeout(() => toast.remove(), 250);
+  }, 2200);
+}
+
+async function _refillTrackCoverArt(track, force = false) {
+  if (!track || !window.novaAPI) return;
+
+  _showCoverArtToast(`Searching cover art for "${track.title || "track"}"…`);
+
+  // Visual pulse on the track row
+  const rows = document.querySelectorAll(`[data-track-id="${track.id}"]`);
+  rows.forEach(r => r.style.opacity = "0.5");
+
+  try {
+    const res = await window.novaAPI.invoke("coverart:refill-track", { trackId: track.id, force });
+    if (res?.success && res.coverArt) {
+      track.coverArt = res.coverArt;
+      track._hasCoverArt = true;
+      // Bust caches and thumbnails
+      _coverArtSearchCache.delete(track.id);
+      _exhaustiveSearchCache.delete(track.filePath || "");
+      const albumKey = `${getArtistText(track)}::${track.album || ""}`.toLowerCase();
+      _albumArtCache.delete(albumKey);
+      thumbnailAtlas.delete(track.id);
+      _applyCoverArtToTrack(track);
+      _showCoverArtToast(`Cover art ${res.source === "online" ? "found online ✓" : "updated ✓"}`);
+    } else if (res?.success && !res.coverArt) {
+      _showCoverArtToast("No cover art found online or locally");
+    } else {
+      _showCoverArtToast("Cover art refill failed");
+    }
+  } catch (err) {
+    console.error("[RefillArt]", err);
+    _showCoverArtToast("Cover art refill error");
+  } finally {
+    rows.forEach(r => r.style.opacity = "");
+  }
+}
+
+/**
+ * Batch refill all missing cover art in the library.
+ * Called from Settings → "Refill Thumbnails" button.
+ */
+async function _refillAllCoverArt(btn) {
+  if (!window.novaAPI) return;
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Scanning…";
+
+  // Listen for per-track progress
+  const progressHandler = (data) => {
+    if (data && data.total > 0) {
+      btn.textContent = `Filling… ${data.filled}/${data.total}`;
+    }
+  };
+  window.novaAPI.on?.("coverart:refill-progress", progressHandler);
+
+  try {
+    const res = await window.novaAPI.invoke("coverart:refill-all", { force: false });
+    if (res?.success) {
+      _showCoverArtToast(`Cover art refill done — ${res.filled} filled, ${res.skipped} skipped`);
+      // Re-resolve art for tracks that got filled
+      if (res.filled > 0 && state.tracks) {
+        for (const t of state.tracks) {
+          if (!t.coverArt && !t._hasCoverArt) continue;
+          _coverArtSearchCache.delete(t.id);
+          _applyCoverArtToTrack(t);
+        }
+      }
+    } else {
+      _showCoverArtToast("Refill failed: " + (res?.error || "unknown error"));
+    }
+  } catch (err) {
+    _showCoverArtToast("Refill error");
+  } finally {
+    window.novaAPI.off?.("coverart:refill-progress", progressHandler);
+    btn.disabled = false;
+    btn.textContent = origText;
   }
 }
 
@@ -6830,6 +6951,9 @@ async function _loadSettings() {
     if (state.settings.sortKey) state.sortKey = state.settings.sortKey;
     if (typeof state.settings.sortAsc === "boolean")
       state.sortAsc = state.settings.sortAsc;
+    try {
+      localStorage.setItem("novatune_settings", JSON.stringify(state.settings));
+    } catch (_) {}
     state.customQueues = Array.isArray(state.settings.customQueues)
       ? state.settings.customQueues
       : [];
@@ -6854,6 +6978,9 @@ async function _loadSettings() {
 
 async function saveSetting(key, value) {
   state.settings[key] = value;
+  try {
+    localStorage.setItem("novatune_settings", JSON.stringify(state.settings));
+  } catch (_) {}
   try {
     await window.novaAPI.invoke("settings:set", key, value);
   } catch (err) {
@@ -8140,6 +8267,23 @@ function renderSettings() {
         ${foldersListHtml}
         <button class="settings-row action" id="settings-open-library" style="margin-top:12px;">Back to Music Library</button>
       </div>
+
+      <!-- Row 6: Cover Art -->
+      <div class="section-panel">
+        <div class="section-panel-title">Cover Art</div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;">Auto-fills missing album art by searching your music files, then iTunes &amp; Deezer online. Only fills tracks with no valid cover art.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="settings-row action" id="settings-refill-thumbs" style="flex:1;min-width:140px;margin-bottom:0;display:flex;align-items:center;gap:7px;justify-content:center;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            Refill Thumbnails
+          </button>
+          <button class="settings-row action" id="settings-refill-thumbs-force" style="flex:1;min-width:140px;margin-bottom:0;background:var(--surface);display:flex;align-items:center;gap:7px;justify-content:center;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Re-search All Art
+          </button>
+        </div>
+        <div id="refill-art-status" style="font-size:11px;color:var(--text-muted);margin-top:8px;min-height:16px;"></div>
+      </div>
     </div>
 
     <div style="height:30px;"></div>
@@ -8489,6 +8633,44 @@ function renderSettings() {
   $("settings-open-library")?.addEventListener("click", () =>
     navigateFromSurface("library"),
   );
+
+  // ── Refill Thumbnails (missing art only) ──
+  $("settings-refill-thumbs")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const statusEl = $("refill-art-status");
+    if (statusEl) statusEl.textContent = "Searching for missing cover art…";
+    await _refillAllCoverArt(btn);
+    if (statusEl) statusEl.textContent = "Done!";
+    setTimeout(() => { if (statusEl) statusEl.textContent = ""; }, 4000);
+  });
+
+  // ── Re-search All Art (force: re-searches even existing art) ──
+  $("settings-refill-thumbs-force")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const statusEl = $("refill-art-status");
+    if (statusEl) statusEl.textContent = "Re-searching art for all tracks…";
+    btn.disabled = true;
+    btn.textContent = "Re-searching…";
+    try {
+      const res = await window.novaAPI.invoke("coverart:refill-all", { force: true });
+      if (res?.success) {
+        _showCoverArtToast(`Re-search done — ${res.filled} art(s) updated`);
+        if (statusEl) statusEl.textContent = `Done — ${res.filled} updated, ${res.skipped} skipped`;
+        setTimeout(() => { if (statusEl) statusEl.textContent = ""; }, 5000);
+        if (res.filled > 0 && state.tracks) {
+          for (const t of state.tracks) {
+            _coverArtSearchCache.delete(t.id);
+            _applyCoverArtToTrack(t);
+          }
+        }
+      }
+    } catch(_) {
+      if (statusEl) statusEl.textContent = "Error during re-search";
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Re-search All Art";
+    }
+  });
 
   // Refresh all folders
   $("settings-refresh-all")?.addEventListener("click", async () => {
@@ -9545,6 +9727,10 @@ function openActionsMenu(anchor, track, opts = {}) {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;vertical-align:-2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
       Properties
     </button>
+    <button type="button" data-action="refill-art">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;vertical-align:-2px;"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+      Refill Cover Art
+    </button>
     <div class="context-menu-divider"></div>
     ${
       opts.onRemove
@@ -9666,6 +9852,13 @@ function openActionsMenu(anchor, track, opts = {}) {
     if (btn.dataset.action === "properties") {
       closePlaylistMenus();
       _openTrackProperties(track);
+      return;
+    }
+
+    // ── Refill Cover Art ──
+    if (btn.dataset.action === "refill-art") {
+      closePlaylistMenus();
+      _refillTrackCoverArt(track, true);
       return;
     }
 

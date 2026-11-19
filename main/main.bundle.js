@@ -37941,6 +37941,8 @@ var require_ipc = __commonJS({
       scanFolders: [],
       sortOrder: "title",
       sortDirection: "asc",
+      sortKey: "dateAdded",
+      sortAsc: false,
       // v1.1.7 — Card sort settings for Albums / Artists / Playlists views.
       // Options: "songCountDesc" (most songs first), "songCountAsc" (fewest first),
       //          "alphaAsc" (A→Z), "alphaDesc" (Z→A),
@@ -42825,23 +42827,51 @@ ${items}
           return { success: true, coverArt: null };
         }
         const dir = path.dirname(track.filePath);
-        const siblings = library.filter(
-          (t) => t.id !== trackId && t.filePath && path.dirname(t.filePath) === dir && (t.coverArt || t._hasCoverArt)
-        );
+        const trackAlbum = (track.album || "").trim().toLowerCase();
+        const trackArtist = (track.artist || "").trim().toLowerCase();
+        const isSpecialFolder = /downloads|desktop|music$/i.test(dir);
+        const siblings = library.filter((t) => {
+          if (t.id === trackId || !t.filePath || path.dirname(t.filePath) !== dir) return false;
+          if (!t.coverArt && !t._hasCoverArt) return false;
+          if (isSpecialFolder || !trackAlbum || trackAlbum === "unknown album") {
+            const sibArtist = (t.artist || "").trim().toLowerCase();
+            const sibAlbum = (t.album || "").trim().toLowerCase();
+            if (trackArtist && trackArtist !== "unknown artist" && sibArtist === trackArtist) return true;
+            if (trackAlbum && trackAlbum !== "unknown album" && sibAlbum === trackAlbum) return true;
+            return false;
+          }
+          return true;
+        });
         if (siblings.length === 0) {
           return { success: true, coverArt: null };
         }
-        const sibling = siblings[0];
-        let coverArt = sibling.coverArt;
-        if (!coverArt && sibling._hasCoverArt) {
-          coverArt = getCoverArtByTrackId(sibling.id);
+        for (const sibling of siblings) {
+          let coverArt = sibling.coverArt;
+          if (!coverArt && sibling._hasCoverArt) {
+            coverArt = getCoverArtByTrackId(sibling.id);
+          }
+          if (coverArt) {
+            let valid = false;
+            if (coverArt.startsWith("data:")) {
+              const b64 = coverArt.split(",")[1];
+              if (b64) valid = _isValidCoverArtBuffer(Buffer.from(b64, "base64")).valid;
+            } else if (fs.existsSync(coverArt)) {
+              try {
+                valid = _isValidCoverArtBuffer(fs.readFileSync(coverArt)).valid;
+              } catch (_) {
+              }
+            }
+            if (valid) {
+              return {
+                success: true,
+                coverArt,
+                sourceTrackId: sibling.id,
+                sourceTitle: sibling.title
+              };
+            }
+          }
         }
-        return {
-          success: true,
-          coverArt,
-          sourceTrackId: sibling.id,
-          sourceTitle: sibling.title
-        };
+        return { success: true, coverArt: null };
       } catch (err) {
         return { success: false, error: err.message, coverArt: null };
       }
@@ -43039,6 +43069,267 @@ ${items}
         return { success: cancelled };
       } catch (err) {
         console.error("[IPC] discovery:cancel error:", err);
+        return { success: false, error: err.message };
+      }
+    });
+    function _isValidCoverArtBuffer(buf) {
+      if (!buf || buf.length < 1500) return { valid: false, reason: "too_small" };
+      const isPng = buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71;
+      const isJpeg = buf[0] === 255 && buf[1] === 216 && buf[2] === 255;
+      const isWebp = buf.length >= 12 && buf[0] === 82 && buf[1] === 73 && buf[8] === 87 && buf[9] === 69;
+      const isGif = buf[0] === 71 && buf[1] === 73 && buf[2] === 70;
+      const isBmp = buf[0] === 66 && buf[1] === 77;
+      if (!isPng && !isJpeg && !isWebp && !isGif && !isBmp) return { valid: false, reason: "not_image" };
+      const head = buf.slice(0, Math.min(512, buf.length)).toString("latin1").toLowerCase();
+      if (head.includes("<svg") || head.includes("<?xml")) return { valid: false, reason: "svg_xml" };
+      return { valid: true };
+    }
+    function _fetchImageBuffer(url, timeoutMs = 8e3) {
+      return new Promise((resolve, reject) => {
+        try {
+          const req = net.request({ url, redirect: "follow" });
+          const chunks = [];
+          let size = 0;
+          req.on("response", (res) => {
+            if (res.statusCode < 200 || res.statusCode >= 300) {
+              reject(new Error(`HTTP ${res.statusCode}`));
+              return;
+            }
+            res.on("data", (c) => {
+              chunks.push(c);
+              size += c.length;
+            });
+            res.on("end", () => resolve(Buffer.concat(chunks, size)));
+            res.on("error", reject);
+          });
+          req.on("error", reject);
+          const timer = setTimeout(() => {
+            try {
+              req.abort();
+            } catch (_) {
+            }
+            reject(new Error("timeout"));
+          }, timeoutMs);
+          req.on("response", () => clearTimeout(timer));
+          req.end();
+        } catch (e) {
+          reject(e);
+        }
+      });
+    }
+    async function _searchOnlineCoverArt(artist, title, album) {
+      const cleanArtist = (artist || "").replace(/unknown artist/i, "").trim();
+      const cleanTitle = (title || "").trim();
+      const cleanAlbum = (album || "").replace(/unknown album/i, "").trim();
+      const searches = [
+        cleanArtist && cleanTitle ? `${cleanArtist} ${cleanTitle}` : null,
+        cleanArtist && cleanAlbum ? `${cleanArtist} ${cleanAlbum}` : null,
+        cleanTitle ? cleanTitle : null
+      ].filter(Boolean);
+      for (const q of searches) {
+        try {
+          const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=musicTrack&limit=5&media=music`;
+          const req = net.request(itunesUrl);
+          const data = await new Promise((res, rej) => {
+            const c = [];
+            req.on("response", (r) => {
+              r.on("data", (d) => c.push(d));
+              r.on("end", () => res(Buffer.concat(c).toString()));
+              r.on("error", rej);
+            });
+            req.on("error", rej);
+            req.end();
+          });
+          const json = JSON.parse(data);
+          const results = json?.results || [];
+          for (const r of results) {
+            if (!r.artworkUrl100) continue;
+            const artUrl = r.artworkUrl100.replace(/100x100bb/g, "3000x3000bb").replace(/100x100/g, "3000x3000");
+            try {
+              const buf = await _fetchImageBuffer(artUrl, 8e3);
+              if (_isValidCoverArtBuffer(buf).valid) return { url: artUrl, buf };
+            } catch (_) {
+            }
+          }
+        } catch (_) {
+        }
+        try {
+          const deezerUrl = `https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=5`;
+          const req2 = net.request(deezerUrl);
+          const data2 = await new Promise((res, rej) => {
+            const c = [];
+            req2.on("response", (r) => {
+              r.on("data", (d) => c.push(d));
+              r.on("end", () => res(Buffer.concat(c).toString()));
+              r.on("error", rej);
+            });
+            req2.on("error", rej);
+            req2.end();
+          });
+          const json2 = JSON.parse(data2);
+          for (const r of json2?.data || []) {
+            const artUrl = r.album?.cover_xl || r.album?.cover_big || r.album?.cover_medium;
+            if (!artUrl) continue;
+            try {
+              const buf = await _fetchImageBuffer(artUrl, 8e3);
+              if (_isValidCoverArtBuffer(buf).valid) return { url: artUrl, buf };
+            } catch (_) {
+            }
+          }
+        } catch (_) {
+        }
+      }
+      return null;
+    }
+    ipcMain.handle("coverart:refill-track", async (event, { trackId, force } = {}) => {
+      try {
+        if (!trackId) return { success: false, error: "trackId required" };
+        const library = getLibrary();
+        const track = library.find((t) => t.id === trackId);
+        if (!track) return { success: false, error: "Track not found" };
+        if (!force && track._hasCoverArt) {
+          const existing = getCoverArtByTrackId(trackId);
+          if (existing) {
+            let isValid = false;
+            if (existing.startsWith("data:")) {
+              const b64 = existing.split(",")[1];
+              if (b64) {
+                const buf = Buffer.from(b64, "base64");
+                isValid = _isValidCoverArtBuffer(buf).valid;
+              }
+            } else if (fs.existsSync(existing)) {
+              const buf = fs.readFileSync(existing);
+              isValid = _isValidCoverArtBuffer(buf).valid;
+            }
+            if (isValid) return { success: true, coverArt: existing, source: "embedded" };
+          }
+        }
+        if (!force && track.coverArt && typeof track.coverArt === "string") {
+          const ca = track.coverArt;
+          let isValid = false;
+          if (ca.startsWith("data:")) {
+            const buf = Buffer.from(ca.split(",")[1] || "", "base64");
+            isValid = _isValidCoverArtBuffer(buf).valid;
+          } else if (fs.existsSync(ca)) {
+            const buf = fs.readFileSync(ca);
+            isValid = _isValidCoverArtBuffer(buf).valid;
+          }
+          if (isValid) return { success: true, coverArt: ca, source: "existing" };
+        }
+        if (track.filePath && fs.existsSync(track.filePath)) {
+          const dir = path.dirname(track.filePath);
+          const IMAGE_EXTS = /* @__PURE__ */ new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp"]);
+          const COMMON = ["cover", "folder", "album", "front", "artwork", "art", "thumbnail"];
+          const audioName = path.basename(track.filePath, path.extname(track.filePath)).toLowerCase();
+          let files = [];
+          try {
+            files = fs.readdirSync(dir);
+          } catch (_) {
+          }
+          const candidates = [];
+          for (const f of files) {
+            const ext = path.extname(f).toLowerCase();
+            if (!IMAGE_EXTS.has(ext)) continue;
+            const nameNoExt = path.basename(f, ext).toLowerCase();
+            let pri = 99;
+            if (f.toLowerCase().includes(".novaart")) pri = 0;
+            else if (nameNoExt === audioName) pri = 1;
+            else if (COMMON.includes(nameNoExt)) pri = 2;
+            else if (nameNoExt.startsWith("albumart")) pri = 3;
+            candidates.push({ path: path.join(dir, f), pri });
+          }
+          candidates.sort((a, b) => a.pri - b.pri);
+          for (const c of candidates) {
+            try {
+              const buf = fs.readFileSync(c.path);
+              if (_isValidCoverArtBuffer(buf).valid) {
+                track.coverArt = c.path;
+                track._hasCoverArt = true;
+                db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(JSON.stringify(track), trackId);
+                if (libraryById?.has(trackId)) libraryById.get(trackId).coverArt = c.path;
+                db.prepare("INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)").run(trackId, c.path);
+                return { success: true, coverArt: c.path, source: "filesystem" };
+              }
+            } catch (_) {
+            }
+          }
+        }
+        const artist = track.artist || "";
+        const title = track.title || "";
+        const album = track.album || "";
+        const online = await _searchOnlineCoverArt(artist, title, album);
+        if (online) {
+          let sidecarPath = null;
+          if (track.filePath) {
+            sidecarPath = track.filePath.replace(/\.[^.]+$/, ".novaart.jpg");
+            try {
+              fs.writeFileSync(sidecarPath, online.buf);
+              track.coverArt = sidecarPath;
+              track._hasCoverArt = true;
+              db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(JSON.stringify(track), trackId);
+              if (libraryById?.has(trackId)) libraryById.get(trackId).coverArt = sidecarPath;
+              db.prepare("INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)").run(trackId, sidecarPath);
+            } catch (e) {
+              sidecarPath = online.url;
+            }
+          }
+          return { success: true, coverArt: sidecarPath || online.url, source: "online" };
+        }
+        return { success: true, coverArt: null, source: "none" };
+      } catch (err) {
+        console.error("[coverart:refill-track]", err.message);
+        return { success: false, error: err.message };
+      }
+    });
+    ipcMain.handle("coverart:refill-all", async (event, { force } = {}) => {
+      try {
+        const library = getLibrary();
+        const missing = force ? library : library.filter((t) => !t.coverArt && !t._hasCoverArt);
+        let filled = 0;
+        let skipped = 0;
+        const total = missing.length;
+        const win = require("electron").BrowserWindow.getAllWindows()[0];
+        const sendProgress2 = (n) => {
+          if (win && !win.isDestroyed()) {
+            win.webContents.send("coverart:refill-progress", { filled, skipped, total, current: n });
+          }
+        };
+        for (let i = 0; i < missing.length; i++) {
+          const t = missing[i];
+          sendProgress2(i + 1);
+          try {
+            const res = await new Promise(
+              (r) => ipcMain.emit("coverart:refill-track-internal", null, { trackId: t.id, force }, r)
+            );
+            const result = await (async () => {
+              if (!t._hasCoverArt && !t.coverArt) {
+                const online = await _searchOnlineCoverArt(t.artist || "", t.title || "", t.album || "");
+                if (online && t.filePath) {
+                  const sp = t.filePath.replace(/\.[^.]+$/, ".novaart.jpg");
+                  try {
+                    fs.writeFileSync(sp, online.buf);
+                    t.coverArt = sp;
+                    t._hasCoverArt = true;
+                    db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(JSON.stringify(t), t.id);
+                    if (libraryById?.has(t.id)) libraryById.get(t.id).coverArt = sp;
+                    db.prepare("INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)").run(t.id, sp);
+                    return true;
+                  } catch (_) {
+                  }
+                }
+              }
+              return false;
+            })();
+            if (result) filled++;
+            else skipped++;
+          } catch (_) {
+            skipped++;
+          }
+        }
+        sendProgress2(total);
+        return { success: true, filled, skipped, total };
+      } catch (err) {
+        console.error("[coverart:refill-all]", err.message);
         return { success: false, error: err.message };
       }
     });
