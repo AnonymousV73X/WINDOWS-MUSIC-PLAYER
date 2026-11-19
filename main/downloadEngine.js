@@ -1000,15 +1000,31 @@ const _ERR_RULES = [
     /Failed to launch downloader|Failed to install|failed self-check|checksum mismatch|not a valid executable|not a valid Win32|EFTYPE|ffmpeg|ffprobe|Postprocessing/i,
     "Audio components couldn't be set up automatically. Check your internet connection and antivirus, then try again.",
   ],
-  ["DISK_FULL", /ENOSPC|no space left|disk full/i, "Not enough free disk space to save this track. Free some space and try again."],
-  ["PERMISSION", /EACCES|EPERM|EBUSY|permission denied|access is denied/i, "NovaTune can't write to the download folder (locked or blocked by antivirus). Try again."],
-  ["RATE_LIMIT", /HTTP Error 429|Too Many Requests|rate.?limit/i, "The source is rate-limiting requests. Wait a minute and try again."],
+  [
+    "DISK_FULL",
+    /ENOSPC|no space left|disk full/i,
+    "Not enough free disk space to save this track. Free some space and try again.",
+  ],
+  [
+    "PERMISSION",
+    /EACCES|EPERM|EBUSY|permission denied|access is denied/i,
+    "NovaTune can't write to the download folder (locked or blocked by antivirus). Try again.",
+  ],
+  [
+    "RATE_LIMIT",
+    /HTTP Error 429|Too Many Requests|rate.?limit/i,
+    "The source is rate-limiting requests. Wait a minute and try again.",
+  ],
   [
     "UNAVAILABLE",
     /Video unavailable|Private video|members-only|not available in your country|blocked it|copyright|age.restricted|confirm your age|removed by the uploader|account associated.*terminated/i,
     "This track isn't available for download from its source.",
   ],
-  ["BLOCKED", /Sign in to confirm|not a bot|HTTP Error 40[13]/i, "The source is blocking requests right now. Components were refreshed — try again shortly."],
+  [
+    "BLOCKED",
+    /Sign in to confirm|not a bot|HTTP Error 40[13]/i,
+    "The source is blocking requests right now. Components were refreshed — try again shortly.",
+  ],
   [
     "NETWORK",
     /ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|timed out|timeout|stalled|getaddrinfo|socket hang up|Unable to download|Connection|HTTP Error 5\d\d/i,
@@ -1121,7 +1137,11 @@ function _ensureWritableDir(dir) {
 }
 
 // Generic hardened downloader: redirects, idle-timeout, truncation check, atomic rename
-function _fetchToFile(url, dest, { gunzip = false, onProgress, idleMs = 30000, hops = 0 } = {}) {
+function _fetchToFile(
+  url,
+  dest,
+  { gunzip = false, onProgress, idleMs = 30000, hops = 0 } = {},
+) {
   return new Promise((resolve, reject) => {
     if (hops > 7) return reject(new Error("Too many redirects"));
     const tmp = `${dest}.${process.pid}.tmp`;
@@ -1130,53 +1150,67 @@ function _fetchToFile(url, dest, { gunzip = false, onProgress, idleMs = 30000, h
         fs.unlinkSync(tmp);
       } catch (_) {}
     };
-    const req = https.get(url, { headers: { "User-Agent": "NovaTune Downloader" } }, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        res.resume();
-        return resolve(
-          _fetchToFile(new URL(res.headers.location, url).href, dest, {
-            gunzip,
-            onProgress,
-            idleMs,
-            hops: hops + 1,
-          }),
-        );
-      }
-      if (res.statusCode !== 200) {
-        res.resume();
-        return reject(new Error(`HTTP ${res.statusCode}`));
-      }
-      try {
-        fs.mkdirSync(path.dirname(dest), { recursive: true });
-      } catch (e) {
-        res.resume();
-        return reject(e);
-      }
-      const total = parseInt(res.headers["content-length"] || "0", 10);
-      let got = 0;
-      res.on("data", (c) => {
-        got += c.length;
-        if (total && onProgress) onProgress(Math.min(100, Math.round((got / total) * 100)));
-      });
-      const chain = [res, ...(gunzip ? [zlib.createGunzip()] : []), fs.createWriteStream(tmp)];
-      require("stream").pipeline(...chain, (err) => {
-        if (!err && !gunzip && total && got < total) err = new Error("truncated download");
-        if (err) {
-          cleanup();
-          return reject(err);
+    const req = https.get(
+      url,
+      { headers: { "User-Agent": "NovaTune Downloader" } },
+      (res) => {
+        if (
+          res.statusCode >= 300 &&
+          res.statusCode < 400 &&
+          res.headers.location
+        ) {
+          res.resume();
+          return resolve(
+            _fetchToFile(new URL(res.headers.location, url).href, dest, {
+              gunzip,
+              onProgress,
+              idleMs,
+              hops: hops + 1,
+            }),
+          );
+        }
+        if (res.statusCode !== 200) {
+          res.resume();
+          return reject(new Error(`HTTP ${res.statusCode}`));
         }
         try {
-          try {
-            fs.unlinkSync(dest);
-          } catch (_) {}
-          fs.renameSync(tmp, dest);
-          resolve(dest);
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
         } catch (e) {
-          cleanup();
-          reject(e);
+          res.resume();
+          return reject(e);
         }
-      });
-    });
+        const total = parseInt(res.headers["content-length"] || "0", 10);
+        let got = 0;
+        res.on("data", (c) => {
+          got += c.length;
+          if (total && onProgress)
+            onProgress(Math.min(100, Math.round((got / total) * 100)));
+        });
+        const chain = [
+          res,
+          ...(gunzip ? [zlib.createGunzip()] : []),
+          fs.createWriteStream(tmp),
+        ];
+        require("stream").pipeline(...chain, (err) => {
+          if (!err && !gunzip && total && got < total)
+            err = new Error("truncated download");
+          if (err) {
+            cleanup();
+            return reject(err);
+          }
+          try {
+            try {
+              fs.unlinkSync(dest);
+            } catch (_) {}
+            fs.renameSync(tmp, dest);
+            resolve(dest);
+          } catch (e) {
+            cleanup();
+            reject(e);
+          }
+        });
+      },
+    );
     req.on("error", (e) => {
       cleanup();
       reject(e);
@@ -1228,7 +1262,13 @@ function _sha256(file) {
 }
 
 function _wingetLink(exe) {
-  const p = path.join(process.env.LOCALAPPDATA || "", "Microsoft", "WinGet", "Links", exe);
+  const p = path.join(
+    process.env.LOCALAPPDATA || "",
+    "Microsoft",
+    "WinGet",
+    "Links",
+    exe,
+  );
   return process.platform === "win32" && fs.existsSync(p) ? p : null;
 }
 
@@ -1242,7 +1282,15 @@ function _wingetInstall(id, exe) {
     try {
       p = spawn(
         "winget",
-        ["install", "--id", id, "-e", "--silent", "--accept-source-agreements", "--accept-package-agreements"],
+        [
+          "install",
+          "--id",
+          id,
+          "-e",
+          "--silent",
+          "--accept-source-agreements",
+          "--accept-package-agreements",
+        ],
         { windowsHide: true, stdio: "ignore" },
       );
     } catch (_) {
@@ -1298,7 +1346,8 @@ let _ytForce = false;
 
 function installYtDlp(onProgress) {
   if (_ytInstallP) return _ytInstallP;
-  if (_ytFailErr && Date.now() - _ytFailAt < 60000) return Promise.reject(_ytFailErr);
+  if (_ytFailErr && Date.now() - _ytFailAt < 60000)
+    return Promise.reject(_ytFailErr);
   _ytInstallP = (async () => {
     const target = path.join(_managedDir(), "yt-dlp.exe");
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -1319,14 +1368,19 @@ function installYtDlp(onProgress) {
             }),
           { tries: 2 },
         );
-        if (!_isValidExe(target)) throw new Error("downloaded yt-dlp is not a valid executable");
-        if (sha && (await _sha256(target)) !== sha) throw new Error("yt-dlp checksum mismatch");
+        if (!_isValidExe(target))
+          throw new Error("downloaded yt-dlp is not a valid executable");
+        if (sha && (await _sha256(target)) !== sha)
+          throw new Error("yt-dlp checksum mismatch");
         if (!(await _runOk(target, ["--version"], 45000)))
           throw new Error("yt-dlp failed self-check (blocked by antivirus?)");
         return target;
       } catch (e) {
         lastErr = e;
-        console.warn(`[DownloadEngine] yt-dlp source failed (${url}):`, e.message);
+        console.warn(
+          `[DownloadEngine] yt-dlp source failed (${url}):`,
+          e.message,
+        );
         try {
           fs.unlinkSync(target);
         } catch (_) {}
@@ -1334,7 +1388,9 @@ function installYtDlp(onProgress) {
     }
     const w = await _wingetInstall("yt-dlp.yt-dlp", "yt-dlp.exe");
     if (w && (await _runOk(w, ["--version"], 45000))) return w;
-    throw new Error(`Failed to install yt-dlp: ${lastErr ? lastErr.message : "no source reachable"}`);
+    throw new Error(
+      `Failed to install yt-dlp: ${lastErr ? lastErr.message : "no source reachable"}`,
+    );
   })()
     .catch((e) => {
       _ytFailAt = Date.now();
@@ -1374,7 +1430,8 @@ async function ensureYtDlpAvailable(onProgress) {
 
   const cand = getYtDlpPath();
   if (cand !== "yt-dlp" && fs.existsSync(cand)) {
-    if (_isValidExe(cand) && (await _runOk(cand, ["--version"], 45000))) return (_ytOk = cand);
+    if (_isValidExe(cand) && (await _runOk(cand, ["--version"], 45000)))
+      return (_ytOk = cand);
     try {
       fs.unlinkSync(managed);
     } catch (_) {}
@@ -1520,9 +1577,18 @@ function getFfmpegPath() {
 }
 
 const _FFMPEG_SOURCES = [
-  { url: "https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-win32-x64.gz", gz: true },
-  { url: "https://ghproxy.net/https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-win32-x64.gz", gz: true },
-  { url: "https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip", zip: true },
+  {
+    url: "https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-win32-x64.gz",
+    gz: true,
+  },
+  {
+    url: "https://ghproxy.net/https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-win32-x64.gz",
+    gz: true,
+  },
+  {
+    url: "https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip",
+    zip: true,
+  },
 ];
 
 async function _unzipPick(zip, wanted, destDir) {
@@ -1531,7 +1597,10 @@ async function _unzipPick(zip, wanted, destDir) {
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.mkdirSync(tmp, { recursive: true });
     await new Promise((r) => {
-      const p = spawn("tar", ["-xf", zip, "-C", tmp], { windowsHide: true, stdio: "ignore" });
+      const p = spawn("tar", ["-xf", zip, "-C", tmp], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
       p.on("close", r);
       p.on("error", r);
     });
@@ -1562,7 +1631,8 @@ async function ensureFfmpeg(onProgress) {
   const managed = path.join(_managedDir(), "ffmpeg.exe");
   const cur = getFfmpegPath();
   if (cur !== "ffmpeg" && fs.existsSync(cur)) {
-    if (_isValidExe(cur, 5000000) && (await _runOk(cur, ["-version"], 45000))) return (_ffOk = cur);
+    if (_isValidExe(cur, 5000000) && (await _runOk(cur, ["-version"], 45000)))
+      return (_ffOk = cur);
     try {
       fs.unlinkSync(managed);
     } catch (_) {}
@@ -1587,18 +1657,27 @@ async function ensureFfmpeg(onProgress) {
       try {
         if (src.zip) {
           const z = path.join(dir, "ffmpeg.zip");
-          await _retry(() => _fetchToFile(src.url, z, { idleMs: 45000 }), { tries: 2 });
+          await _retry(() => _fetchToFile(src.url, z, { idleMs: 45000 }), {
+            tries: 2,
+          });
           await _unzipPick(z, ["ffmpeg.exe", "ffprobe.exe"], dir);
         } else {
           await _retry(
-            () => _fetchToFile(src.url, managed, { gunzip: true, idleMs: 45000 }),
+            () =>
+              _fetchToFile(src.url, managed, { gunzip: true, idleMs: 45000 }),
             { tries: 2 },
           );
         }
-        if (_isValidExe(managed, 5000000) && (await _runOk(managed, ["-version"], 45000)))
+        if (
+          _isValidExe(managed, 5000000) &&
+          (await _runOk(managed, ["-version"], 45000))
+        )
           return (_ffOk = managed);
       } catch (e) {
-        console.warn(`[DownloadEngine] ffmpeg source failed (${src.url}):`, e.message);
+        console.warn(
+          `[DownloadEngine] ffmpeg source failed (${src.url}):`,
+          e.message,
+        );
       }
       try {
         fs.unlinkSync(managed);
@@ -1729,7 +1808,7 @@ async function _downloadWithYtDlpOnce(
   return new Promise((resolve, reject) => {
     const audioFormatArgs = allowNoConversion
       ? ["-f", "140/bestaudio[ext=m4a]/bestaudio/best"]
-      : (fmt === "m4a"
+      : fmt === "m4a"
         ? [
             "-f",
             "140/bestaudio[ext=m4a]/bestaudio",
@@ -1749,7 +1828,7 @@ async function _downloadWithYtDlpOnce(
             "320K",
             "--postprocessor-args",
             "ExtractAudio:-threads 0 -compression_level 7",
-          ]);
+          ];
 
     const args = [
       urlOrQuery,
@@ -1901,7 +1980,11 @@ async function _downloadWithYtDlpOnce(
           const matched = files.find(
             (f) =>
               f.startsWith(baseName) &&
-              (f.endsWith(".mp3") || f.endsWith(".m4a") || f.endsWith(".opus") || f.endsWith(".webm") || f.endsWith(".aac")),
+              (f.endsWith(".mp3") ||
+                f.endsWith(".m4a") ||
+                f.endsWith(".opus") ||
+                f.endsWith(".webm") ||
+                f.endsWith(".aac")),
           );
           if (matched) return resolve(path.join(dir, matched));
         } catch (_) {}
@@ -1954,7 +2037,10 @@ async function downloadWithYtDlp(
       const msg = String(err.message || "");
 
       // yt-dlp itself broken / blocked / corrupt → force a clean reinstall
-      if ((err.depFailure === "ytdlp" || /Failed to install yt-dlp/.test(msg)) && !used.has("ytdlp")) {
+      if (
+        (err.depFailure === "ytdlp" || /Failed to install yt-dlp/.test(msg)) &&
+        !used.has("ytdlp")
+      ) {
         used.add("ytdlp");
         say("Repairing downloader components…");
         _ytForce = true;
@@ -1962,7 +2048,10 @@ async function downloadWithYtDlp(
       }
 
       // ffmpeg missing/broken → heal, else fall back to raw stream capture
-      if (!noConv && /ffmpeg|ffprobe|Postprocessing|Conversion failed/i.test(msg)) {
+      if (
+        !noConv &&
+        /ffmpeg|ffprobe|Postprocessing|Conversion failed/i.test(msg)
+      ) {
         if (!used.has("ffmpeg")) {
           used.add("ffmpeg");
           say("Configuring audio converter…", 15);
@@ -1978,7 +2067,9 @@ async function downloadWithYtDlp(
       // Extractor drift (nsig/sign-in/etc.) → update yt-dlp + JS runtime
       if (
         !used.has("update") &&
-        /HTTP Error 40[13]|Sign in|nsig|Unable to extract|Requested format is not available|player response|signature|cipher|challenge/i.test(msg)
+        /HTTP Error 40[13]|Sign in|nsig|Unable to extract|Requested format is not available|player response|signature|cipher|challenge/i.test(
+          msg,
+        )
       ) {
         used.add("update");
         say("Updating downloader components…", 5);
@@ -1991,7 +2082,9 @@ async function downloadWithYtDlp(
       // Transient network trouble → short backoff retry
       if (
         net < 2 &&
-        /timed out|timeout|stalled|ECONNRESET|ETIMEDOUT|Unable to download|HTTP Error 5\d\d|Temporary failure|Connection/i.test(msg)
+        /timed out|timeout|stalled|ECONNRESET|ETIMEDOUT|Unable to download|HTTP Error 5\d\d|Temporary failure|Connection/i.test(
+          msg,
+        )
       ) {
         net++;
         say("Connection hiccup, retrying…", 8, "resolving");
@@ -2025,9 +2118,16 @@ async function _pipedInstances() {
 
 async function _pipedResolve(videoId) {
   for (const base of await _pipedInstances()) {
-    const j = await fetchJson(`${base}/streams/${videoId}`, 6000).catch(() => null);
+    const j = await fetchJson(`${base}/streams/${videoId}`, 6000).catch(
+      () => null,
+    );
     const a = (j?.audioStreams || [])
-      .filter((s) => s.url && /audio\/mp4/.test(s.mimeType || "") && Number(s.contentLength) > 0)
+      .filter(
+        (s) =>
+          s.url &&
+          /audio\/mp4/.test(s.mimeType || "") &&
+          Number(s.contentLength) > 0,
+      )
       .sort((x, y) => (y.bitrate || 0) - (x.bitrate || 0))[0];
     if (a)
       return {
@@ -2041,7 +2141,11 @@ async function _pipedResolve(videoId) {
 }
 
 async function _pipedFallback(videoId, destBase, fmt, onProgress, ctx) {
-  onProgress({ status: "resolving", percent: 12, message: "Trying alternate source…" });
+  onProgress({
+    status: "resolving",
+    percent: 12,
+    message: "Trying alternate source…",
+  });
   const r = await _pipedResolve(videoId);
   if (!r) throw new Error("alternate source unavailable");
   const out = `${destBase}.m4a`;
@@ -2059,7 +2163,11 @@ async function _pipedFallback(videoId, destBase, fmt, onProgress, ctx) {
     const ff = await ensureFfmpeg().catch(() => null);
     if (ff) {
       const mp3 = `${destBase}.mp3`;
-      const ok = await _runOk(ff, ["-y", "-i", out, "-vn", "-b:a", "320k", mp3], 180000);
+      const ok = await _runOk(
+        ff,
+        ["-y", "-i", out, "-vn", "-b:a", "320k", mp3],
+        180000,
+      );
       if (ok && fs.existsSync(mp3)) {
         try {
           fs.unlinkSync(out);
@@ -2682,7 +2790,7 @@ async function _downloadCore(
         message: "Downloading audio via yt-dlp…",
       });
       const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-            const downloadedPath = await downloadWithYtDlp(
+      const downloadedPath = await downloadWithYtDlp(
         targetUrl,
         destBase,
         onProgress,
@@ -2690,7 +2798,7 @@ async function _downloadCore(
         ctx,
         fmt,
       );
-            injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
+      injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
       onProgress({
         status: "done",
         percent: 100,
@@ -2711,9 +2819,16 @@ async function _downloadCore(
   let effectiveVideoId = videoId;
   if (!effectiveVideoId) {
     try {
-      const q = [trackInfo.artistName, trackInfo.trackName].filter(Boolean).join(" ").trim();
+      const q = [trackInfo.artistName, trackInfo.trackName]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
       if (q) {
-        onProgress({ status: "resolving", percent: 8, message: "Finding best stream match…" });
+        onProgress({
+          status: "resolving",
+          percent: 8,
+          message: "Finding best stream match…",
+        });
         const found = await searchYouTubeMusic(q, 5).catch(() => []);
         if (found && found.length > 0) {
           const matched = rankAndMerge(found, q);
@@ -2756,9 +2871,20 @@ async function _downloadCore(
   // Strategy 1.8: keyless alternate source (no yt-dlp/ffmpeg needed)
   if (effectiveVideoId && effectiveVideoId.length >= 5) {
     try {
-      const alt = await _pipedFallback(effectiveVideoId, destBase, fmt, onProgress, ctx);
+      const alt = await _pipedFallback(
+        effectiveVideoId,
+        destBase,
+        fmt,
+        onProgress,
+        ctx,
+      );
       injectTrackInfoTags(alt, trackInfo, await artPromise);
-      onProgress({ status: "done", percent: 100, message: "Done!", filePath: alt });
+      onProgress({
+        status: "done",
+        percent: 100,
+        message: "Done!",
+        filePath: alt,
+      });
       return alt;
     } catch (altErr) {
       if (altErr.cancelled || ctx.cancelled) throw altErr;
@@ -2773,7 +2899,7 @@ async function _downloadCore(
     percent: 10,
     message: "Searching and downloading via yt-dlp…",
   });
-    const downloadedPath = await downloadWithYtDlp(
+  const downloadedPath = await downloadWithYtDlp(
     searchQuery,
     destBase,
     onProgress,
@@ -2781,7 +2907,7 @@ async function _downloadCore(
     ctx,
     fmt,
   );
-    injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
+  injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
   onProgress({
     status: "done",
     percent: 100,
