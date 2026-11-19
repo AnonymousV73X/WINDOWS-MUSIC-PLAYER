@@ -18,6 +18,7 @@ const https = require("https");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const zlib = require("zlib");
 
 const HTTPS_AGENT = new https.Agent({
   keepAlive: true,
@@ -1228,6 +1229,135 @@ async function ensureDeno() {
   return fs.existsSync(exe) ? exe : null;
 }
 
+function getFfmpegPath() {
+  const managed = path.join(_managedDir(), "ffmpeg.exe");
+  if (fs.existsSync(managed)) return managed;
+
+  if (process.resourcesPath) {
+    const resourcesBin = path.join(process.resourcesPath, "bin", "ffmpeg.exe");
+    if (fs.existsSync(resourcesBin)) return resourcesBin;
+  }
+
+  const devBin = path.join(__dirname, "../bin/ffmpeg.exe");
+  if (fs.existsSync(devBin)) return devBin;
+
+  try {
+    const { app } = require("electron");
+    if (app) {
+      const userBin = path.join(app.getPath("userData"), "bin", "ffmpeg.exe");
+      if (fs.existsSync(userBin)) return userBin;
+    }
+  } catch (_) {}
+
+  return "ffmpeg";
+}
+
+function _downloadFfmpegGz(url, dest, hops = 0) {
+  return new Promise((resolve, reject) => {
+    if (hops > 6) return reject(new Error("Too many redirects"));
+    https
+      .get(
+        url,
+        { headers: { "User-Agent": "NovaTune Downloader" }, timeout: 60000 },
+        (res) => {
+          if (
+            res.statusCode >= 300 &&
+            res.statusCode < 400 &&
+            res.headers.location
+          ) {
+            res.resume();
+            return resolve(
+              _downloadFfmpegGz(
+                new URL(res.headers.location, url).href,
+                dest,
+                hops + 1,
+              ),
+            );
+          }
+          if (res.statusCode !== 200) {
+            res.resume();
+            return reject(new Error(`HTTP ${res.statusCode}`));
+          }
+          const tmp = `${dest}.tmp`;
+          const ws = fs.createWriteStream(tmp);
+          const gunzip = zlib.createGunzip();
+          res.pipe(gunzip).pipe(ws);
+          ws.on("finish", () => {
+            ws.close(() => {
+              try {
+                if (fs.existsSync(dest)) fs.unlinkSync(dest);
+                fs.renameSync(tmp, dest);
+                resolve(dest);
+              } catch (e) {
+                reject(e);
+              }
+            });
+          });
+          ws.on("error", (err) => {
+            try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (_) {}
+            reject(err);
+          });
+          gunzip.on("error", (err) => {
+            try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (_) {}
+            reject(err);
+          });
+        },
+      )
+      .on("error", reject)
+      .on("timeout", function () {
+        this.destroy(new Error("timeout"));
+      });
+  });
+}
+
+let _ffmpegP = null;
+async function ensureFfmpeg(onProgress) {
+  const currentPath = getFfmpegPath();
+  if (currentPath !== "ffmpeg" && fs.existsSync(currentPath)) {
+    return currentPath;
+  }
+
+  if (currentPath === "ffmpeg") {
+    try {
+      const { execSync } = require("child_process");
+      execSync("ffmpeg -version", { stdio: "ignore", windowsHide: true });
+      return "ffmpeg";
+    } catch (_) {}
+  }
+
+  if (_ffmpegP) return _ffmpegP;
+
+  _ffmpegP = (async () => {
+    try {
+      const dir = _managedDir();
+      fs.mkdirSync(dir, { recursive: true });
+      const targetPath = path.join(dir, "ffmpeg.exe");
+      if (fs.existsSync(targetPath)) return targetPath;
+
+      if (onProgress) {
+        onProgress({
+          status: "installing",
+          percent: 5,
+          message: "Setting up audio conversion engine (one-time)…",
+        });
+      }
+
+      console.log("[DownloadEngine] ffmpeg missing! Auto-installing to:", targetPath);
+      const url =
+        "https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-win32-x64.gz";
+      await _downloadFfmpegGz(url, targetPath);
+      return fs.existsSync(targetPath) ? targetPath : null;
+    } catch (err) {
+      console.warn("[DownloadEngine] Failed to auto-install ffmpeg:", err.message);
+      return null;
+    } finally {
+      _ffmpegP = null;
+    }
+  })();
+
+  return _ffmpegP;
+}
+
 let _jsRtP = null;
 function _jsRuntimeArgs() {
   if (_jsRtP) return _jsRtP;
@@ -1293,6 +1423,7 @@ function prewarmDownloader() {
   p.finally(() => {
     if (_denoP === p) _denoP = null;
   });
+  ensureFfmpeg().catch(() => {});
   updateYtDlp()
     .then(() => ensureYtDlpAvailable())
     .then((bin) => {
@@ -1314,6 +1445,7 @@ async function _downloadWithYtDlpOnce(
   fmt = "m4a",
 ) {
   const ytDlpBinary = await ensureYtDlpAvailable(onProgress);
+  const ffmpegBinary = await ensureFfmpeg(onProgress).catch(() => null);
   // _updP (yt-dlp self-update) intentionally not awaited — don't block user downloads
   if (_denoP) {
     if (onProgress)
@@ -1325,11 +1457,16 @@ async function _downloadWithYtDlpOnce(
     await Promise.race([_denoP, _sleep(6000)]);
   }
   const rtArgs = await _jsRuntimeArgs();
+  const ffmpegArgs =
+    ffmpegBinary && ffmpegBinary !== "ffmpeg"
+      ? ["--ffmpeg-location", ffmpegBinary]
+      : [];
 
   return new Promise((resolve, reject) => {
     const args = [
       urlOrQuery,
       ...rtArgs,
+      ...ffmpegArgs,
       "--extractor-args",
       "youtube:player_skip=configs",
       ...(fmt === "m4a"

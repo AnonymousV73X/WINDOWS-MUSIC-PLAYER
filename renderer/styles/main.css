@@ -1943,67 +1943,6 @@ textarea {
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--green, #1ed760) 12%, #ffffff);
 }
 
-.sidebar-help-btn[data-tooltip]:hover::before,
-.sidebar-help-btn[data-tooltip]:hover::after {
-  z-index: 100000;
-}
-.sidebar-help-btn[data-tooltip]::before {
-  bottom: auto;
-  top: calc(100% + 10px);
-  transform: translateX(-50%) translateY(-4px);
-}
-
-.sidebar-help-btn[data-tooltip]::after {
-  bottom: auto;
-  top: calc(100% + 4px);
-  border-top-color: transparent;
-  border-bottom-color: #282828;
-}
-
-.sidebar-help-btn[data-tooltip]:hover::before,
-.sidebar-help-btn[data-tooltip]:hover::after {
-  transform: translateX(-50%) translateY(0);
-}
-
-/* Tooltip-below overrides for float-nav-trigger and lyrics-toggle-btn
-   (same pattern as sidebar-help-btn — tooltip appears below the element) */
-#float-nav-trigger[data-tooltip]:hover::before,
-#float-nav-trigger[data-tooltip]:hover::after,
-#lyrics-toggle-btn[data-tooltip]:hover::before,
-#lyrics-toggle-btn[data-tooltip]:hover::after,
-.playlist-import-fab[data-tooltip]:hover::before,
-.playlist-import-fab[data-tooltip]:hover::after {
-  z-index: 100000;
-}
-#float-nav-trigger[data-tooltip]::before,
-#lyrics-toggle-btn[data-tooltip]::before,
-.playlist-import-fab[data-tooltip]::before {
-  bottom: auto;
-  top: calc(100% + 10px);
-  transform: translateX(-50%) translateY(-4px);
-}
-#float-nav-trigger[data-tooltip]::after,
-#lyrics-toggle-btn[data-tooltip]::after,
-.playlist-import-fab[data-tooltip]::after {
-  bottom: auto;
-  top: calc(100% + 4px);
-  border-top-color: transparent;
-  border-bottom-color: #282828;
-}
-#float-nav-trigger[data-tooltip]:hover::before,
-#float-nav-trigger[data-tooltip]:hover::after,
-#lyrics-toggle-btn[data-tooltip]:hover::before,
-#lyrics-toggle-btn[data-tooltip]:hover::after {
-  transform: translateX(-50%) translateY(0);
-}
-/* Lyrics pill extra offset to avoid overlapping sort group */
-#lyrics-toggle-btn[data-tooltip]::before {
-  top: calc(100% + 14px);
-}
-#lyrics-toggle-btn[data-tooltip]::after {
-  top: calc(100% + 8px);
-}
-
 .sidebar-help-btn svg {
   width: 16px;
   height: 16px;
@@ -2389,54 +2328,11 @@ textarea {
 }
 
 /* ── CUSTOM TOOLTIP STYLES ── */
-/* Tooltips that point upward from below center of element.
-   Add data-tooltip="Your text" to any element to activate. */
-[data-tooltip] {
-  position: relative;
-}
-
+/* Managed exclusively via JS portal (.sidebar-tooltip-portal) for consistent bounds & timer. */
 [data-tooltip]::before,
 [data-tooltip]::after {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity 0.18s ease,
-    transform 0.18s ease;
-  z-index: 9000;
-}
-
-[data-tooltip]::before {
-  content: attr(data-tooltip);
-  bottom: calc(100% + 10px);
-  left: 50%;
-  transform: translateX(-50%) translateY(4px);
-  background: #282828;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 500;
-  padding: 5px 10px;
-  border-radius: 6px;
-  white-space: nowrap;
-  letter-spacing: 0.2px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
-  border: 1px solid #3a3a3a;
-}
-
-/* Arrow pointing downward (from below the tooltip, above the element) */
-[data-tooltip]::after {
-  content: "";
-  bottom: calc(100% + 4px);
-  left: 50%;
-  transform: translateX(-50%) translateY(4px);
-  border: 5px solid transparent;
-  border-top-color: #282828;
-}
-
-[data-tooltip]:hover::before,
-[data-tooltip]:hover::after {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
+  display: none !important;
+  content: none !important;
 }
 
 /* ── SCAN PROGRESS ── */
@@ -6546,28 +6442,7 @@ body.is-playing .ov-play svg,
 
 /* Tooltip on hover */
 .floating-nav-card .fn-btn::after {
-  content: attr(data-label);
-  position: absolute;
-  right: calc(100% + 10px);
-  top: 50%;
-  transform: translateY(-50%);
-  background: rgba(34, 34, 34, 0.826);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 1.5px solid rgba(96, 96, 96, 0.248);
-  color: var(--text-primary);
-  font-size: 11px;
-  font-weight: 500;
-  padding: 7px 14px;
-  border-radius: 6px;
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.1s;
-}
-
-.floating-nav-card .fn-btn:hover::after {
-  opacity: 1;
+  display: none !important;
 }
 
 /* Search input that expands from magnifier */
@@ -7982,17 +7857,16 @@ body.is-playing .ov-play svg,
   color: var(--green);
 }
 
-/* Tooltips for elements inside the (scrollable, overflow-clipped) sidebar
-   can't use the normal [data-tooltip]::before/::after pseudo-elements —
-   any ancestor with overflow:auto/hidden clips ALL descendants, including
-   position:absolute/fixed ones, so a centered tooltip on an edge button
-   just gets cut off. We suppress the pseudo-element tooltip inside the
-   sidebar and render those tooltips as real DOM nodes appended to
-   <body> instead (see initSidebarTooltipPortal in renderer.js), which
-   are free to overflow the sidebar's bounds. */
+/* Global tooltip: All tooltips use the JS portal (_initSidebarTooltipPortal)
+   which handles overflow, edge collision, and the 3s auto-dismiss timer.
+   Completely suppress CSS pseudo-element tooltips across the entire UI. */
 [data-tooltip]::before,
-[data-tooltip]::after {
+[data-tooltip]::after,
+[data-tooltip]:hover::before,
+[data-tooltip]:hover::after {
   display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 .sidebar-tooltip-portal {

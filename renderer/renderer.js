@@ -4267,8 +4267,17 @@ function _initSidebarTooltipPortal() {
   // <body>-level node (max z-index, position:fixed) so no ancestor overflow
   // or stacking context can clip or cover it. Flips below when no room above.
   let current = null;
+  let timer = null;
+
+  function clearTimer() {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  }
 
   function show(target) {
+    clearTimer();
     const text = target.getAttribute("data-tooltip");
     if (!text) return;
     current = target;
@@ -4291,9 +4300,15 @@ function _initSidebarTooltipPortal() {
     top = Math.max(6, Math.min(top, window.innerHeight - th - 6));
     _sidebarTooltipEl.style.left = `${left}px`;
     _sidebarTooltipEl.style.top = `${top}px`;
+
+    // Auto-dismiss after 3s on hover so it won't interfere
+    timer = setTimeout(() => {
+      if (_sidebarTooltipEl) _sidebarTooltipEl.classList.remove("visible");
+    }, 3000);
   }
 
   function hide() {
+    clearTimer();
     current = null;
     if (_sidebarTooltipEl) _sidebarTooltipEl.classList.remove("visible");
   }
@@ -4440,9 +4455,47 @@ function _wireAddFolder() {
   $("sidebar-quick-refresh-btn")?.addEventListener("click", async (e) => {
     e.stopPropagation();
     const btn = e.currentTarget;
-    const scanFolders = Array.isArray(state.settings.scanFolders)
-      ? state.settings.scanFolders
-      : [];
+
+    // Fetch the freshest scanFolders from settings or disk
+    try {
+      const liveSettings = await window.novaAPI.invoke("settings:get-all");
+      if (liveSettings && Array.isArray(liveSettings.scanFolders)) {
+        state.settings.scanFolders = liveSettings.scanFolders;
+      }
+    } catch (_) {}
+
+    // Gather all known scan folders plus root directories of any existing library tracks
+    const folderSet = new Set(
+      Array.isArray(state.settings.scanFolders)
+        ? state.settings.scanFolders.filter(Boolean)
+        : [],
+    );
+
+    // If tracks are already loaded, ensure all root music folders they came from are covered
+    if (Array.isArray(state.tracks)) {
+      for (const t of state.tracks) {
+        if (!t.filePath) continue;
+        const norm = t.filePath.replace(/\\/g, "/");
+        // Match against known scan folders; if track isn't within any existing scan folder, add its dir
+        let covered = false;
+        for (const f of folderSet) {
+          const fnorm = f.replace(/\\/g, "/").replace(/\/+$/, "");
+          if (norm.startsWith(fnorm + "/") || norm === fnorm) {
+            covered = true;
+            break;
+          }
+        }
+        if (!covered) {
+          const lastSlash = norm.lastIndexOf("/");
+          if (lastSlash > 0) {
+            const dir = norm.substring(0, lastSlash);
+            folderSet.add(dir.replace(/\//g, "\\"));
+          }
+        }
+      }
+    }
+
+    const scanFolders = Array.from(folderSet);
     if (scanFolders.length === 0) return;
 
     btn.classList.add("spinning");
@@ -9463,10 +9516,14 @@ function openActionsMenu(anchor, track, opts = {}) {
   _playlistMenuOpener = anchor;
   const isInQueue = virtualList.mode === "queue";
 
+  const trackTitle = (track.title || "Unknown").trim();
   const menu = document.createElement("div");
   menu.className = "playlist-popover track-context-menu actions-menu";
   menu.innerHTML = `
-    <div class="playlist-popover-title">Actions</div>
+    <div class="playlist-popover-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <span>Actions</span>
+      <span class="actions-header-track-title" title="${escapeHtml(trackTitle)}" style="font-weight:500;font-size:10.5px;text-transform:none;opacity:0.5;max-width:125px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:normal;">${escapeHtml(trackTitle)}</span>
+    </div>
     <button type="button" data-action="add-to-playlist" class="action-has-sub">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;vertical-align:-2px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><circle cx="12" cy="12" r="3"/></svg>
       Add to Playlist
@@ -11855,7 +11912,7 @@ function renderHelp() {
       </div>
 
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
-        NovaTune  &bull; Made by SIR ALEX for music lovers
+        NovaTune v2.0.2 &bull; Made by SIR ALEX for music lovers
       </div>
     </div>
   `);
@@ -17273,21 +17330,21 @@ function _createFloatingNavCard() {
   // into an X when the card is open) or by clicking the NovaTune logo.
   // Having two X buttons was redundant and confusing.
   sections.forEach((s) => {
-    html += `<button class="fn-btn${s.id === activeSection ? " active" : ""}" data-section="${s.id}" data-label="${s.label}" aria-label="${s.label}">
+    html += `<button class="fn-btn${s.id === activeSection ? " active" : ""}" data-section="${s.id}" data-tooltip="${s.label}" aria-label="${s.label}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${s.sw || 2}" stroke-linecap="round" stroke-linejoin="round">${s.icon}</svg>
     </button>`;
   });
   html += `<div class="fn-divider"></div>`;
   html += `<div class="fn-search-wrap">
-    <button class="fn-btn" id="fn-search-btn" data-label="Search" aria-label="Search">
+    <button class="fn-btn" id="fn-search-btn" data-tooltip="Search" aria-label="Search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
     </button>
     <input type="text" class="fn-search-input" id="fn-search-input" placeholder="Search…" spellcheck="false">
   </div>`;
-  html += `<button class="fn-btn" id="fn-download-btn" data-section="discovery" data-label="Music Downloader" aria-label="Music Downloader">
+  html += `<button class="fn-btn" id="fn-download-btn" data-section="discovery" data-tooltip="Music Downloader" aria-label="Music Downloader">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12.0001L12 16.0001M12 16.0001L16 12.0001M12 16.0001V6.80006C12 5.40935 12 4.714 11.4495 3.93546C11.0837 3.41818 10.0306 2.77974 9.40278 2.69468C8.45789 2.56666 8.09907 2.75384 7.38143 3.1282C4.18333 4.79649 2 8.14331 2 12.0001C2 17.5229 6.47715 22.0001 12 22.0001C17.5228 22.0001 22 17.5229 22 12.0001C22 8.29865 19.989 5.06693 17 3.33788"/></svg>
   </button>`;
-  html += `<button class="fn-btn fn-help-btn" id="fn-help-btn" data-section="help" data-label="Help" aria-label="Help">
+  html += `<button class="fn-btn fn-help-btn" id="fn-help-btn" data-section="help" data-tooltip="Help" aria-label="Help">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
   </button>`;
 
