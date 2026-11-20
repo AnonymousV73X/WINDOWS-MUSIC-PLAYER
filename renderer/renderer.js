@@ -14170,7 +14170,7 @@ function renderVirtualRows() {
       // When songs are prepended or re-sorted, existing active slots shift their index.
       // If translateY isn't updated, rows remain stuck at their old offset, creating huge uneven gaps.
       const slot = activeSlots.get(trackId);
-      const targetTransform = `translateY(${Math.round(i * VIRTUAL_ROW_HEIGHT)}px)`;
+      const targetTransform = _rowY(i);
       if (slot.style.transform !== targetTransform) {
         slot.style.transform = targetTransform;
       }
@@ -14205,7 +14205,14 @@ function renderVirtualRows() {
 
     _populateSlot(slot, track, i);
     slot._trackId = trackId;
-    slot.style.transform = `translateY(${Math.round(i * VIRTUAL_ROW_HEIGHT)}px)`;
+    if (_qd && _qd.live) {
+      slot.style.transition = "none";
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => (slot.style.transition = "")),
+      );
+    }
+    slot.style.transform = _rowY(i);
+    if (_qd && _qd.live && i === _qd.src) slot.classList.add("qd-src");
     slot.style.display = "";
 
     // Append to windowEl if not already a child
@@ -14259,8 +14266,7 @@ function _populateSlot(row, track, idx) {
   else delete row.dataset.queueIdx;
 
   // Drag attribute for queue rows (delegated drag handlers read dataset)
-  if (isQueue) row.draggable = true;
-  else row.draggable = false;
+  row.draggable = false; // queue reorder uses the custom pointer drag
 
   const thumbInner = isQueue
     ? `<div class="queue-num-badge">${idx + 1}</div>`
@@ -14953,65 +14959,181 @@ function _wireVirtualDelegation() {
     }
   });
 
-  // ── Queue drag-to-reorder delegation ──
+  // ── Queue drag-to-reorder: custom pointer drag (ghost row + live gap) ──
   document.addEventListener("dragstart", (e) => {
-    const row = e.target.closest(".queue-row[data-track-id]");
-    if (!row) return;
-    const idx = parseInt(row.dataset.queueIdx, 10);
-    _queueDragSrcIdx = idx;
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", String(idx));
-    row.classList.add("queue-drag-source");
+    if (e.target.closest && e.target.closest(".queue-row")) e.preventDefault(); // no native drag
   });
-
-  document.addEventListener("dragend", (e) => {
-    const row = e.target.closest(".queue-row");
-    if (row) row.classList.remove("queue-drag-source");
-    document
-      .querySelectorAll(".queue-drag-over")
-      .forEach((r) => r.classList.remove("queue-drag-over"));
-    _queueDragSrcIdx = -1;
-    _queueDragOverIdx = -1;
-  });
-
-  document.addEventListener("dragover", (e) => {
-    const row = e.target.closest(".queue-row[data-track-id]");
-    if (!row) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const idx = parseInt(row.dataset.queueIdx, 10);
-    if (_queueDragOverIdx !== idx) {
-      document
-        .querySelectorAll(".queue-drag-over")
-        .forEach((r) => r.classList.remove("queue-drag-over"));
-      _queueDragOverIdx = idx;
-      row.classList.add("queue-drag-over");
-    }
-  });
-
-  document.addEventListener("drop", (e) => {
-    const row = e.target.closest(".queue-row[data-track-id]");
-    if (!row) return;
-    e.preventDefault();
-    const toIdx = parseInt(row.dataset.queueIdx, 10);
-    if (_queueDragSrcIdx >= 0 && _queueDragSrcIdx !== toIdx) {
-      const [moved] = state.queue.splice(_queueDragSrcIdx, 1);
-      state.queue.splice(toIdx, 0, moved);
-      _persistQueue();
-      // Update queueIndex if current track was moved
-      if (state.currentTrack) {
-        state.queueIndex = state.queue.findIndex(
-          (t) => t.id === state.currentTrack.id,
-        );
+  document.addEventListener(
+    "click",
+    (e) => {
+      if (_qdSuppressClick) {
+        e.stopPropagation();
+        e.preventDefault();
       }
-      renderTracks(state.queue, "queue");
-    }
-    _queueDragSrcIdx = -1;
-    _queueDragOverIdx = -1;
-    document
-      .querySelectorAll(".queue-drag-over")
-      .forEach((r) => r.classList.remove("queue-drag-over"));
+    },
+    true,
+  );
+  document.addEventListener("pointerdown", (e) => {
+    if (virtualList.mode !== "queue" || e.button !== 0 || e.pointerType === "touch")
+      return;
+    const row = e.target.closest(".queue-row[data-track-id]");
+    if (!row || !row.closest("#virtual-track-window")) return;
+    const idx = parseInt(row.dataset.idx, 10);
+    if (isNaN(idx)) return;
+    _qd = { src: idx, to: idx, row, sx: e.clientX, sy: e.clientY, cy: e.clientY, live: false, ghost: null, oy: 0, raf: 0 };
+    window.addEventListener("pointermove", _qdMove);
+    window.addEventListener("pointerup", _qdEnd);
+    window.addEventListener("pointercancel", _qdCancel);
   });
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && _qd && _qd.live) _qdCancel();
+  });
+}
+
+// ─── Queue drag: custom pointer-driven reorder ──────────────────
+var _qd = null;
+let _qdSuppressClick = false;
+
+// Row Y with the live "gap" applied while dragging
+function _rowY(i) {
+  let k = i;
+  if (_qd && _qd.live) {
+    const { src, to } = _qd;
+    if (i === src) k = to;
+    else if (src < to && i > src && i <= to) k = i - 1;
+    else if (src > to && i >= to && i < src) k = i + 1;
+  }
+  return `translateY(${Math.round(k * VIRTUAL_ROW_HEIGHT)}px)`;
+}
+
+function _qdApplyShift() {
+  for (const slot of virtualList.activeSlots.values()) {
+    const i = parseInt(slot.dataset.idx, 10);
+    slot.style.transform = _rowY(i);
+    slot.classList.toggle("qd-src", !!(_qd && _qd.live && i === _qd.src));
+  }
+}
+
+function _qdBegin() {
+  const q = _qd;
+  const r = q.row.getBoundingClientRect();
+  q.oy = q.sy - r.top;
+  const g = q.row.cloneNode(true);
+  const a = q.row.querySelectorAll("canvas");
+  g.querySelectorAll("canvas").forEach((c, i) => {
+    try {
+      c.getContext("2d").drawImage(a[i], 0, 0);
+    } catch (_) {}
+  });
+  g.removeAttribute("data-track-id");
+  g.classList.remove("qd-src");
+  g.classList.add("qd-ghost");
+  g.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;margin:0;transform:none;z-index:100300;pointer-events:none;`;
+  document.body.appendChild(g);
+  requestAnimationFrame(() => g.classList.add("qd-lift"));
+  q.ghost = g;
+  q.live = true;
+  _queueDragSrcIdx = q.src;
+  document.body.classList.add("qd-dragging");
+  $("virtual-track-window")?.classList.add("qd-active");
+  _qdApplyShift();
+  const area = $("track-area");
+  const loop = () => {
+    if (!_qd || !_qd.live || _qd.ending) return;
+    const ar = area.getBoundingClientRect();
+    const edge = 56;
+    let v = 0;
+    if (_qd.cy < ar.top + edge) v = -Math.min(18, Math.ceil((ar.top + edge - _qd.cy) / 4));
+    else if (_qd.cy > ar.bottom - edge) v = Math.min(18, Math.ceil((_qd.cy - (ar.bottom - edge)) / 4));
+    if (v) {
+      area.scrollTop += v;
+      _qdUpdate();
+    }
+    _qd.raf = requestAnimationFrame(loop);
+  };
+  q.raf = requestAnimationFrame(loop);
+}
+
+function _qdUpdate() {
+  const q = _qd;
+  const area = $("track-area");
+  const win = $("virtual-track-window");
+  if (!q || !q.ghost || !area || !win) return;
+  const H = VIRTUAL_ROW_HEIGHT;
+  const ar = area.getBoundingClientRect();
+  const top = Math.max(ar.top - H / 2, Math.min(ar.bottom - H / 2, q.cy - q.oy));
+  q.ghost.style.top = top + "px";
+  const n = virtualList.items.length;
+  const to = Math.max(0, Math.min(n - 1, Math.floor((top + H / 2 - win.getBoundingClientRect().top) / H)));
+  if (to !== q.to) {
+    q.to = to;
+    _qdApplyShift();
+  }
+}
+
+function _qdMove(e) {
+  if (!_qd || _qd.ending) return;
+  _qd.cy = e.clientY;
+  if (!_qd.live) {
+    if (Math.abs(e.clientX - _qd.sx) < 5 && Math.abs(e.clientY - _qd.sy) < 5) return;
+    _qdBegin();
+  }
+  _qdUpdate();
+}
+
+function _qdTeardown() {
+  window.removeEventListener("pointermove", _qdMove);
+  window.removeEventListener("pointerup", _qdEnd);
+  window.removeEventListener("pointercancel", _qdCancel);
+  document.body.classList.remove("qd-dragging");
+  $("virtual-track-window")?.classList.remove("qd-active");
+  _queueDragSrcIdx = -1;
+}
+
+function _qdEnd() {
+  const q = _qd;
+  if (!q || q.ending) return;
+  if (!q.live) {
+    _qd = null;
+    _qdTeardown();
+    return;
+  }
+  q.ending = true;
+  cancelAnimationFrame(q.raf);
+  _qdSuppressClick = true;
+  setTimeout(() => (_qdSuppressClick = false), 0);
+  const win = $("virtual-track-window");
+  const H = VIRTUAL_ROW_HEIGHT;
+  q.ghost.style.transition =
+    "top 0.16s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.16s ease, box-shadow 0.16s ease";
+  q.ghost.classList.remove("qd-lift");
+  if (win) q.ghost.style.top = win.getBoundingClientRect().top + q.to * H + "px";
+  setTimeout(() => {
+    q.ghost.remove();
+    const { src, to } = q;
+    const reorder = src !== to;
+    if (reorder) {
+      const [moved] = state.queue.splice(src, 1);
+      state.queue.splice(to, 0, moved);
+      _persistQueue();
+      if (state.currentTrack)
+        state.queueIndex = state.queue.findIndex((t) => t.id === state.currentTrack.id);
+    }
+    _qd = null;
+    _qdTeardown();
+    if (reorder) _refreshListInPlace(state.queue, "queue");
+    else _qdApplyShift();
+  }, 170);
+}
+
+function _qdCancel() {
+  const q = _qd;
+  if (!q) return;
+  cancelAnimationFrame(q.raf);
+  if (q.ghost) q.ghost.remove();
+  _qd = null;
+  _qdTeardown();
+  _qdApplyShift();
 }
 
 // ─── Queue Drag-to-Reorder (state shared with delegation) ────────
