@@ -9536,3 +9536,17 @@ textarea,
   background: rgba(255, 255, 255, 0.85);
   border-color: rgba(0, 0, 0, 0.1);
 }
+
+/* Rows that appear live (queue / library sync) */
+.track-row.row-enter {
+  animation: rowEnter 0.35s ease-out;
+}
+@keyframes rowEnter {
+  from {
+    opacity: 0;
+    background-color: rgba(255, 255, 255, 0.08);
+  }
+  to {
+    opacity: 1;
+  }
+}
