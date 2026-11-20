@@ -142,12 +142,9 @@ class DiscoveryView {
       this.novaAPI.on("discovery:search-update", (d) => {
         if (!d || d.searchId !== this._searchSeq || !Array.isArray(d.results))
           return;
-        if (this._searchBusyFn) this._searchBusyFn(false);
-        // Untouched list: take the fully ranked order. Once the user has
-        // scrolled, keep rows where they are and only append.
-        this.tracks = this._atTop()
-          ? d.results
-          : this._stableMerge(this.tracks, d.results);
+        // Hold back partial waves; show everything once, fully ranked.
+        if (!this._searchDone) return;
+        this.tracks = this._stableMerge(this.tracks, d.results);
         this._renderResults(this.tracks);
       });
 
@@ -341,6 +338,7 @@ class DiscoveryView {
     this._searchBusyFn = setBusy;
     const searchId = (this._searchSeq = (this._searchSeq || 0) + 1);
     this.tracks = [];
+    this._searchDone = false;
 
     try {
       const res = await this.novaAPI.invoke(
@@ -349,8 +347,14 @@ class DiscoveryView {
         searchId,
       );
       if (searchId !== this._searchSeq) return;
+      this._searchDone = true;
       setBusy(false);
-      if (res && res.success && Array.isArray(res.results) && res.results.length > 0) {
+      if (
+        res &&
+        res.success &&
+        Array.isArray(res.results) &&
+        res.results.length > 0
+      ) {
         this.tracks = this._stableMerge(this.tracks, res.results);
         this._renderResults(this.tracks);
         return;
@@ -364,6 +368,7 @@ class DiscoveryView {
         this._renderEmpty("No results found. Try another query.");
       }
     } catch (err) {
+      this._searchDone = true;
       setBusy(false);
       this._renderEmpty("Error searching tracks: " + err.message);
     }
@@ -653,9 +658,19 @@ class DiscoveryView {
       } catch (_) {}
     }
     this._cancelledIds?.delete(track.id);
-    const activeCount = Array.from(this.downloadStates.values()).filter(st => st && (st.status === "downloading" || st.status === "resolving" || st.status === "tagging" || st.status === "verifying")).length;
+    const activeCount = Array.from(this.downloadStates.values()).filter(
+      (st) =>
+        st &&
+        (st.status === "downloading" ||
+          st.status === "resolving" ||
+          st.status === "tagging" ||
+          st.status === "verifying"),
+    ).length;
     const initialStatus = activeCount >= 2 ? "queued" : "resolving";
-    const initialState = { status: initialStatus, percent: initialStatus === "queued" ? 2 : 5 };
+    const initialState = {
+      status: initialStatus,
+      percent: initialStatus === "queued" ? 2 : 5,
+    };
     this.downloadStates.set(track.id, initialState);
     this._updateTrackDownloadUI(track.id, initialState);
 
