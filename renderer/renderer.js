@@ -262,7 +262,10 @@ const state = {
   currentView: "library",
   currentTab: "songs",
   sortKey: _cachedSettings.sortKey || "dateAdded",
-  sortAsc: typeof _cachedSettings.sortAsc === "boolean" ? _cachedSettings.sortAsc : false,
+  sortAsc:
+    typeof _cachedSettings.sortAsc === "boolean"
+      ? _cachedSettings.sortAsc
+      : false,
   overlayOpen: false,
   sidebarOpen: false,
   activeNavSection: "library",
@@ -1883,7 +1886,10 @@ function _isCurrentRowInView(area, idx) {
   // Row not rendered (virtualised away) → definitely out of view, unless pitch math says otherwise
   const pitch = _measuredRowPitch();
   const top = idx * pitch;
-  return top + pitch * 0.5 >= area.scrollTop && top + pitch * 0.5 <= area.scrollTop + area.clientHeight;
+  return (
+    top + pitch * 0.5 >= area.scrollTop &&
+    top + pitch * 0.5 <= area.scrollTop + area.clientHeight
+  );
 }
 let _pillRaf = 0;
 const _pillIdxCache = { items: null, len: -1, id: null, idx: -1 };
@@ -5224,7 +5230,11 @@ async function _resolveCoverArt(track) {
   if (_coverArtSearchCache.get(track.id) === null) return;
   // Backend does strict local → album sibling → verified online (artist/title/duration matched)
   try {
-    const res = await window.novaAPI.invoke("coverart:refill-track", { trackId: track.id, force: false, auto: true });
+    const res = await window.novaAPI.invoke("coverart:refill-track", {
+      trackId: track.id,
+      force: false,
+      auto: true,
+    });
     if (res?.success && res.coverArt) {
       track.coverArt = res.coverArt;
       track._hasCoverArt = true;
@@ -5256,22 +5266,44 @@ function _showCoverArtToast(msg, ms = 3200) {
 
 async function _refillTrackCoverArt(track, force = false, pick = false) {
   if (!track || !window.novaAPI) return;
-  _showCoverArtToast(pick ? "Choose an image…" : `Searching cover art for "${track.title || "track"}"…`, 30000);
+  _showCoverArtToast(
+    pick
+      ? "Choose an image…"
+      : `Searching cover art for "${track.title || "track"}"…`,
+    30000,
+  );
   const rows = document.querySelectorAll(`[data-track-id="${track.id}"]`);
   rows.forEach((r) => (r.style.opacity = "0.5"));
   try {
-    const res = await window.novaAPI.invoke(pick ? "coverart:pick-file" : "coverart:refill-track", { trackId: track.id, force });
+    const res = await window.novaAPI.invoke(
+      pick ? "coverart:pick-file" : "coverart:refill-track",
+      { trackId: track.id, force },
+    );
     if (res?.cancelled) {
       _showCoverArtToast("Cancelled");
     } else if (!res?.success) {
       _showCoverArtToast(res?.error || "Cover art refill failed");
     } else if (res.coverArt && res.changed) {
-      const m = res.matched ? ` (${res.matched.artist} – ${res.matched.title})` : "";
-      _showCoverArtToast(res.source === "online" ? `Cover found online ✓${m}` : "Cover art updated ✓");
+      const m = res.matched
+        ? ` (${res.matched.artist} – ${res.matched.title})`
+        : "";
+      _showCoverArtToast(
+        res.source === "online"
+          ? `Cover found online ✓${m}`
+          : "Cover art updated ✓",
+      );
     } else if (res.coverArt) {
-      _showCoverArtToast(res.note ? "No better match found — kept current art" : "Cover art verified ✓");
+      _showCoverArtToast(
+        res.note
+          ? "No better match found — kept current art"
+          : "Cover art verified ✓",
+      );
     } else {
-      _showCoverArtToast(res.cleared ? "Bad cover removed — no verified match found" : "No verified cover art found");
+      _showCoverArtToast(
+        res.cleared
+          ? "Bad cover removed — no verified match found"
+          : "No verified cover art found",
+      );
     }
   } catch (err) {
     console.error("[RefillArt]", err);
@@ -5325,9 +5357,13 @@ async function _refillAllCoverArt(btn) {
   window.novaAPI.on?.("coverart:refill-progress", progressHandler);
 
   try {
-    const res = await window.novaAPI.invoke("coverart:refill-all", { force: false });
+    const res = await window.novaAPI.invoke("coverart:refill-all", {
+      force: false,
+    });
     if (res?.success) {
-      _showCoverArtToast(`Cover art done — ${res.filled} filled, ${res.repaired || 0} bad removed, ${res.skipped} unmatched${res.cancelled ? " (cancelled)" : ""}`);
+      _showCoverArtToast(
+        `Cover art done — ${res.filled} filled, ${res.repaired || 0} bad removed, ${res.skipped} unmatched${res.cancelled ? " (cancelled)" : ""}`,
+      );
       // Re-resolve art for tracks that got filled
       if (res.filled > 0 && state.tracks) {
         for (const t of state.tracks) {
@@ -8614,7 +8650,9 @@ function renderSettings() {
     if (statusEl) statusEl.textContent = "Searching for missing cover art…";
     await _refillAllCoverArt(btn);
     if (statusEl) statusEl.textContent = "Done!";
-    setTimeout(() => { if (statusEl) statusEl.textContent = ""; }, 4000);
+    setTimeout(() => {
+      if (statusEl) statusEl.textContent = "";
+    }, 4000);
   });
 
   // ── Re-search All Art (force: re-searches even existing art) ──
@@ -8625,11 +8663,16 @@ function renderSettings() {
     btn.disabled = true;
     btn.textContent = "Re-searching…";
     try {
-      const res = await window.novaAPI.invoke("coverart:refill-all", { force: true });
+      const res = await window.novaAPI.invoke("coverart:refill-all", {
+        force: true,
+      });
       if (res?.success) {
         _showCoverArtToast(`Re-search done — ${res.filled} art(s) updated`);
-        if (statusEl) statusEl.textContent = `Done — ${res.filled} updated, ${res.skipped} skipped`;
-        setTimeout(() => { if (statusEl) statusEl.textContent = ""; }, 5000);
+        if (statusEl)
+          statusEl.textContent = `Done — ${res.filled} updated, ${res.skipped} skipped`;
+        setTimeout(() => {
+          if (statusEl) statusEl.textContent = "";
+        }, 5000);
         if (res.filled > 0 && state.tracks) {
           for (const t of state.tracks) {
             _coverArtSearchCache.delete(t.id);
@@ -8637,7 +8680,7 @@ function renderSettings() {
           }
         }
       }
-    } catch(_) {
+    } catch (_) {
       if (statusEl) statusEl.textContent = "Error during re-search";
     } finally {
       btn.disabled = false;
