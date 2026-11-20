@@ -143,7 +143,11 @@ class DiscoveryView {
         if (!d || d.searchId !== this._searchSeq || !Array.isArray(d.results))
           return;
         if (this._searchBusyFn) this._searchBusyFn(false);
-        this.tracks = this._stableMerge(this.tracks, d.results);
+        // Untouched list: take the fully ranked order. Once the user has
+        // scrolled, keep rows where they are and only append.
+        this.tracks = this._atTop()
+          ? d.results
+          : this._stableMerge(this.tracks, d.results);
         this._renderResults(this.tracks);
       });
 
@@ -270,7 +274,7 @@ class DiscoveryView {
             />
             <button 
               id="discovery-search-btn" 
-              title="Search" 
+              data-tooltip="Search" 
               style="position: absolute; right: 6px; top: 5px; width: 36px; height: 36px; background: var(--green); border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #000; transition: transform 0.15s, opacity 0.15s;"
               onmouseenter="this.style.opacity='0.85'; this.style.transform='scale(1.05)'"
               onmouseleave="this.style.opacity='1'; this.style.transform='scale(1)'"
@@ -365,6 +369,15 @@ class DiscoveryView {
     }
   }
 
+  _scroller() {
+    return document.getElementById("track-area");
+  }
+
+  _atTop() {
+    const sc = this._scroller();
+    return !sc || sc.scrollTop < 8;
+  }
+
   // Keep rows already on screen in place; refresh their data, append new ones.
   _stableMerge(prev, next) {
     if (!prev || !prev.length) return next;
@@ -409,6 +422,8 @@ class DiscoveryView {
       return;
     }
 
+    const sc = this._scroller();
+    const prevTop = sc ? sc.scrollTop : 0;
     list.innerHTML = tracks
       .map((track) => {
         const durationMin = track.durationMs
@@ -455,6 +470,7 @@ class DiscoveryView {
 
     // Attach listeners
     this._attachResultEvents();
+    if (sc && prevTop) sc.scrollTop = prevTop;
   }
 
   _getDownloadButtonHtml(trackId, state) {
