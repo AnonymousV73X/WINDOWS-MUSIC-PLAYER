@@ -455,6 +455,7 @@ async function _itunes(q) {
       artist: r.artistName,
       title: r.trackName,
       album: r.collectionName,
+      year: parseInt(String(r.releaseDate || "").slice(0, 4), 10) || 0,
       durationMs: r.trackTimeMillis || 0,
       artUrls: a
         ? [
@@ -833,7 +834,12 @@ async function _artFromCatalog(cands, q, excl, loose) {
           url,
           score: s,
           provider: c.provider === "ytm" ? "youtube-music" : undefined,
-          matched: { artist: c.artist, title: c.title, album: c.album },
+          matched: {
+            artist: c.artist,
+            title: c.title,
+            album: c.album,
+            year: c.year || 0,
+          },
         };
       } catch (_) {}
     }
