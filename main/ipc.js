@@ -7158,16 +7158,12 @@ function _buildCoverCtx(lib) {
     if (!t.filePath) continue;
     const d = path.dirname(t.filePath).toLowerCase();
     if (!dirIndex.has(d)) dirIndex.set(d, []);
-    dirIndex
-      .get(d)
-      .push({
-        id: t.id,
-        album: _normKey(t.album),
-        artist: _normKey(
-          Array.isArray(t.artist) ? t.artist.join(" ") : t.artist,
-        ),
-        track: t,
-      });
+    dirIndex.get(d).push({
+      id: t.id,
+      album: _normKey(t.album),
+      artist: _normKey(Array.isArray(t.artist) ? t.artist.join(" ") : t.artist),
+      track: t,
+    });
   }
   return { dirIndex };
 }
@@ -7464,9 +7460,13 @@ async function _fillUnknownMeta(track, matched, provider) {
   const t = (libraryById && libraryById.get(track.id)) || track;
   Object.assign(t, meta, { _userEdited: true });
   try {
-    const row = db.prepare("SELECT data FROM tracks WHERE id = ?").get(track.id);
+    const row = db
+      .prepare("SELECT data FROM tracks WHERE id = ?")
+      .get(track.id);
     if (row) {
-      const d = Object.assign(JSON.parse(row.data), meta, { _userEdited: true });
+      const d = Object.assign(JSON.parse(row.data), meta, {
+        _userEdited: true,
+      });
       db.prepare(
         "UPDATE tracks SET artist = ?, album = ?, year = ?, data = ? WHERE id = ?",
       ).run(
