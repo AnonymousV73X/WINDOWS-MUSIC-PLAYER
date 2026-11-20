@@ -7487,7 +7487,7 @@ body.is-playing .ov-play svg,
 
 /* ── Queue drag handle ── */
 .queue-drag-handle {
-  cursor: grab;
+  cursor: default;
   opacity: 0.4;
   transition: opacity 0.15s;
 }
@@ -7497,7 +7497,7 @@ body.is-playing .ov-play svg,
 }
 
 .queue-drag-handle:active {
-  cursor: grabbing;
+  cursor: default;
 }
 
 .queue-drag-source {
@@ -9587,6 +9587,37 @@ textarea,
 }
 body.lyrics-dragging,
 body.lyrics-dragging * {
+  cursor: default !important;
+  user-select: none !important;
+}
+
+/* ── Queue custom drag ── */
+.qd-active .track-row {
+  transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.track-row.qd-src {
+  opacity: 0.35;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+.qd-ghost {
+  border-radius: 10px;
+  background: rgba(30, 30, 30, 0.92) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease;
+}
+.qd-ghost.qd-lift {
+  transform: scale(1.02) !important;
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.6),
+    0 0 0 1px var(--accent-color, #e879f9);
+}
+body.qd-dragging,
+body.qd-dragging * {
   cursor: default !important;
   user-select: none !important;
 }
