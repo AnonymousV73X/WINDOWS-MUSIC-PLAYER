@@ -1681,7 +1681,7 @@ function _resolveCoverArtSrc(track) {
     return _getCoverArtDisplayUrl(track.coverArt);
   }
   if (track._hasCoverArt) {
-    return `nova-media://art/${encodeURIComponent(track.id)}`;
+    return `nova-media://art/${encodeURIComponent(track.id)}${track._coverVer ? `?v=${track._coverVer}` : ""}`;
   }
   if (track._thumb) {
     // _thumb can be a nova-media:// protocol URL or a data: URI
@@ -5273,6 +5273,12 @@ async function _refillTrackCoverArt(track, force = false, pick = false) {
     } else {
       _showCoverArtToast(res.cleared ? "Bad cover removed — no verified match found" : "No verified cover art found");
     }
+    if (res?.meta) {
+      for (const t of [state.tracks.find((x) => x.id === track.id), state.currentTrack?.id === track.id ? state.currentTrack : null])
+        if (t) Object.assign(t, res.meta, { _userEdited: true });
+      _repaintTrackRow(track.id);
+      _showCoverArtToast(`Filled ${Object.keys(res.meta).join(", ")} ✓`);
+    }
   } catch (err) {
     console.error("[RefillArt]", err);
     _showCoverArtToast("Cover art refill error");
@@ -5286,6 +5292,9 @@ function _onCoverArtUpdated({ trackId, coverArt, version } = {}) {
   if (!trackId) return;
   thumbnailAtlas.delete(trackId);
   _idbSet(`batch96::${trackId}`, null);
+  _trackThumbHot.delete(trackId);
+  delete _trackThumbPatchPending[trackId];
+  _idbSet(`trackThumb::${trackId}`, null);
   _coverArtSearchCache.delete(trackId);
   const t = (state.tracks || []).find((x) => x.id === trackId);
   if (!t) return;
@@ -5298,11 +5307,19 @@ function _onCoverArtUpdated({ trackId, coverArt, version } = {}) {
   } else {
     t.coverArt = null;
     t._hasCoverArt = false;
-    const slot = virtualList.activeSlots.get(trackId);
-    if (slot) slot._trackId = null;
-    virtualList.lastStart = -1;
-    virtualList.lastEnd = -1;
-    renderVirtualRows();
+    _repaintTrackRow(trackId);
+  }
+}
+
+// Rebuild one visible row in place (renderVirtualRows skips already-active slots)
+function _repaintTrackRow(trackId) {
+  const slot = virtualList.activeSlots.get(trackId);
+  if (!slot) return;
+  const i = parseInt(slot.dataset.idx, 10);
+  const t = virtualList.items[i];
+  if (t && t.id === trackId) {
+    _populateSlot(slot, t, i);
+    slot._trackId = trackId;
   }
 }
 
@@ -5394,14 +5411,7 @@ function _applyCoverArtToTrack(track) {
         });
         thumbnailAtlas.set(track.id, bitmap);
       } catch (_) {}
-      // Refresh the row in the virtual list
-      const slot = virtualList.activeSlots.get(track.id);
-      if (slot) {
-        slot._trackId = null; // force repopulate
-      }
-      virtualList.lastStart = -1;
-      virtualList.lastEnd = -1;
-      renderVirtualRows();
+      _repaintTrackRow(track.id);
       // Also refresh now-playing UI if this is the active track
       if (state.currentTrack && state.currentTrack.id === track.id) {
         const artIdx = getArtIndex(track);
@@ -18129,4 +18139,5 @@ closePlaylistMenus = function () {
   });
   window.addEventListener("resize", sync);
   sync();
+})();
 })();

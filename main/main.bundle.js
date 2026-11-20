@@ -1146,26 +1146,6 @@ var require_coverArt = __commonJS({
         )
       }));
     }
-    async function _ytm(q) {
-      let DE;
-      try {
-        DE = require("./downloadEngine");
-      } catch (_) {
-        return [];
-      }
-      if (typeof DE.searchYouTubeMusic !== "function") return [];
-      const res = await DE.searchYouTubeMusic(
-        [q.artist, q.title].filter(Boolean).join(" "),
-        10
-      );
-      return res.filter((r) => r.albumName).map((r) => ({
-        artist: r.artistName,
-        title: r.trackName,
-        album: r.albumName,
-        durationMs: r.durationMs || 0,
-        artUrls: [r.artworkUrl, r.artworkThumbnail].filter(Boolean)
-      }));
-    }
     function _parseDur(str) {
       const m = String(str || "").trim().split(":").map(Number);
       if (!m.length || m.some((x) => !Number.isFinite(x))) return 0;
@@ -1275,72 +1255,6 @@ var require_coverArt = __commonJS({
         height: side
       }).resize(out, out).jpeg({ quality: 90 }).toBuffer();
     }
-    async function _youtubeFallback(q, excludeHashes) {
-      let DE = null;
-      try {
-        DE = require("./downloadEngine");
-      } catch (_) {
-      }
-      const term = [q.artist, q.title].filter(Boolean).join(" ");
-      const [ytm, web] = await Promise.allSettled([
-        DE && DE.searchYouTubeMusic ? DE.searchYouTubeMusic(term, 15) : Promise.resolve([]),
-        _ytWebSearch(q)
-      ]);
-      const cands = [];
-      if (ytm.status === "fulfilled")
-        for (const r of ytm.value || [])
-          cands.push({
-            videoId: r.videoId,
-            title: r.trackName,
-            artist: r.artistName,
-            album: r.albumName,
-            channel: r.artistName,
-            durationMs: r.durationMs,
-            squareUrl: /googleusercontent|ggpht/.test(r.artworkUrl || "") ? r.artworkUrl : null,
-            provider: "youtube-music"
-          });
-      if (web.status === "fulfilled")
-        for (const r of web.value)
-          cands.push({ ...r, artist: r.channel, provider: "youtube" });
-      const seen = /* @__PURE__ */ new Set();
-      const scored = cands.map((c) => ({
-        c,
-        s: Math.max(c.album ? scoreCandidate(q, c) : 0, scoreVideo(q, c))
-      })).filter((x) => x.s >= 0.8 && x.c.videoId).sort(
-        (a, b) => b.s - a.s || (b.c.squareUrl ? 1 : 0) - (a.c.squareUrl ? 1 : 0)
-      ).filter((x) => seen.has(x.c.videoId) ? false : seen.add(x.c.videoId)).slice(0, 6);
-      for (const { c, s } of scored) {
-        const urls = [];
-        if (c.squareUrl) urls.push({ url: c.squareUrl, crop: false });
-        for (const n of ["maxresdefault", "sddefault", "hqdefault"])
-          urls.push({
-            url: `https://i.ytimg.com/vi/${c.videoId}/${n}.jpg`,
-            crop: true
-          });
-        for (const { url, crop } of urls) {
-          try {
-            let buf = await fetchBuf(url, { timeout: 9e3 });
-            if (crop) buf = await _toSquareJpeg(buf);
-            const v = await validateImage(buf, { minSide: 200, strict: true });
-            if (!v.valid || excludeHashes && excludeHashes.has(v.hash)) continue;
-            return {
-              buf,
-              ...v,
-              url,
-              score: s,
-              provider: c.provider,
-              matched: {
-                artist: c.artist || c.channel,
-                title: c.title,
-                album: c.album
-              }
-            };
-          } catch (_) {
-          }
-        }
-      }
-      return null;
-    }
     async function normalizeArtBuffer(buf) {
       let v = await validateImage(buf, { minSide: 100 });
       if (!v.valid) return null;
@@ -1378,49 +1292,217 @@ var require_coverArt = __commonJS({
       }
       return null;
     }
-    var _onlineCache = /* @__PURE__ */ new Map();
-    var ONLINE_TTL = 10 * 60 * 1e3;
-    async function _searchOnlineOnce(q, excludeHashes) {
-      const providers = [_itunes, _deezer, _ytm];
-      const settled = await Promise.race([
-        Promise.allSettled(providers.map((p) => p(q))),
-        new Promise((r) => setTimeout(() => r([]), 12e3))
+    var _STOP = /* @__PURE__ */ new Set([
+      "official",
+      "video",
+      "audio",
+      "lyrics",
+      "lyric",
+      "hd",
+      "hq",
+      "4k",
+      "music",
+      "visualizer",
+      "the",
+      "a",
+      "of",
+      "and",
+      "feat",
+      "ft",
+      "prod"
+    ]);
+    var _words = (s) => _norm(
+      String(s || "").replace(
+        /[\(\[]\s*(feat|ft|featuring|with|prod)\b[^\)\]]*[\)\]]/gi,
+        ""
+      )
+    ).split(" ").filter((w) => w.length >= 2 && !_STOP.has(w));
+    function _cover(qWords, hay) {
+      if (!qWords.length) return 0;
+      const set = new Set(hay);
+      return qWords.filter((w) => set.has(w)).length / qWords.length;
+    }
+    function scoreLoose(q, c) {
+      const qw = _words(`${q.artist} ${q.title}`);
+      if (qw.length < 1) return 0;
+      const cw = _words(
+        `${c.artist || c.channel || ""} ${c.title} ${c.album || ""}`
+      );
+      const cov = _cover(qw, cw);
+      if (cov < 0.8) return 0;
+      if (_flags(q.title + " " + q.album) !== _flags(c.title + " " + (c.album || "")))
+        return 0;
+      if (q.durationMs && c.durationMs) {
+        const d = c.durationMs - q.durationMs;
+        if (d < -6e3 || d > 45e3) return 0;
+        if (Math.abs(d) > 8e3 && cov < 1) return 0;
+      } else if (cov < 1) return 0;
+      return 0.75 + 0.1 * cov;
+    }
+    function _stemQuery(track) {
+      const stem = track.filePath ? path.basename(track.filePath, path.extname(track.filePath)) : "";
+      const clean = _cleanTitle(
+        stem.replace(/\[[\w-]{8,14}\]\s*$/, "").replace(/_+/g, " ").replace(/\s{2,}/g, " ").trim()
+      );
+      return clean;
+    }
+    function deriveVariants(track) {
+      const dur = (Number(track.duration) || 0) * 1e3;
+      const out = [];
+      const seen = /* @__PURE__ */ new Set();
+      const add = (v) => {
+        if (!v || !v.title) return;
+        const k = `${_norm(v.artist)}|${_norm(v.title)}`;
+        if (seen.has(k)) return;
+        seen.add(k);
+        out.push({ album: "", durationMs: dur, ...v });
+      };
+      add(deriveQuery(track));
+      const stem = _stemQuery(track);
+      if (stem) {
+        const m = stem.match(/^(.{2,60}?)\s+[-–—]\s+(.{2,})$/);
+        add(
+          m ? { artist: m[1].trim(), title: m[2].trim() } : { artist: "", title: stem }
+        );
+      }
+      const t = _cleanTitle(track.title || "");
+      if (t) add({ artist: "", title: t });
+      return out.slice(0, 3);
+    }
+    async function _gather(q) {
+      let DE = null;
+      try {
+        DE = require("./downloadEngine");
+      } catch (_) {
+      }
+      const term = [q.artist, q.title].filter(Boolean).join(" ");
+      const [it, dz, ytm, web] = await Promise.allSettled([
+        _itunes(q),
+        _deezer(q),
+        DE && DE.searchYouTubeMusic ? DE.searchYouTubeMusic(term, 15) : Promise.resolve([]),
+        _ytWebSearch(q)
       ]);
-      const cands = [];
-      for (const s of settled) if (s.status === "fulfilled") cands.push(...s.value);
-      const scored = cands.map((c) => ({ c, s: scoreCandidate(q, c) })).filter((x) => x.s >= 0.72 && x.c.artUrls.length).sort((a, b) => b.s - a.s).slice(0, 6);
-      for (const { c, s } of scored) {
+      const ok = (r) => r.status === "fulfilled" ? r.value || [] : [];
+      const catalog = [...ok(it), ...ok(dz)];
+      const yt = [];
+      for (const r of ok(ytm)) {
+        const square = /googleusercontent|ggpht/.test(r.artworkUrl || "") ? r.artworkUrl : null;
+        const c = {
+          videoId: r.videoId,
+          title: r.trackName,
+          artist: r.artistName,
+          album: r.albumName,
+          channel: r.artistName,
+          durationMs: r.durationMs,
+          squareUrl: square,
+          provider: "youtube-music"
+        };
+        if (r.albumName)
+          catalog.push({
+            ...c,
+            artUrls: [square, r.artworkThumbnail].filter(Boolean),
+            provider: "ytm"
+          });
+        yt.push(c);
+      }
+      for (const r of ok(web))
+        yt.push({ ...r, artist: r.channel, provider: "youtube" });
+      return { catalog, yt };
+    }
+    async function _artFromCatalog(cands, q, excl, loose) {
+      const scored = cands.map((c) => ({ c, s: loose ? scoreLoose(q, c) : scoreCandidate(q, c) })).filter(
+        (x) => x.s >= (loose ? 0.75 : 0.72) && x.c.artUrls && x.c.artUrls.length
+      ).sort((a, b) => b.s - a.s).slice(0, 6);
+      for (const { c, s } of scored)
         for (const url of c.artUrls) {
           try {
             const buf = await fetchBuf(url, { timeout: 9e3 });
-            const v = await validateImage(buf, { minSide: 200, strict: true });
-            if (!v.valid) continue;
-            if (excludeHashes && excludeHashes.has(v.hash)) continue;
+            const v2 = await validateImage(buf, { minSide: 200, strict: true });
+            if (!v2.valid || excl && excl.has(v2.hash)) continue;
             return {
               buf,
-              ...v,
+              ...v2,
               url,
               score: s,
+              provider: c.provider === "ytm" ? "youtube-music" : void 0,
               matched: { artist: c.artist, title: c.title, album: c.album }
             };
           } catch (_) {
           }
         }
+      return null;
+    }
+    async function _artFromYoutube(cands, q, excl, loose) {
+      const seen = /* @__PURE__ */ new Set();
+      const scored = cands.map((c) => ({
+        c,
+        s: loose ? scoreLoose(q, c) : Math.max(c.album ? scoreCandidate(q, c) : 0, scoreVideo(q, c))
+      })).filter((x) => x.s >= (loose ? 0.75 : 0.8) && x.c.videoId).sort(
+        (a, b) => b.s - a.s || (b.c.squareUrl ? 1 : 0) - (a.c.squareUrl ? 1 : 0)
+      ).filter((x) => seen.has(x.c.videoId) ? false : seen.add(x.c.videoId)).slice(0, 6);
+      for (const { c, s } of scored) {
+        const urls = [];
+        if (c.squareUrl) urls.push({ url: c.squareUrl, crop: false });
+        for (const n of ["maxresdefault", "sddefault", "hqdefault"])
+          urls.push({
+            url: `https://i.ytimg.com/vi/${c.videoId}/${n}.jpg`,
+            crop: true
+          });
+        for (const { url, crop } of urls) {
+          try {
+            let buf = await fetchBuf(url, { timeout: 9e3 });
+            if (crop) buf = await _toSquareJpeg(buf);
+            const v = await validateImage(buf, { minSide: 200, strict: true });
+            if (!v.valid || excl && excl.has(v.hash)) continue;
+            return {
+              buf,
+              ...v,
+              url,
+              score: s,
+              provider: c.provider,
+              matched: {
+                artist: c.artist || c.channel,
+                title: c.title,
+                album: c.album
+              }
+            };
+          } catch (_) {
+          }
+        }
       }
-      return _youtubeFallback(q, excludeHashes).catch(() => null);
+      return null;
+    }
+    async function _searchVariant(q, excl) {
+      const pool = await Promise.race([
+        _gather(q),
+        new Promise((r) => setTimeout(() => r({ catalog: [], yt: [] }), 14e3))
+      ]);
+      for (const loose of [false, true]) {
+        const r = await _artFromCatalog(pool.catalog, q, excl, loose) || await _artFromYoutube(pool.yt, q, excl, loose);
+        if (r) return { ...r, loose };
+      }
+      return null;
+    }
+    var _onlineCache = /* @__PURE__ */ new Map();
+    var ONLINE_TTL = 10 * 60 * 1e3;
+    async function _searchAll(track, excl) {
+      for (const q of deriveVariants(track)) {
+        const r = await _searchVariant(q, excl).catch(() => null);
+        if (r) return r;
+      }
+      return null;
     }
     function searchOnlineCover(track, { excludeHashes } = {}) {
-      const q = deriveQuery(track);
-      if (!q.title) return Promise.resolve(null);
-      const key = `${_norm(q.artist)}|${_norm(q.title)}|${_norm(q.album)}|${Math.round(q.durationMs / 4e3)}`;
+      const variants = deriveVariants(track);
+      if (!variants.length) return Promise.resolve(null);
+      const key = variants.map((v) => `${_norm(v.artist)}|${_norm(v.title)}`).join("#") + `|${Math.round((variants[0].durationMs || 0) / 4e3)}`;
       const hit = _onlineCache.get(key);
       const usable = (r) => r && !(excludeHashes && excludeHashes.has(r.hash));
-      if (hit && Date.now() - hit.t < ONLINE_TTL) {
+      if (hit && Date.now() - hit.t < ONLINE_TTL)
         return hit.p.then(
-          (r) => r === null || usable(r) ? r : _searchOnlineOnce(q, excludeHashes)
+          (r) => r === null || usable(r) ? r : _searchAll(track, excludeHashes)
         );
-      }
-      const p = _searchOnlineOnce(q, excludeHashes).catch(() => null);
+      const p = _searchAll(track, excludeHashes).catch(() => null);
       _onlineCache.set(key, { t: Date.now(), p });
       if (_onlineCache.size > 200)
         _onlineCache.delete(_onlineCache.keys().next().value);
@@ -1449,6 +1531,8 @@ var require_coverArt = __commonJS({
       fetchSourceArt,
       _toSquareJpeg,
       searchOnlineCover,
+      deriveVariants,
+      scoreLoose,
       fetchBuf,
       extForMime,
       FOLDER_ART_NAMES,
