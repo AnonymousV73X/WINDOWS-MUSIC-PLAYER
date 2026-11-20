@@ -782,7 +782,7 @@ app.whenReady().then(() => {
         if (url.startsWith("nova-media://thumb/")) {
           const parts = url.slice("nova-media://thumb/".length).split("/");
           const trackId = parts[0];
-          const size = parts[1] || "48";
+          const size = (parts[1] || "48").split("?")[0];
           const thumbDir = path.join(
             app.getPath("userData"),
             "cached_covers",
