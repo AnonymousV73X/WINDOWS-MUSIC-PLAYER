@@ -9553,13 +9553,13 @@ textarea,
 .lyrics-grip {
   display: none;
   position: absolute;
-  top: 4px;
+  top: 3px;
   left: 50%;
-  width: 34px;
-  height: 4px;
-  margin-left: -17px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.2);
+  width: 18px;
+  height: 3px;
+  margin-left: -9px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.07);
   transition:
     width 0.18s ease,
     margin-left 0.18s ease,
@@ -9570,7 +9570,7 @@ textarea,
   display: block;
 }
 .lyrics-panel.floating .lyrics-header:hover .lyrics-grip {
-  background: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.22);
 }
 .lyrics-panel.floating.float-open.dragging {
   transform: scale(1.025);
@@ -9581,8 +9581,8 @@ textarea,
     0 0 28px rgba(232, 121, 249, 0.18);
 }
 .lyrics-panel.dragging .lyrics-grip {
-  width: 52px;
-  margin-left: -26px;
+  width: 26px;
+  margin-left: -13px;
   background: var(--accent-color, #e879f9);
 }
 body.lyrics-dragging,
