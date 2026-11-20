@@ -6811,6 +6811,7 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
         fileSize: stats.size,
         coverArt: meta?.coverArt || null,
         _hasCoverArt: !!meta?.coverArt,
+        artworkSource: trackInfo.artworkUrl || "",
         dateAdded: Date.now(),
         dateModified: stats.mtimeMs || Date.now(),
       };
@@ -7105,6 +7106,12 @@ async function _refillTrackCore(track, { force = false, online = true, ctx = nul
     }
   }
 
+  // 3a. the artwork of the search card this song was downloaded from
+  if (online && track.artworkSource) {
+    const src = await CoverArt.fetchSourceArt(track.artworkSource).catch(() => null);
+    if (src && !(exclude && exclude.has(src.hash))) return take(_writeCoverSidecar(track, src.buf, src.mime, src.hash), "source");
+  }
+
   // 3. verified online match
   if (online) {
     const hit = await CoverArt.searchOnlineCover(track, { excludeHashes: exclude });
@@ -7173,12 +7180,10 @@ async function _ensureDownloadedCover(track, info) {
   let buf = null;
   let v = null;
   if (info && info.artworkUrl) {
-    try {
-      buf = await CoverArt.fetchBuf(info.artworkUrl, { timeout: 8000 });
-      v = await CoverArt.validateImage(buf, { minSide: 150, strict: true });
-      if (!v.valid) buf = null;
-    } catch (_) {
-      buf = null;
+    const src = await CoverArt.fetchSourceArt(info.artworkUrl).catch(() => null);
+    if (src) {
+      buf = src.buf;
+      v = src;
     }
   }
   if (!buf) {

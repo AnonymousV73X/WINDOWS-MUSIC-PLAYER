@@ -709,6 +709,46 @@ async function _youtubeFallback(q, excludeHashes) {
   return null;
 }
 
+// Art that came from the exact search card the user picked: trusted by provenance.
+// Only checks it is a real image; squares up 16:9 video frames instead of rejecting them.
+async function normalizeArtBuffer(buf) {
+  let v = await validateImage(buf, { minSide: 100 });
+  if (!v.valid) return null;
+  const sharp = require("sharp");
+  const m = await sharp(buf).metadata();
+  const ratio = m.width / m.height;
+  if (ratio < 0.9 || ratio > 1.1) {
+    try {
+      buf = await _toSquareJpeg(buf);
+      v = await validateImage(buf, { minSide: 100 });
+      if (!v.valid) return null;
+    } catch (_) {
+      return null;
+    }
+  }
+  return { buf, ...v };
+}
+
+async function fetchSourceArt(url) {
+  if (!url) return null;
+  const urls = [url];
+  const yt = String(url).match(/i\.ytimg\.com\/vi(?:_webp)?\/([\w-]{6,})\//);
+  if (yt)
+    for (const n of ["maxresdefault", "sddefault", "hqdefault"])
+      urls.push(`https://i.ytimg.com/vi/${yt[1]}/${n}.jpg`);
+  if (/googleusercontent\.com|ggpht\.com/.test(url))
+    urls.unshift(
+      url.replace(/=(?:w\d+-h\d+|s\d+)[^?#]*$/, "=w800-h800-l90-rj"),
+    );
+  for (const u of urls) {
+    try {
+      const r = await normalizeArtBuffer(await fetchBuf(u, { timeout: 9000 }));
+      if (r) return r;
+    } catch (_) {}
+  }
+  return null;
+}
+
 const _onlineCache = new Map(); // key → { t, p }
 const ONLINE_TTL = 10 * 60 * 1000;
 
@@ -786,6 +826,8 @@ module.exports = {
   deriveQuery,
   scoreCandidate,
   scoreVideo,
+  normalizeArtBuffer,
+  fetchSourceArt,
   _toSquareJpeg,
   searchOnlineCover,
   fetchBuf,
