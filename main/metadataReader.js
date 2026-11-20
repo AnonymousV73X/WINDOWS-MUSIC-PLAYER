@@ -8,6 +8,7 @@
  */
 
 const path = require("path");
+const CoverArt = require("./coverArt");
 const fs = require("fs");
 
 /**
@@ -355,7 +356,7 @@ class MetadataReader {
         }
 
         // Extract cover art (limit to 200KB base64 to avoid IPC bloat, cache files larger than that)
-        if (result.common.picture && result.common.picture.length > 0) {
+        if (CoverArt.usablePictures(result)) {
           const picture = result.common.picture[0];
           const buf = picture.data;
           if (buf.length < 200 * 1024) {
@@ -423,7 +424,7 @@ class MetadataReader {
             ext.replace(".", "").toUpperCase(),
           coverArt: null,
         };
-        if (result.common.picture && result.common.picture.length > 0) {
+        if (CoverArt.usablePictures(result)) {
           const picture = result.common.picture[0];
           const picBuf = picture.data;
           if (picBuf.length < 200 * 1024) {
@@ -576,7 +577,7 @@ class MetadataReader {
         coverArt: null,
       };
 
-      if (result.common.picture && result.common.picture.length > 0) {
+      if (CoverArt.usablePictures(result)) {
         const picture = result.common.picture[0];
         const buf = picture.data;
         if (buf.length < 200 * 1024) {
@@ -608,7 +609,7 @@ class MetadataReader {
         skipCovers: false,
       });
 
-      if (result.common.picture && result.common.picture.length > 0) {
+      if (CoverArt.usablePictures(result)) {
         const picture = result.common.picture[0];
         const buf = picture.data;
         if (buf.length < 200 * 1024) {
@@ -916,180 +917,7 @@ class MetadataReader {
    * @private
    */
   async _findOfflineCover(filePath) {
-    try {
-      const dir = path.dirname(filePath);
-      const audioName = path
-        .basename(filePath, path.extname(filePath))
-        .toLowerCase();
-      const extList = [
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".webp",
-        ".bmp",
-        ".gif",
-        ".tiff",
-        ".tif",
-      ];
-      const commonNames = new Set([
-        "cover",
-        "folder",
-        "album",
-        "front",
-        "artwork",
-        "art",
-        "thumb",
-        "thumbnail",
-        "back",
-        "insert",
-        "booklet",
-        "jacket",
-        "label",
-        "sticker",
-      ]);
-
-      try {
-        await fs.promises.access(dir);
-      } catch (_) {
-        return null;
-      }
-      const files = await fs.promises.readdir(dir);
-
-      // 1. .novaart sidecar files (previously downloaded online art) — highest priority
-      for (const file of files) {
-        const lower = file.toLowerCase();
-        if (
-          lower.includes(".novaart") &&
-          extList.includes(path.extname(lower))
-        ) {
-          return path.join(dir, file);
-        }
-      }
-
-      // 2. Exact name match (e.g., Song.jpg for Song.mp3)
-      for (const file of files) {
-        const fileExt = path.extname(file).toLowerCase();
-        if (extList.includes(fileExt)) {
-          const nameNoExt = path
-            .basename(file, path.extname(file))
-            .toLowerCase();
-          if (nameNoExt === audioName) {
-            return path.join(dir, file);
-          }
-        }
-      }
-
-      // 3. Common image name match (e.g., cover.jpg, folder.jpg)
-      for (const file of files) {
-        const fileExt = path.extname(file).toLowerCase();
-        if (extList.includes(fileExt)) {
-          const nameNoExt = path
-            .basename(file, path.extname(file))
-            .toLowerCase();
-          if (commonNames.has(nameNoExt)) {
-            return path.join(dir, file);
-          }
-        }
-      }
-
-      // 4. WMP hidden cache image files (e.g., AlbumArt_{GUID}_Large.jpg, AlbumArtSmall.jpg)
-      let fallbackArt = null;
-      for (const file of files) {
-        const fileExt = path.extname(file).toLowerCase();
-        if (extList.includes(fileExt)) {
-          const nameNoExt = path
-            .basename(file, path.extname(file))
-            .toLowerCase();
-          if (nameNoExt.startsWith("albumart")) {
-            const fullPath = path.join(dir, file);
-            if (nameNoExt.includes("large")) {
-              return fullPath;
-            }
-            fallbackArt = fallbackArt || fullPath;
-          }
-        }
-      }
-      if (fallbackArt) return fallbackArt;
-
-      // 6. Search 1 level of subdirectories for cover art
-      for (const file of files) {
-        const subdir = path.join(dir, file);
-        let stat;
-        try {
-          stat = await fs.promises.stat(subdir);
-          if (!stat.isDirectory()) continue;
-        } catch (_) {
-          continue;
-        }
-
-        let subFiles;
-        try {
-          subFiles = await fs.promises.readdir(subdir);
-        } catch (_) {
-          continue;
-        }
-
-        // .novaart in subdirs
-        for (const sf of subFiles) {
-          const lower = sf.toLowerCase();
-          if (
-            lower.includes(".novaart") &&
-            extList.includes(path.extname(lower))
-          ) {
-            return path.join(subdir, sf);
-          }
-        }
-        // Common names in subdirs
-        for (const sf of subFiles) {
-          const sfExt = path.extname(sf).toLowerCase();
-          if (extList.includes(sfExt)) {
-            const nameNoExt = path.basename(sf, path.extname(sf)).toLowerCase();
-            if (commonNames.has(nameNoExt)) {
-              return path.join(subdir, sf);
-            }
-          }
-        }
-      }
-
-      // 7. Walk up parent directories (up to 3 levels) for common cover art names
-      let current = dir;
-      for (let depth = 0; depth < 3; depth++) {
-        const parent = path.dirname(current);
-        if (!parent || parent === current) break; // reached root
-        try {
-          await fs.promises.access(parent);
-        } catch (_) {
-          break;
-        }
-
-        let parentFiles;
-        try {
-          parentFiles = await fs.promises.readdir(parent);
-        } catch (_) {
-          break;
-        }
-
-        for (const file of parentFiles) {
-          const fileExt = path.extname(file).toLowerCase();
-          if (extList.includes(fileExt)) {
-            const nameNoExt = path
-              .basename(file, path.extname(file))
-              .toLowerCase();
-            if (commonNames.has(nameNoExt)) {
-              return path.join(parent, file);
-            }
-          }
-        }
-
-        current = parent;
-      }
-    } catch (err) {
-      console.warn(
-        `[metadataReader] Offline cover search failed for ${filePath}:`,
-        err.message,
-      );
-    }
-    return null;
+    return CoverArt.findLocalCoverSync(filePath);
   }
 }
 

@@ -36,6 +36,7 @@ const ManifestIPC = require("./manifestIPC");
 const TagLib = require("node-taglib-sharp");
 const ManifestReader = require("./manifestReader");
 const DownloadEngine = require("./downloadEngine");
+const CoverArt = require("./coverArt");
 
 // ─── Supported Audio Formats ────────────────────────────────────────
 const SUPPORTED_FORMATS = [
@@ -1599,7 +1600,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                 _hasCoverArt: !!metadata.coverArt,
                 dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                 dateModified: file.modifiedTime || Date.now(),
-                ...(existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}),
+                ...(existingMap.get(file.filePath)?._userEdited
+                  ? { _userEdited: true }
+                  : {}),
               });
             }
           } else {
@@ -1647,7 +1650,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   _hasCoverArt: false,
                   dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                   dateModified: file.modifiedTime || Date.now(),
-                  ...(existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}),
+                  ...(existingMap.get(file.filePath)?._userEdited
+                    ? { _userEdited: true }
+                    : {}),
                 });
               } else {
                 // v1.1.0 EXHAUSTIVE SCANNER FIX: Even when quickInfo also
@@ -1739,7 +1744,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   _hasCoverArt: !!fallback.coverArt,
                   dateAdded: file.birthTime || file.modifiedTime || Date.now(),
                   dateModified: file.modifiedTime || Date.now(),
-                  ...(existingMap.get(file.filePath)?._userEdited ? { _userEdited: true } : {}),
+                  ...(existingMap.get(file.filePath)?._userEdited
+                    ? { _userEdited: true }
+                    : {}),
                 });
               } else {
                 failedCount++;
@@ -2031,8 +2038,11 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
 
       // Detect songs deleted from disk (only when the scan actually saw files,
       // so an unreadable/disconnected folder never wipes the library).
-      const _norm = (x) => String(x || "").replace(/\\/g, "/").toLowerCase();
-      const _folderNorm = _norm(folderPath);
+      const _norm = (x) =>
+        String(x || "")
+          .replace(/\\/g, "/")
+          .toLowerCase();
+      const _folderNorm = _norm(folderPath).replace(/\/+$/, "") + "/";
       const _onDisk = new Set(files.map((f) => _norm(f.filePath)));
       const removedIds =
         files.length === 0
@@ -2067,10 +2077,11 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         worker = new MetadataWorker();
         worker.setCoverCacheDir(coverCacheDir);
       } catch (err) {
-        if (newFiles.length > 0) console.warn(
-          "[library:quick-scan] MetadataWorker unavailable, using main thread:",
-          err.message,
-        );
+        if (newFiles.length > 0)
+          console.warn(
+            "[library:quick-scan] MetadataWorker unavailable, using main thread:",
+            err.message,
+          );
       }
 
       const newTracks = [];
@@ -2123,6 +2134,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
           worker.terminate();
         } catch (_) {}
       }
+      await _sanitizeScannedCovers(newTracks);
 
       const _rmSet = new Set(removedIds);
       const mergedLibrary = [
@@ -2346,6 +2358,7 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
           url: `nova-media://thumb/${trackId}/${targetSize}`,
         };
       } catch (err) {
+        if (trackId) _scheduleCoverHeal(trackId);
         return { success: false, error: err.message };
       }
     },
@@ -2752,10 +2765,18 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       // so the deleted track doesn't reappear as a ghost row.
       try {
         const st = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
-        await ManifestIPC.rebuildManifest(filtered, st._combinedFingerprint || "");
+        await ManifestIPC.rebuildManifest(
+          filtered,
+          st._combinedFingerprint || "",
+        );
       } catch (mErr) {
-        console.warn("[library:remove-track] Manifest rebuild failed:", mErr.message);
-        try { ManifestIPC.deleteManifest(); } catch (_) {}
+        console.warn(
+          "[library:remove-track] Manifest rebuild failed:",
+          mErr.message,
+        );
+        try {
+          ManifestIPC.deleteManifest();
+        } catch (_) {}
       }
 
       // Delete the file from physical storage
@@ -2763,7 +2784,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         for (let i = 0; i < 6; i++) {
           try {
             await fs.promises.unlink(track.filePath);
-            console.log(`[library] Deleted file from storage: ${track.filePath}`);
+            console.log(
+              `[library] Deleted file from storage: ${track.filePath}`,
+            );
             break;
           } catch (e) {
             if (e.code === "ENOENT") break;
@@ -2788,11 +2811,14 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
   // ─── Library: batch update tracks (e.g. background unknown artist resolution) ──
   ipcMain.handle("library:update-tracks", async (event, updates) => {
     try {
-      if (!Array.isArray(updates) || updates.length === 0) return { success: true, count: 0 };
+      if (!Array.isArray(updates) || updates.length === 0)
+        return { success: true, count: 0 };
       // db is the module-level SQLite handle (let db = null; at top of file)
       if (db) {
         const selectStmt = db.prepare("SELECT data FROM tracks WHERE id = ?");
-        const updateStmt = db.prepare("UPDATE tracks SET title = ?, artist = ?, data = ? WHERE id = ?");
+        const updateStmt = db.prepare(
+          "UPDATE tracks SET title = ?, artist = ?, data = ? WHERE id = ?",
+        );
         const tx = db.transaction(() => {
           for (const u of updates) {
             if (!u.id) continue;
@@ -2801,9 +2827,16 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
               try {
                 const track = JSON.parse(row.data);
                 if (u.artist !== undefined) track.artist = u.artist;
-                if (u.title  !== undefined) track.title  = u.title;
-                const artistStr = Array.isArray(track.artist) ? track.artist.join(", ") : (track.artist || "");
-                updateStmt.run(track.title || "", artistStr, JSON.stringify(track), u.id);
+                if (u.title !== undefined) track.title = u.title;
+                const artistStr = Array.isArray(track.artist)
+                  ? track.artist.join(", ")
+                  : track.artist || "";
+                updateStmt.run(
+                  track.title || "",
+                  artistStr,
+                  JSON.stringify(track),
+                  u.id,
+                );
               } catch (_) {}
             }
           }
@@ -2813,12 +2846,12 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       // Also patch the JSON manifest cache if it's loaded
       const library = getLibrary ? getLibrary() : null;
       if (Array.isArray(library)) {
-        const map = new Map(updates.map(u => [u.id, u]));
+        const map = new Map(updates.map((u) => [u.id, u]));
         for (const t of library) {
           const u = map.get(t.id);
           if (u) {
             if (u.artist !== undefined) t.artist = u.artist;
-            if (u.title  !== undefined) t.title  = u.title;
+            if (u.title !== undefined) t.title = u.title;
           }
         }
         if (saveLibrary) saveLibrary(library);
@@ -2831,7 +2864,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
             const tracksForManifest =
               typeof module.exports.getLibraryForManifest === "function"
                 ? module.exports.getLibraryForManifest()
-                : (getLibrary ? getLibrary() : null);
+                : getLibrary
+                  ? getLibrary()
+                  : null;
             if (tracksForManifest) {
               ManifestIPC.rebuildManifest(tracksForManifest).catch((err) => {
                 console.warn(
@@ -2855,7 +2890,6 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
       return { success: false, error: err.message };
     }
   });
-
 
   // ─── Cover Art: find sidecar cover art in the audio file's directory ──
   // Revolutionary: This handler was MISSING — the renderer called it via
@@ -3253,23 +3287,11 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
         req.end();
       });
 
-      // Save as sidecar next to the audio file
-      const sidecarPath = track.filePath.replace(/\.[^.]+$/, ".novaart.jpg");
-      fs.writeFileSync(sidecarPath, imgData);
-
-      // Persist local path into SQLite
-      track.coverArt = sidecarPath;
-      db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(
-        JSON.stringify(track),
-        trackId,
-      );
-      if (libraryById && libraryById.has(trackId)) {
-        libraryById.get(trackId).coverArt = sidecarPath;
-      }
-      if (libraryCache) {
-        const t = libraryCache.find((t) => t.id === trackId);
-        if (t) t.coverArt = sidecarPath;
-      }
+      const v = await CoverArt.validateImage(imgData);
+      if (!v.valid)
+        return { success: false, error: `Rejected image (${v.reason})` };
+      const sidecarPath = _writeCoverSidecar(track, imgData, v.mime, v.hash);
+      _commitTrackCover(trackId, sidecarPath);
 
       return { success: true, localPath: sidecarPath };
     } catch (err) {
@@ -3672,7 +3694,9 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                   t.year = tags.year ? parseInt(tags.year, 10) || 0 : 0;
 
                 if (tags.coverArt) {
-                  const match = tags.coverArt.match(/^data:([^;]+);base64,(.+)$/);
+                  const match = tags.coverArt.match(
+                    /^data:([^;]+);base64,(.+)$/,
+                  );
                   if (match) {
                     const mime = match[1];
                     const buf = Buffer.from(match[2], "base64");
@@ -5642,7 +5666,10 @@ ipcMain.handle("share:copy-file", async (_event, filePath) => {
             "-Command",
             "Set-Clipboard -LiteralPath $env:NT_SHARE_PATH",
           ],
-          { env: { ...process.env, NT_SHARE_PATH: filePath }, windowsHide: true },
+          {
+            env: { ...process.env, NT_SHARE_PATH: filePath },
+            windowsHide: true,
+          },
           (err) => (err ? reject(err) : resolve()),
         );
       });
@@ -5660,9 +5687,12 @@ ipcMain.handle("share:pick-app", async () => {
     const r = await dialog.showOpenDialog({
       title: "Select the app's executable",
       properties: ["openFile"],
-      filters: [{ name: "Applications", extensions: ["exe", "lnk", "bat", "cmd"] }],
+      filters: [
+        { name: "Applications", extensions: ["exe", "lnk", "bat", "cmd"] },
+      ],
     });
-    if (r.canceled || !r.filePaths.length) return { success: false, canceled: true };
+    if (r.canceled || !r.filePaths.length)
+      return { success: false, canceled: true };
     return { success: true, path: r.filePaths[0] };
   } catch (err) {
     return { success: false, error: err.message };
@@ -5673,18 +5703,34 @@ ipcMain.handle("share:find-lanbeam", async () => {
   const path = require("path");
   const candidates = [];
   if (process.env.LOCALAPPDATA) {
-    candidates.push(path.join(process.env.LOCALAPPDATA, "Programs", "LANBeam", "LANBeam.exe"));
-    candidates.push(path.join(process.env.LOCALAPPDATA, "Programs", "lanbeam", "LANBeam.exe"));
-    candidates.push(path.join(process.env.LOCALAPPDATA, "LANBeam", "LANBeam.exe"));
-    candidates.push(path.join(process.env.LOCALAPPDATA, "lanbeam", "LANBeam.exe"));
+    candidates.push(
+      path.join(process.env.LOCALAPPDATA, "Programs", "LANBeam", "LANBeam.exe"),
+    );
+    candidates.push(
+      path.join(process.env.LOCALAPPDATA, "Programs", "lanbeam", "LANBeam.exe"),
+    );
+    candidates.push(
+      path.join(process.env.LOCALAPPDATA, "LANBeam", "LANBeam.exe"),
+    );
+    candidates.push(
+      path.join(process.env.LOCALAPPDATA, "lanbeam", "LANBeam.exe"),
+    );
   }
   if (process.env.ProgramFiles) {
-    candidates.push(path.join(process.env.ProgramFiles, "LANBeam", "LANBeam.exe"));
-    candidates.push(path.join(process.env.ProgramFiles, "lanbeam", "LANBeam.exe"));
+    candidates.push(
+      path.join(process.env.ProgramFiles, "LANBeam", "LANBeam.exe"),
+    );
+    candidates.push(
+      path.join(process.env.ProgramFiles, "lanbeam", "LANBeam.exe"),
+    );
   }
   if (process.env["ProgramFiles(x86)"]) {
-    candidates.push(path.join(process.env["ProgramFiles(x86)"], "LANBeam", "LANBeam.exe"));
-    candidates.push(path.join(process.env["ProgramFiles(x86)"], "lanbeam", "LANBeam.exe"));
+    candidates.push(
+      path.join(process.env["ProgramFiles(x86)"], "LANBeam", "LANBeam.exe"),
+    );
+    candidates.push(
+      path.join(process.env["ProgramFiles(x86)"], "lanbeam", "LANBeam.exe"),
+    );
   }
   for (const c of candidates) {
     if (fs.existsSync(c)) return { success: true, path: c };
@@ -5700,37 +5746,74 @@ ipcMain.handle("share:install-lanbeam", async (event) => {
 
   const sendProgress = (step, percent, msg) => {
     try {
-      event.sender.send("share:install-lanbeam-progress", { step, percent, message: msg });
+      event.sender.send("share:install-lanbeam-progress", {
+        step,
+        percent,
+        message: msg,
+      });
     } catch (_) {}
   };
 
   try {
     sendProgress("fetching", 10, "Checking latest LANBeam release...");
-    
+
     // Fetch latest release metadata from GitHub
-    const fetchJson = (url) => new Promise((resolve, reject) => {
-      const req = https.get(url, { headers: { "User-Agent": "NovaTune" } }, (res) => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          return resolve(fetchJson(res.headers.location));
-        }
-        if (res.statusCode !== 200) return reject(new Error("GitHub API HTTP " + res.statusCode));
-        let data = "";
-        res.on("data", (c) => data += c);
-        res.on("end", () => {
-          try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
+    const fetchJson = (url) =>
+      new Promise((resolve, reject) => {
+        const req = https.get(
+          url,
+          { headers: { "User-Agent": "NovaTune" } },
+          (res) => {
+            if (
+              res.statusCode >= 300 &&
+              res.statusCode < 400 &&
+              res.headers.location
+            ) {
+              return resolve(fetchJson(res.headers.location));
+            }
+            if (res.statusCode !== 200)
+              return reject(new Error("GitHub API HTTP " + res.statusCode));
+            let data = "";
+            res.on("data", (c) => (data += c));
+            res.on("end", () => {
+              try {
+                resolve(JSON.parse(data));
+              } catch (e) {
+                reject(e);
+              }
+            });
+          },
+        );
+        req.on("error", reject);
+        req.setTimeout(15000, () => {
+          req.destroy();
+          reject(new Error("GitHub API request timed out"));
         });
       });
-      req.on("error", reject);
-      req.setTimeout(15000, () => { req.destroy(); reject(new Error("GitHub API request timed out")); });
-    });
 
-    const release = await fetchJson("https://api.github.com/repos/AnonymousV73X/LAN-FILE-TRANSFER-LANBEAM/releases/latest");
-    const asset = (release.assets || []).find((a) => a.name.endsWith(".exe") && !a.name.includes("blockmap"));
+    const release = await fetchJson(
+      "https://api.github.com/repos/AnonymousV73X/LAN-FILE-TRANSFER-LANBEAM/releases/latest",
+    );
+    const asset = (release.assets || []).find(
+      (a) => a.name.endsWith(".exe") && !a.name.includes("blockmap"),
+    );
     if (!asset || !asset.browser_download_url) {
-      throw new Error("No installer asset found in latest LANBeam release (" + (release.tag_name || "unknown") + ")");
+      throw new Error(
+        "No installer asset found in latest LANBeam release (" +
+          (release.tag_name || "unknown") +
+          ")",
+      );
     }
 
-    sendProgress("downloading", 20, "Downloading " + asset.name + " (" + (release.tag_name || "latest") + ")...");
+    sendProgress(
+      "downloading",
+      20,
+      "Downloading " +
+        asset.name +
+        " (" +
+        (release.tag_name || "latest") +
+        ")...",
+    );
 
     const tmpDir = os.tmpdir();
     const installerPath = path.join(tmpDir, asset.name);
@@ -5738,28 +5821,43 @@ ipcMain.handle("share:install-lanbeam", async (event) => {
     // Download with redirect handling
     await new Promise((resolve, reject) => {
       const downloadFile = (fileUrl) => {
-        const req = https.get(fileUrl, { headers: { "User-Agent": "NovaTune" } }, (res) => {
-          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            return downloadFile(res.headers.location);
-          }
-          if (res.statusCode !== 200) return reject(new Error("Installer download HTTP " + res.statusCode));
-          const total = parseInt(res.headers["content-length"], 10) || 0;
-          let downloaded = 0;
-          const outStream = fs.createWriteStream(installerPath);
-          res.on("data", (chunk) => {
-            downloaded += chunk.length;
-            if (total > 0) {
-              const pct = 20 + Math.round((downloaded / total) * 60);
-              sendProgress("downloading", pct, "Downloading LANBeam... " + pct + "%");
+        const req = https.get(
+          fileUrl,
+          { headers: { "User-Agent": "NovaTune" } },
+          (res) => {
+            if (
+              res.statusCode >= 300 &&
+              res.statusCode < 400 &&
+              res.headers.location
+            ) {
+              return downloadFile(res.headers.location);
             }
-          });
-          res.pipe(outStream);
-          outStream.on("finish", () => {
-            outStream.close();
-            resolve();
-          });
-          outStream.on("error", reject);
-        });
+            if (res.statusCode !== 200)
+              return reject(
+                new Error("Installer download HTTP " + res.statusCode),
+              );
+            const total = parseInt(res.headers["content-length"], 10) || 0;
+            let downloaded = 0;
+            const outStream = fs.createWriteStream(installerPath);
+            res.on("data", (chunk) => {
+              downloaded += chunk.length;
+              if (total > 0) {
+                const pct = 20 + Math.round((downloaded / total) * 60);
+                sendProgress(
+                  "downloading",
+                  pct,
+                  "Downloading LANBeam... " + pct + "%",
+                );
+              }
+            });
+            res.pipe(outStream);
+            outStream.on("finish", () => {
+              outStream.close();
+              resolve();
+            });
+            outStream.on("error", reject);
+          },
+        );
         req.on("error", reject);
       };
       downloadFile(asset.browser_download_url);
@@ -5769,13 +5867,20 @@ ipcMain.handle("share:install-lanbeam", async (event) => {
 
     // Run NSIS installer silently (/S)
     await new Promise((resolve, reject) => {
-      const proc = spawn(installerPath, ["/S"], { windowsHide: true, detached: false });
+      const proc = spawn(installerPath, ["/S"], {
+        windowsHide: true,
+        detached: false,
+      });
       proc.on("close", (code) => {
-        try { fs.unlinkSync(installerPath); } catch (_) {}
+        try {
+          fs.unlinkSync(installerPath);
+        } catch (_) {}
         resolve();
       });
       proc.on("error", (err) => {
-        try { fs.unlinkSync(installerPath); } catch (_) {}
+        try {
+          fs.unlinkSync(installerPath);
+        } catch (_) {}
         reject(err);
       });
     });
@@ -5785,15 +5890,35 @@ ipcMain.handle("share:install-lanbeam", async (event) => {
 
     const candidates = [];
     if (process.env.LOCALAPPDATA) {
-      candidates.push(path.join(process.env.LOCALAPPDATA, "Programs", "LANBeam", "LANBeam.exe"));
-      candidates.push(path.join(process.env.LOCALAPPDATA, "Programs", "lanbeam", "LANBeam.exe"));
-      candidates.push(path.join(process.env.LOCALAPPDATA, "LANBeam", "LANBeam.exe"));
+      candidates.push(
+        path.join(
+          process.env.LOCALAPPDATA,
+          "Programs",
+          "LANBeam",
+          "LANBeam.exe",
+        ),
+      );
+      candidates.push(
+        path.join(
+          process.env.LOCALAPPDATA,
+          "Programs",
+          "lanbeam",
+          "LANBeam.exe",
+        ),
+      );
+      candidates.push(
+        path.join(process.env.LOCALAPPDATA, "LANBeam", "LANBeam.exe"),
+      );
     }
     if (process.env.ProgramFiles) {
-      candidates.push(path.join(process.env.ProgramFiles, "LANBeam", "LANBeam.exe"));
+      candidates.push(
+        path.join(process.env.ProgramFiles, "LANBeam", "LANBeam.exe"),
+      );
     }
     if (process.env["ProgramFiles(x86)"]) {
-      candidates.push(path.join(process.env["ProgramFiles(x86)"], "LANBeam", "LANBeam.exe"));
+      candidates.push(
+        path.join(process.env["ProgramFiles(x86)"], "LANBeam", "LANBeam.exe"),
+      );
     }
 
     for (const c of candidates) {
@@ -5803,7 +5928,11 @@ ipcMain.handle("share:install-lanbeam", async (event) => {
       }
     }
 
-    return { success: false, error: "Installer finished but LANBeam.exe was not found in standard directories." };
+    return {
+      success: false,
+      error:
+        "Installer finished but LANBeam.exe was not found in standard directories.",
+    };
   } catch (err) {
     console.error("[IPC] share:install-lanbeam error:", err);
     return { success: false, error: err.message };
@@ -6634,15 +6763,26 @@ ipcMain.handle("coverart:sibling-cover", async (event, { trackId } = {}) => {
 
     // Find siblings in the same directory
     const siblings = library.filter((t) => {
-      if (t.id === trackId || !t.filePath || path.dirname(t.filePath) !== dir) return false;
+      if (t.id === trackId || !t.filePath || path.dirname(t.filePath) !== dir)
+        return false;
       if (!t.coverArt && !t._hasCoverArt) return false;
 
       // In flat/loose folders (e.g. Downloads), require album match or artist match so we don't assign wrong songs' art
       if (isSpecialFolder || !trackAlbum || trackAlbum === "unknown album") {
         const sibArtist = (t.artist || "").trim().toLowerCase();
         const sibAlbum = (t.album || "").trim().toLowerCase();
-        if (trackArtist && trackArtist !== "unknown artist" && sibArtist === trackArtist) return true;
-        if (trackAlbum && trackAlbum !== "unknown album" && sibAlbum === trackAlbum) return true;
+        if (
+          trackArtist &&
+          trackArtist !== "unknown artist" &&
+          sibArtist === trackArtist
+        )
+          return true;
+        if (
+          trackAlbum &&
+          trackAlbum !== "unknown album" &&
+          sibAlbum === trackAlbum
+        )
+          return true;
         return false;
       }
       return true;
@@ -6662,9 +6802,12 @@ ipcMain.handle("coverart:sibling-cover", async (event, { trackId } = {}) => {
         let valid = false;
         if (coverArt.startsWith("data:")) {
           const b64 = coverArt.split(",")[1];
-          if (b64) valid = _isValidCoverArtBuffer(Buffer.from(b64, "base64")).valid;
+          if (b64)
+            valid = _isValidCoverArtBuffer(Buffer.from(b64, "base64")).valid;
         } else if (fs.existsSync(coverArt)) {
-          try { valid = _isValidCoverArtBuffer(fs.readFileSync(coverArt)).valid; } catch (_) {}
+          try {
+            valid = _isValidCoverArtBuffer(fs.readFileSync(coverArt)).valid;
+          } catch (_) {}
         }
         if (valid) {
           return {
@@ -6732,11 +6875,15 @@ ipcMain.handle("coverart:migrate-v114", async () => {
 
 // ─── Music Discovery & Downloader IPC Handlers ───────────────────────
 setTimeout(() => {
-  try { DownloadEngine.prewarmDownloader(); } catch (_) {}
+  try {
+    DownloadEngine.prewarmDownloader();
+  } catch (_) {}
 }, 8000);
 
 ipcMain.handle("discovery:prefetch", async (event, videoId) => {
-  try { DownloadEngine.prefetchStream(videoId); } catch (_) {}
+  try {
+    DownloadEngine.prefetchStream(videoId);
+  } catch (_) {}
   return true;
 });
 
@@ -6746,7 +6893,9 @@ ipcMain.handle("discovery:search", async (event, query, searchId) => {
     let streamed = false;
     const results = await DownloadEngine.searchITunes(query, 80, (r) => {
       streamed = true;
-      try { event.sender.send("discovery:search-update", { searchId, results: r }); } catch (_) {}
+      try {
+        event.sender.send("discovery:search-update", { searchId, results: r });
+      } catch (_) {}
     });
     return { success: true, results, streamed };
   } catch (err) {
@@ -6761,7 +6910,8 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
       return { success: false, error: "Invalid track data" };
     }
 
-    const musicDir = app.getPath("music") || path.join(app.getPath("userData"), "Downloads");
+    const musicDir =
+      app.getPath("music") || path.join(app.getPath("userData"), "Downloads");
     const targetFolder = path.join(musicDir, "NovaTune Downloads");
 
     const _tStart = Date.now();
@@ -6772,7 +6922,9 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
         const stepMs = now - _tLast;
         const totalMs = now - _tStart;
         _tLast = now;
-        console.log(`[DownloadProgress] [+${(totalMs/1000).toFixed(1)}s (step: ${(stepMs/1000).toFixed(1)}s)] [${trackInfo.trackName || trackInfo.id}] ${prog.percent || 0}% | ${prog.status || ''} | ${prog.message || ''}`);
+        console.log(
+          `[DownloadProgress] [+${(totalMs / 1000).toFixed(1)}s (step: ${(stepMs / 1000).toFixed(1)}s)] [${trackInfo.trackName || trackInfo.id}] ${prog.percent || 0}% | ${prog.status || ""} | ${prog.message || ""}`,
+        );
         event.sender.send("discovery:progress", {
           trackId: trackInfo.id,
           ...prog,
@@ -6780,8 +6932,17 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
       } catch (_) {}
     };
 
-    const fmt = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS }).downloadFormat === "mp3" ? "mp3" : "m4a";
-    const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress, trackInfo.id, fmt);
+    const fmt =
+      readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS }).downloadFormat === "mp3"
+        ? "mp3"
+        : "m4a";
+    const savedPath = await DownloadEngine.downloadAndTagTrack(
+      trackInfo,
+      targetFolder,
+      onProgress,
+      trackInfo.id,
+      fmt,
+    );
 
     // ── Task 4.1: Instant Single-Track Hot-Reload into Library ────────
     let parsedTrack = null;
@@ -6798,28 +6959,38 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
         // trackInfo always takes priority — it's from the search card the user clicked
         // (Spotify/iTunes/Deezer/YTM rich metadata). meta has yt-dlp's YouTube tags
         // (video title as track name, uploader as artist) which are often wrong.
-        title: trackInfo.trackName || meta?.title || path.basename(fileName, path.extname(fileName)),
-        artist: (trackInfo.artistName && trackInfo.artistName !== "Unknown Artist")
-          ? trackInfo.artistName
-          : (meta?.artist || "Unknown Artist"),
-        album: (trackInfo.albumName && trackInfo.albumName.trim() && trackInfo.albumName !== "Unknown Album")
-          ? trackInfo.albumName
-          : (meta?.album || ""),
+        title:
+          trackInfo.trackName ||
+          meta?.title ||
+          path.basename(fileName, path.extname(fileName)),
+        artist:
+          trackInfo.artistName && trackInfo.artistName !== "Unknown Artist"
+            ? trackInfo.artistName
+            : meta?.artist || "Unknown Artist",
+        album:
+          trackInfo.albumName &&
+          trackInfo.albumName.trim() &&
+          trackInfo.albumName !== "Unknown Album"
+            ? trackInfo.albumName
+            : meta?.album || "",
         albumArtist: meta?.albumArtist || trackInfo.artistName || "",
-        genre: (trackInfo.genre && trackInfo.genre !== "Music")
-          ? trackInfo.genre
-          : (meta?.genre || ""),
+        genre:
+          trackInfo.genre && trackInfo.genre !== "Music"
+            ? trackInfo.genre
+            : meta?.genre || "",
         year: Number(trackInfo.releaseYear || meta?.year) || 0,
         trackNumber: Number(meta?.trackNumber) || 0,
         discNumber: Number(meta?.discNumber) || 0,
-        duration: Number(meta?.duration) || (trackInfo.durationMs ? Math.round(trackInfo.durationMs / 1000) : 0),
+        duration:
+          Number(meta?.duration) ||
+          (trackInfo.durationMs ? Math.round(trackInfo.durationMs / 1000) : 0),
         bitrate: Number(meta?.bitrate) || 320,
         sampleRate: Number(meta?.sampleRate) || 44100,
         channels: Number(meta?.channels) || 2,
         format: path.extname(fileName).replace(".", "").toUpperCase() || "MP3",
         fileSize: stats.size,
         coverArt: meta?.coverArt || null,
-        _hasCoverArt: !!(meta?.coverArt || trackInfo.artworkUrl),
+        _hasCoverArt: !!meta?.coverArt,
         dateAdded: Date.now(),
         dateModified: stats.mtimeMs || Date.now(),
       };
@@ -6827,7 +6998,9 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
       // Add folder to scanFolders if not already there so it persists across full re-scans
       try {
         await withSettingsFile((settings) => {
-          const scanFolders = Array.isArray(settings.scanFolders) ? settings.scanFolders : [];
+          const scanFolders = Array.isArray(settings.scanFolders)
+            ? settings.scanFolders
+            : [];
           if (!scanFolders.includes(targetFolder)) {
             scanFolders.push(targetFolder);
             settings.scanFolders = scanFolders;
@@ -6835,46 +7008,38 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
         });
       } catch (_) {}
 
-      // Download cover art sidecar if track has an artwork URL but no embedded cover art
-      if (!parsedTrack.coverArt && trackInfo && trackInfo.artworkUrl) {
-        try {
-          const sidecarPath = savedPath.replace(/\.[^.]+$/, ".novaart.jpg");
-          const imgBuf = await new Promise((resolve, reject) => {
-            const req = net.request(trackInfo.artworkUrl);
-            const chunks = [];
-            req.on("response", (res) => {
-              res.on("data", (c) => chunks.push(c));
-              res.on("end", () => resolve(Buffer.concat(chunks)));
-              res.on("error", reject);
-            });
-            req.on("error", reject);
-            req.end();
-          });
-          if (imgBuf && imgBuf.length > 1000) {
-            fs.writeFileSync(sidecarPath, imgBuf);
-            parsedTrack.coverArt = sidecarPath;
-            parsedTrack._hasCoverArt = true;
-            console.log("[IPC:download] Saved sidecar cover art:", sidecarPath);
-          }
-        } catch (imgErr) {
-          console.warn("[IPC:download] Could not save sidecar cover art:", imgErr.message);
-        }
+      // Guarantee a verified cover (embedded → source artwork → matched online) or honestly none
+      try {
+        await _ensureDownloadedCover(parsedTrack, trackInfo);
+      } catch (imgErr) {
+        console.warn(
+          "[IPC:download] cover verification failed:",
+          imgErr.message,
+        );
       }
 
       // Persist directly to SQLite database using partialSaveLibrary
       const currentLibrary = getLibrary();
-      const updatedLibrary = [parsedTrack, ...currentLibrary.filter((t) => t.id !== parsedTrack.id)];
+      const updatedLibrary = [
+        parsedTrack,
+        ...currentLibrary.filter((t) => t.id !== parsedTrack.id),
+      ];
       partialSaveLibrary(updatedLibrary, [parsedTrack], []);
 
       // Invalidate & rebuild binary manifest cache so download persists across app restarts
       if (ManifestIPC && typeof ManifestIPC.rebuildManifest === "function") {
         setImmediate(async () => {
           try {
-            const freshSettings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+            const freshSettings = readJSON(SETTINGS_FILE, {
+              ...DEFAULT_SETTINGS,
+            });
             const fp = freshSettings._combinedFingerprint || "";
             await ManifestIPC.rebuildManifest(updatedLibrary, fp);
           } catch (mErr) {
-            console.warn("[IPC:download] Manifest rebuild failed:", mErr.message);
+            console.warn(
+              "[IPC:download] Manifest rebuild failed:",
+              mErr.message,
+            );
           }
         });
       }
@@ -6883,9 +7048,14 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
       BrowserWindow.getAllWindows().forEach((win) => {
         win.webContents.send("library:track-added", parsedTrack);
       });
-      console.log(`[IPC] Successfully saved & broadcasted downloaded track: "${parsedTrack.title}" (${parsedTrack.id})`);
+      console.log(
+        `[IPC] Successfully saved & broadcasted downloaded track: "${parsedTrack.title}" (${parsedTrack.id})`,
+      );
     } catch (trackParseErr) {
-      console.warn("[IPC] Failed to hot-append track to library:", trackParseErr.message);
+      console.warn(
+        "[IPC] Failed to hot-append track to library:",
+        trackParseErr.message,
+      );
     }
 
     return { success: true, filePath: savedPath, track: parsedTrack };
@@ -6901,7 +7071,9 @@ ipcMain.handle("discovery:download", async (event, trackInfo) => {
 ipcMain.handle("discovery:cancel", async (event, { trackId }) => {
   try {
     const cancelled = DownloadEngine.cancelDownload(trackId);
-    console.log(`[IPC] discovery:cancel trackId=${trackId} cancelled=${cancelled}`);
+    console.log(
+      `[IPC] discovery:cancel trackId=${trackId} cancelled=${cancelled}`,
+    );
     return { success: cancelled };
   } catch (err) {
     console.error("[IPC] discovery:cancel error:", err);
@@ -6909,274 +7081,635 @@ ipcMain.handle("discovery:cancel", async (event, { trackId }) => {
   }
 });
 
-// ─── Cover Art: Validate that an image is real (not SVG/icon placeholder) ──
-// Returns { valid, reason } — guards against music-note SVGs masquerading as art.
+// ─── Cover Art: Validate that an image is real (sync header check) ──────────
+// Deep decode validation lives in coverArt.js (CoverArt.validateImage).
 function _isValidCoverArtBuffer(buf) {
   if (!buf || buf.length < 1500) return { valid: false, reason: "too_small" };
-  // PNG magic: 89 50 4E 47
-  // JPEG magic: FF D8 FF
-  // WEBP: 52 49 46 46 ... 57 45 42 50
-  // GIF: 47 49 46 38
-  // BMP: 42 4D
-  const isPng  = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
-  const isJpeg = buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF;
-  const isWebp = buf.length >= 12 && buf[0] === 0x52 && buf[1] === 0x49 && buf[8] === 0x57 && buf[9] === 0x45;
-  const isGif  = buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46;
-  const isBmp  = buf[0] === 0x42 && buf[1] === 0x4D;
-  if (!isPng && !isJpeg && !isWebp && !isGif && !isBmp) return { valid: false, reason: "not_image" };
-  // Reject SVG-as-raster (sometimes pipes SVG bytes into JPEG wrapper — check for <svg tag)
-  const head = buf.slice(0, Math.min(512, buf.length)).toString("latin1").toLowerCase();
-  if (head.includes("<svg") || head.includes("<?xml")) return { valid: false, reason: "svg_xml" };
+  if (!CoverArt.sniff(buf)) return { valid: false, reason: "not_image" };
+  const head = buf
+    .slice(0, Math.min(512, buf.length))
+    .toString("latin1")
+    .toLowerCase();
+  if (head.includes("<svg") || head.includes("<?xml"))
+    return { valid: false, reason: "svg_xml" };
   return { valid: true };
 }
 
-// ─── Helper: fetch a URL through Electron net and return validated Buffer ───
-function _fetchImageBuffer(url, timeoutMs = 8000) {
-  return new Promise((resolve, reject) => {
+// ═════════════════════════════════════════════════════════════════════════════
+// Cover Art Integrity Engine
+//   audit  → every stored cover must decode, look like real artwork and belong to the song
+//   commit → single write path (DB + caches + thumbs + renderer broadcast)
+//   refill → existing → strict local → album sibling → verified online → honest "none"
+// ═════════════════════════════════════════════════════════════════════════════
+let _coverTablesReady = false;
+function _ensureCoverTables() {
+  if (_coverTablesReady || !db) return;
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS cover_audit (trackId TEXT PRIMARY KEY, sig TEXT, ok INTEGER, ts INTEGER);
+    CREATE TABLE IF NOT EXISTS cover_miss (trackId TEXT PRIMARY KEY, ts INTEGER);
+  `);
+  _coverTablesReady = true;
+}
+const COVER_MISS_TTL = 7 * 24 * 3600 * 1000;
+
+function _coverBroadcast(channel, payload) {
+  BrowserWindow.getAllWindows().forEach((w) => {
     try {
-      const req = net.request({ url, redirect: "follow" });
-      const chunks = [];
-      let size = 0;
-      req.on("response", (res) => {
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          reject(new Error(`HTTP ${res.statusCode}`));
-          return;
-        }
-        res.on("data", (c) => { chunks.push(c); size += c.length; });
-        res.on("end", () => resolve(Buffer.concat(chunks, size)));
-        res.on("error", reject);
-      });
-      req.on("error", reject);
-      const timer = setTimeout(() => { try { req.abort(); } catch(_){} reject(new Error("timeout")); }, timeoutMs);
-      req.on("response", () => clearTimeout(timer));
-      req.end();
-    } catch(e) { reject(e); }
+      if (!w.isDestroyed()) w.webContents.send(channel, payload);
+    } catch (_) {}
   });
 }
 
-// ─── Helper: search iTunes then Deezer for cover art, return validated URL ──
-async function _searchOnlineCoverArt(artist, title, album) {
-  const cleanArtist = (artist || "").replace(/unknown artist/i, "").trim();
-  const cleanTitle  = (title  || "").trim();
-  const cleanAlbum  = (album  || "").replace(/unknown album/i, "").trim();
-
-  const searches = [
-    cleanArtist && cleanTitle  ? `${cleanArtist} ${cleanTitle}`  : null,
-    cleanArtist && cleanAlbum  ? `${cleanArtist} ${cleanAlbum}`  : null,
-    cleanTitle                 ? cleanTitle                       : null,
-  ].filter(Boolean);
-
-  for (const q of searches) {
-    // iTunes
-    try {
-      const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=musicTrack&limit=5&media=music`;
-      const req = net.request(itunesUrl);
-      const data = await new Promise((res, rej) => {
-        const c = []; req.on("response", r => { r.on("data", d => c.push(d)); r.on("end", () => res(Buffer.concat(c).toString())); r.on("error", rej); }); req.on("error", rej); req.end();
-      });
-      const json = JSON.parse(data);
-      const results = json?.results || [];
-      for (const r of results) {
-        if (!r.artworkUrl100) continue;
-        const artUrl = r.artworkUrl100.replace(/100x100bb/g, "3000x3000bb").replace(/100x100/g, "3000x3000");
-        try {
-          const buf = await _fetchImageBuffer(artUrl, 8000);
-          if (_isValidCoverArtBuffer(buf).valid) return { url: artUrl, buf };
-        } catch(_) {}
-      }
-    } catch(_) {}
-
-    // Deezer track search
-    try {
-      const deezerUrl = `https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=5`;
-      const req2 = net.request(deezerUrl);
-      const data2 = await new Promise((res, rej) => {
-        const c = []; req2.on("response", r => { r.on("data", d => c.push(d)); r.on("end", () => res(Buffer.concat(c).toString())); r.on("error", rej); }); req2.on("error", rej); req2.end();
-      });
-      const json2 = JSON.parse(data2);
-      for (const r of json2?.data || []) {
-        const artUrl = r.album?.cover_xl || r.album?.cover_big || r.album?.cover_medium;
-        if (!artUrl) continue;
-        try {
-          const buf = await _fetchImageBuffer(artUrl, 8000);
-          if (_isValidCoverArtBuffer(buf).valid) return { url: artUrl, buf };
-        } catch(_) {}
-      }
-    } catch(_) {}
-  }
-  return null;
+function _normKey(s) {
+  return CoverArt.norm(s);
 }
 
-// ─── Cover Art: Robust per-track refill (force=true skips existing art) ──────
-// Validates embedded art is a real image (not SVG icon), searches filesystem,
-// then hits iTunes + Deezer if still nothing. Saves sidecar. Returns coverArt path.
-ipcMain.handle("coverart:refill-track", async (event, { trackId, force } = {}) => {
+function _loadCoverBuffer(art) {
   try {
-    if (!trackId) return { success: false, error: "trackId required" };
-    const library = getLibrary();
-    const track = library.find(t => t.id === trackId);
+    if (!art || typeof art !== "string") return null;
+    if (art.startsWith("data:")) {
+      const b64 = art.split(",")[1];
+      return b64 ? Buffer.from(b64, "base64") : null;
+    }
+    if (/^(nova-media|https?):/i.test(art)) return null;
+    return fs.existsSync(art) ? fs.readFileSync(art) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function _coverSig(art) {
+  try {
+    if (!art) return "";
+    if (art.startsWith("data:"))
+      return `d${art.length}:${crypto.createHash("md5").update(art).digest("hex")}`;
+    const st = fs.statSync(art);
+    return `f${art}|${st.size}|${Math.round(st.mtimeMs)}`;
+  } catch (_) {
+    return "missing";
+  }
+}
+
+function _buildCoverCtx(lib) {
+  const dirIndex = new Map(); // lower dir → [{albumKey}]
+  for (const t of lib) {
+    if (!t.filePath) continue;
+    const d = path.dirname(t.filePath).toLowerCase();
+    if (!dirIndex.has(d)) dirIndex.set(d, []);
+    dirIndex
+      .get(d)
+      .push({
+        id: t.id,
+        album: _normKey(t.album),
+        artist: _normKey(
+          Array.isArray(t.artist) ? t.artist.join(" ") : t.artist,
+        ),
+        track: t,
+      });
+  }
+  return { dirIndex };
+}
+
+// Folder art is only trusted when this track has a known album and no sibling claims another album
+function _allowFolderArt(track, ctx) {
+  const alb = _normKey(track.album);
+  if (!alb || alb === "unknown album" || !track.filePath) return false;
+  const sibs =
+    (ctx && ctx.dirIndex.get(path.dirname(track.filePath).toLowerCase())) || [];
+  for (const s of sibs) {
+    if (s.id === track.id) continue;
+    if (s.album && s.album !== "unknown album" && s.album !== alb) return false;
+  }
+  return true;
+}
+
+// Does this stored cover legitimately belong to this song?
+function _coverBelongsToTrack(track, art, ctx) {
+  if (!art || art.startsWith("data:") || /^nova-media:/i.test(art)) return true; // embedded / managed
+  if (!track.filePath) return true;
+  const audioDir = path.dirname(track.filePath);
+  if (path.dirname(art).toLowerCase() !== audioDir.toLowerCase()) return true; // cached_covers / user-chosen elsewhere
+  const stem = path
+    .basename(track.filePath, path.extname(track.filePath))
+    .toLowerCase();
+  const name = path.basename(art).toLowerCase();
+  const nameStem = path.basename(name, path.extname(name));
+  if (name.startsWith(`${stem}.novaart.`) || nameStem === stem) return true;
+  if (name.includes(".novaart")) return false; // someone else's sidecar
+  if (
+    CoverArt.FOLDER_ART_NAMES.has(nameStem) ||
+    (nameStem.startsWith("albumart") && !nameStem.includes("small"))
+  )
+    return _allowFolderArt(track, ctx);
+  return false; // arbitrary image sitting in the folder
+}
+
+async function _auditCover(track, art, buf, ctx) {
+  if (!art)
+    return {
+      ok: false,
+      reason: track._hasCoverArt ? "flag_without_art" : "none",
+    };
+  if (!buf) return { ok: false, reason: "missing_file" };
+  const v = await CoverArt.validateImage(buf);
+  if (!v.valid) return { ok: false, reason: v.reason };
+  if (!_coverBelongsToTrack(track, art, ctx))
+    return { ok: false, reason: "wrong_song" };
+  return { ok: true, hash: v.hash };
+}
+
+let _thumbPurgeIdx = null;
+function _purgeTrackThumbs(trackIds) {
+  try {
+    const dir = path.join(app.getPath("userData"), "cached_covers", "thumbs");
+    const ids = new Set(trackIds);
+    for (const f of fs.readdirSync(dir)) {
+      const us = f.indexOf("_");
+      if (us > 0 && ids.has(f.slice(0, us))) {
+        try {
+          fs.unlinkSync(path.join(dir, f));
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
+
+/** Single write path for a track's cover. art=null clears it (UI falls back to the placeholder honestly). */
+function _commitTrackCover(trackId, art, { silent = false } = {}) {
+  _ensureCoverTables();
+  const lib = getLibrary();
+  const track =
+    (libraryById && libraryById.get(trackId)) ||
+    lib.find((t) => t.id === trackId);
+  if (!track) return false;
+  const { coverArt: _drop, ...stripped } = track;
+  stripped._hasCoverArt = !!art;
+  db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(
+    JSON.stringify(stripped),
+    trackId,
+  );
+  if (art)
+    db.prepare(
+      "INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)",
+    ).run(trackId, art);
+  else db.prepare("DELETE FROM track_covers WHERE trackId = ?").run(trackId);
+  db.prepare(
+    "INSERT OR REPLACE INTO cover_audit (trackId, sig, ok, ts) VALUES (?, ?, ?, ?)",
+  ).run(trackId, art ? _coverSig(art) : "", art ? 1 : 0, Date.now());
+  if (art) db.prepare("DELETE FROM cover_miss WHERE trackId = ?").run(trackId);
+  track._hasCoverArt = !!art;
+  delete track.coverArt;
+  _coverArtByIdCache.delete(trackId);
+  _purgeTrackThumbs([trackId]);
+  try {
+    const mainModule = require("./main");
+    if (mainModule && typeof mainModule.clearProtocolCache === "function")
+      mainModule.clearProtocolCache();
+  } catch (_) {}
+  if (!silent)
+    _coverBroadcast("coverart:updated", {
+      trackId,
+      coverArt: art || null,
+      version: Date.now(),
+    });
+  return true;
+}
+
+// Writes the verified image as <song>.novaart.<hash><ext>; falls back to userData if the folder is read-only
+function _writeCoverSidecar(track, buf, mime, hash) {
+  const ext = CoverArt.extForMime(mime);
+  const tag = (hash || CoverArt.md5(buf)).slice(0, 8);
+  const tryWrite = (dir, base) => {
+    fs.mkdirSync(dir, { recursive: true });
+    const target = path.join(dir, `${base}.novaart.${tag}${ext}`);
+    const tmp = `${target}.tmp`;
+    fs.writeFileSync(tmp, buf);
+    fs.renameSync(tmp, target);
+    for (const f of fs.readdirSync(dir)) {
+      if (
+        f.toLowerCase().startsWith(`${base.toLowerCase()}.novaart.`) &&
+        path.join(dir, f) !== target
+      ) {
+        try {
+          fs.unlinkSync(path.join(dir, f));
+        } catch (_) {}
+      }
+    }
+    return target;
+  };
+  if (track.filePath) {
+    try {
+      return tryWrite(
+        path.dirname(track.filePath),
+        path.basename(track.filePath, path.extname(track.filePath)),
+      );
+    } catch (_) {}
+  }
+  return tryWrite(
+    path.join(app.getPath("userData"), "cached_covers", "online"),
+    String(track.id),
+  );
+}
+
+/**
+ * Core resolver. Never leaves a lying flag behind:
+ *   returns { coverArt, source, changed, cleared?, matched? }
+ */
+async function _refillTrackCore(
+  track,
+  { force = false, online = true, ctx = null } = {},
+) {
+  _ensureCoverTables();
+  const cur = getCoverArtByTrackId(track.id);
+  const curBuf = _loadCoverBuffer(cur);
+  const audit = await _auditCover(track, cur, curBuf, ctx);
+  const curHash = audit.ok ? audit.hash : null;
+  if (audit.ok && !force)
+    return { coverArt: cur, source: "existing", changed: false };
+
+  const exclude = force && curHash ? new Set([curHash]) : undefined;
+  const take = (art, source, extra) => {
+    _commitTrackCover(track.id, art);
+    return { coverArt: art, source, changed: true, ...extra };
+  };
+
+  // 1. strict local (sidecar / exact-name / folder art for single-album folders)
+  if (track.filePath) {
+    const local = await CoverArt.findLocalCover(track.filePath, {
+      allowFolderArt: _allowFolderArt(
+        track,
+        ctx || _buildCoverCtx(getLibrary()),
+      ),
+      excludeHashes: exclude,
+    });
+    if (local) return take(local.path, "filesystem");
+  }
+
+  // 2. same-album sibling (only when album is known and artists agree)
+  const alb = _normKey(track.album);
+  if (alb && alb !== "unknown album") {
+    const art = _normKey(
+      Array.isArray(track.artist) ? track.artist.join(" ") : track.artist,
+    );
+    const lib = ctx ? null : getLibrary();
+    const pool = ctx
+      ? [].concat(...ctx.dirIndex.values()).map((s) => s.track)
+      : lib;
+    for (const s of pool) {
+      if (s.id === track.id || !s._hasCoverArt || _normKey(s.album) !== alb)
+        continue;
+      const sa = _normKey(
+        Array.isArray(s.artist) ? s.artist.join(" ") : s.artist,
+      );
+      if (art && sa && art !== sa && !art.includes(sa) && !sa.includes(art))
+        continue;
+      const sArt = getCoverArtByTrackId(s.id);
+      const sBuf = _loadCoverBuffer(sArt);
+      const sAudit = await _auditCover(s, sArt, sBuf, ctx);
+      if (!sAudit.ok || (exclude && exclude.has(sAudit.hash))) continue;
+      const v = await CoverArt.validateImage(sBuf);
+      return take(_writeCoverSidecar(track, sBuf, v.mime, v.hash), "sibling");
+    }
+  }
+
+  // 3. verified online match
+  if (online) {
+    const hit = await CoverArt.searchOnlineCover(track, {
+      excludeHashes: exclude,
+    });
+    if (hit)
+      return take(
+        _writeCoverSidecar(track, hit.buf, hit.mime, hit.hash),
+        "online",
+        { matched: hit.matched },
+      );
+    db.prepare(
+      "INSERT OR REPLACE INTO cover_miss (trackId, ts) VALUES (?, ?)",
+    ).run(track.id, Date.now());
+  }
+
+  // 4. nothing better. Keep good art; clear broken art so the placeholder is shown honestly.
+  if (audit.ok)
+    return {
+      coverArt: cur,
+      source: "existing",
+      changed: false,
+      note: "no better match",
+    };
+  const wasFlagged = !!(cur || track._hasCoverArt);
+  if (wasFlagged) _commitTrackCover(track.id, null);
+  return {
+    coverArt: null,
+    source: "none",
+    changed: wasFlagged,
+    cleared: wasFlagged,
+    reason: audit.reason,
+  };
+}
+
+function _recentMiss(trackId) {
+  try {
+    _ensureCoverTables();
+    const r = db
+      .prepare("SELECT ts FROM cover_miss WHERE trackId = ?")
+      .get(trackId);
+    return !!r && Date.now() - r.ts < COVER_MISS_TTL;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Heals a track whose thumbnail failed to decode (no network)
+const _healing = new Set();
+function _scheduleCoverHeal(trackId) {
+  if (_healing.has(trackId)) return;
+  _healing.add(trackId);
+  setImmediate(async () => {
+    try {
+      const t = getLibrary().find((x) => x.id === trackId);
+      if (t) await _refillTrackCore(t, { force: false, online: false });
+    } catch (_) {
+    } finally {
+      _healing.delete(trackId);
+    }
+  });
+}
+
+// Drops covers from freshly scanned tracks that are not real / not theirs
+async function _sanitizeScannedCovers(tracks) {
+  const ctx = _buildCoverCtx(tracks);
+  for (const t of tracks) {
+    try {
+      if (!t.coverArt) continue;
+      const buf = _loadCoverBuffer(t.coverArt);
+      const a = await _auditCover(
+        { ...t, _hasCoverArt: true },
+        t.coverArt,
+        buf,
+        ctx,
+      );
+      if (!a.ok) {
+        t.coverArt = null;
+        t._hasCoverArt = false;
+      }
+    } catch (_) {}
+  }
+}
+
+// Downloaded track: guarantee a verified cover (embedded → source artwork → matched online) or none
+async function _ensureDownloadedCover(track, info) {
+  if (track.coverArt) {
+    const a = await _auditCover(
+      { ...track, _hasCoverArt: true },
+      track.coverArt,
+      _loadCoverBuffer(track.coverArt),
+      null,
+    );
+    if (a.ok) return;
+    track.coverArt = null;
+    track._hasCoverArt = false;
+  }
+  let buf = null;
+  let v = null;
+  if (info && info.artworkUrl) {
+    try {
+      buf = await CoverArt.fetchBuf(info.artworkUrl, { timeout: 8000 });
+      v = await CoverArt.validateImage(buf, { minSide: 150 });
+      if (!v.valid) buf = null;
+    } catch (_) {
+      buf = null;
+    }
+  }
+  if (!buf) {
+    const hit = await CoverArt.searchOnlineCover(track).catch(() => null);
+    if (hit) {
+      buf = hit.buf;
+      v = hit;
+    }
+  }
+  if (buf && v) {
+    track.coverArt = _writeCoverSidecar(track, buf, v.mime, v.hash);
+    track._hasCoverArt = true;
+  }
+}
+
+// ─── audit the whole library (cheap after first run thanks to signatures) ───
+let _auditRunning = false;
+async function _runCoverAudit({ force = false, onProgress } = {}) {
+  if (_auditRunning) return { checked: 0, cleared: 0, recovered: 0 };
+  _auditRunning = true;
+  try {
+    _ensureCoverTables();
+    const lib = getLibrary().slice();
+    const ctx = _buildCoverCtx(lib);
+    const known = new Map(
+      db
+        .prepare("SELECT trackId, sig, ok FROM cover_audit")
+        .all()
+        .map((r) => [r.trackId, r]),
+    );
+    let checked = 0;
+    let cleared = 0;
+    let recovered = 0;
+    for (let i = 0; i < lib.length; i++) {
+      const t = lib[i];
+      if (i % 20 === 0) {
+        await new Promise((r) => setImmediate(r));
+        if (onProgress) onProgress(i, lib.length);
+      }
+      if (!t._hasCoverArt) continue;
+      const art = getCoverArtByTrackId(t.id);
+      const sig = _coverSig(art);
+      const k = known.get(t.id);
+      if (!force && k && k.ok === 1 && k.sig === sig) continue;
+      checked++;
+      const a = await _auditCover(t, art, _loadCoverBuffer(art), ctx);
+      if (a.ok) {
+        db.prepare(
+          "INSERT OR REPLACE INTO cover_audit (trackId, sig, ok, ts) VALUES (?, ?, 1, ?)",
+        ).run(t.id, sig, Date.now());
+        continue;
+      }
+      cleared++;
+      _commitTrackCover(t.id, null);
+      const r = await _refillTrackCore(
+        { ...t, _hasCoverArt: false },
+        { online: false, ctx },
+      ).catch(() => null);
+      if (r && r.coverArt) recovered++;
+    }
+    if (cleared)
+      console.log(
+        `[CoverAudit] checked ${checked}, cleared ${cleared} bad cover(s), recovered ${recovered} locally`,
+      );
+    return { checked, cleared, recovered };
+  } finally {
+    _auditRunning = false;
+  }
+}
+setTimeout(() => {
+  try {
+    if (db) _runCoverAudit().catch(() => {});
+  } catch (_) {}
+}, 25000);
+
+// ─── IPC: per-track refill ───────────────────────────────────────────────────
+// force=true  → re-search (current art kept only if nothing better is found)
+// auto=true   → silent background resolve (honours the 7-day miss cache)
+ipcMain.handle(
+  "coverart:refill-track",
+  async (event, { trackId, force, auto } = {}) => {
+    try {
+      if (!trackId) return { success: false, error: "trackId required" };
+      const track = getLibrary().find((t) => t.id === trackId);
+      if (!track) return { success: false, error: "Track not found" };
+      if (auto && !track._hasCoverArt && _recentMiss(trackId))
+        return {
+          success: true,
+          coverArt: null,
+          source: "none",
+          changed: false,
+        };
+      const r = await _refillTrackCore(track, { force: !!force, online: true });
+      return { success: true, ...r };
+    } catch (err) {
+      console.error("[coverart:refill-track]", err.message);
+      return { success: false, error: err.message };
+    }
+  },
+);
+
+// Renderer hit a broken image for this track → verify & repair locally
+ipcMain.handle("coverart:verify", async (event, { trackId } = {}) => {
+  try {
+    const track = getLibrary().find((t) => t.id === trackId);
     if (!track) return { success: false, error: "Track not found" };
-
-    // ── Step 1: Validate existing embedded art ──
-    if (!force && track._hasCoverArt) {
-      const existing = getCoverArtByTrackId(trackId);
-      if (existing) {
-        let isValid = false;
-        if (existing.startsWith("data:")) {
-          const b64 = existing.split(",")[1];
-          if (b64) {
-            const buf = Buffer.from(b64, "base64");
-            isValid = _isValidCoverArtBuffer(buf).valid;
-          }
-        } else if (fs.existsSync(existing)) {
-          const buf = fs.readFileSync(existing);
-          isValid = _isValidCoverArtBuffer(buf).valid;
-        }
-        if (isValid) return { success: true, coverArt: existing, source: "embedded" };
-      }
-    }
-
-    // ── Step 2: Validate existing file path sidecar ──
-    if (!force && track.coverArt && typeof track.coverArt === "string") {
-      const ca = track.coverArt;
-      let isValid = false;
-      if (ca.startsWith("data:")) {
-        const buf = Buffer.from(ca.split(",")[1] || "", "base64");
-        isValid = _isValidCoverArtBuffer(buf).valid;
-      } else if (fs.existsSync(ca)) {
-        const buf = fs.readFileSync(ca);
-        isValid = _isValidCoverArtBuffer(buf).valid;
-      }
-      if (isValid) return { success: true, coverArt: ca, source: "existing" };
-    }
-
-    // ── Step 3: Filesystem search (sidecar, folder.jpg, cover.jpg, etc.) ──
-    if (track.filePath && fs.existsSync(track.filePath)) {
-      const dir = path.dirname(track.filePath);
-      const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp"]);
-      const COMMON = ["cover", "folder", "album", "front", "artwork", "art", "thumbnail"];
-      const audioName = path.basename(track.filePath, path.extname(track.filePath)).toLowerCase();
-      let files = [];
-      try { files = fs.readdirSync(dir); } catch(_) {}
-
-      const candidates = [];
-      for (const f of files) {
-        const ext = path.extname(f).toLowerCase();
-        if (!IMAGE_EXTS.has(ext)) continue;
-        const nameNoExt = path.basename(f, ext).toLowerCase();
-        let pri = 99;
-        if (f.toLowerCase().includes(".novaart")) pri = 0;
-        else if (nameNoExt === audioName) pri = 1;
-        else if (COMMON.includes(nameNoExt)) pri = 2;
-        else if (nameNoExt.startsWith("albumart")) pri = 3;
-        candidates.push({ path: path.join(dir, f), pri });
-      }
-      candidates.sort((a, b) => a.pri - b.pri);
-
-      for (const c of candidates) {
-        try {
-          const buf = fs.readFileSync(c.path);
-          if (_isValidCoverArtBuffer(buf).valid) {
-            // Update in-memory + DB
-            track.coverArt = c.path;
-            track._hasCoverArt = true;
-            db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(JSON.stringify(track), trackId);
-            if (libraryById?.has(trackId)) libraryById.get(trackId).coverArt = c.path;
-            db.prepare("INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)").run(trackId, c.path);
-            return { success: true, coverArt: c.path, source: "filesystem" };
-          }
-        } catch(_) {}
-      }
-    }
-
-    // ── Step 4: Online search — iTunes then Deezer ──
-    const artist = track.artist || "";
-    const title  = track.title  || "";
-    const album  = track.album  || "";
-    const online = await _searchOnlineCoverArt(artist, title, album);
-    if (online) {
-      // Save as sidecar next to audio file
-      let sidecarPath = null;
-      if (track.filePath) {
-        sidecarPath = track.filePath.replace(/\.[^.]+$/, ".novaart.jpg");
-        try {
-          fs.writeFileSync(sidecarPath, online.buf);
-          track.coverArt = sidecarPath;
-          track._hasCoverArt = true;
-          db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(JSON.stringify(track), trackId);
-          if (libraryById?.has(trackId)) libraryById.get(trackId).coverArt = sidecarPath;
-          db.prepare("INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)").run(trackId, sidecarPath);
-        } catch(e) {
-          sidecarPath = online.url; // fall back to URL if write fails
-        }
-      }
-      return { success: true, coverArt: sidecarPath || online.url, source: "online" };
-    }
-
-    return { success: true, coverArt: null, source: "none" };
+    const r = await _refillTrackCore(track, { force: false, online: false });
+    return { success: true, ...r };
   } catch (err) {
-    console.error("[coverart:refill-track]", err.message);
     return { success: false, error: err.message };
   }
 });
 
-// ─── Cover Art: Batch refill for entire library (settings "Refill Thumbnails") ─
-ipcMain.handle("coverart:refill-all", async (event, { force } = {}) => {
+// Manual fill: user picks an image file
+ipcMain.handle("coverart:pick-file", async (event, { trackId } = {}) => {
   try {
-    const library = getLibrary();
-    const missing = force
-      ? library
-      : library.filter(t => !t.coverArt && !t._hasCoverArt);
+    const track = getLibrary().find((t) => t.id === trackId);
+    if (!track) return { success: false, error: "Track not found" };
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const res = await dialog.showOpenDialog(win, {
+      title: "Choose cover art",
+      properties: ["openFile"],
+      filters: [
+        { name: "Images", extensions: ["jpg", "jpeg", "png", "webp", "bmp"] },
+      ],
+    });
+    if (res.canceled || !res.filePaths.length)
+      return { success: true, cancelled: true };
+    const buf = fs.readFileSync(res.filePaths[0]);
+    const v = await CoverArt.validateImage(buf, { minSide: 100 });
+    if (!v.valid)
+      return {
+        success: false,
+        error: `That file isn't usable cover art (${v.reason.replace(/_/g, " ")})`,
+      };
+    const art = _writeCoverSidecar(track, buf, v.mime, v.hash);
+    _commitTrackCover(trackId, art);
+    return { success: true, coverArt: art, source: "manual", changed: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
 
+// Validate every stored cover now (clears fake/wrong ones, recovers locally)
+ipcMain.handle("coverart:audit", async (event, { force } = {}) => {
+  try {
+    const r = await _runCoverAudit({ force: !!force });
+    return { success: true, ...r };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── IPC: whole-library refill (Settings → Refill Thumbnails) ────────────────
+let _refillAllRunning = false;
+let _refillAllCancel = false;
+ipcMain.handle("coverart:refill-cancel", async () => {
+  _refillAllCancel = true;
+  return { success: true };
+});
+
+ipcMain.handle("coverart:refill-all", async (event, { force } = {}) => {
+  if (_refillAllRunning)
+    return { success: false, error: "A refill is already running" };
+  _refillAllRunning = true;
+  _refillAllCancel = false;
+  try {
+    _ensureCoverTables();
+    // Phase 1: repair anything bogus first (cheap, offline)
+    const repairedInfo = await _runCoverAudit({ force: !!force });
+    const lib = getLibrary().slice();
+    const ctx = _buildCoverCtx(lib);
+    const targets = force
+      ? lib.filter((t) => t.filePath)
+      : lib.filter((t) => t.filePath && !t._hasCoverArt);
     let filled = 0;
     let skipped = 0;
-    const total = missing.length;
-
-    // Send progress to renderer
-    const win = require("electron").BrowserWindow.getAllWindows()[0];
-    const sendProgress = (n) => {
-      if (win && !win.isDestroyed()) {
-        win.webContents.send("coverart:refill-progress", { filled, skipped, total, current: n });
+    let done = 0;
+    const total = targets.length;
+    let lastSend = 0;
+    const send = (final) => {
+      const now = Date.now();
+      if (!final && now - lastSend < 150) return;
+      lastSend = now;
+      _coverBroadcast("coverart:refill-progress", {
+        filled,
+        skipped,
+        repaired: repairedInfo.cleared,
+        total,
+        current: done,
+      });
+    };
+    let idx = 0;
+    const worker = async () => {
+      while (!_refillAllCancel) {
+        const t = targets[idx++];
+        if (!t) return;
+        try {
+          const r = await _refillTrackCore(t, {
+            force: !!force,
+            online: true,
+            ctx,
+          });
+          if (r.changed && r.coverArt) filled++;
+          else skipped++;
+        } catch (_) {
+          skipped++;
+        }
+        done++;
+        send(false);
       }
     };
-
-    for (let i = 0; i < missing.length; i++) {
-      const t = missing[i];
-      sendProgress(i + 1);
+    await Promise.all([worker(), worker(), worker()]);
+    send(true);
+    setImmediate(() => {
       try {
-        const res = await new Promise(r =>
-          ipcMain.emit("coverart:refill-track-internal", null, { trackId: t.id, force }, r)
-        );
-        // Direct call instead of IPC roundtrip
-        const result = await (async () => {
-          // inline the refill logic
-          if (!t._hasCoverArt && !t.coverArt) {
-            const online = await _searchOnlineCoverArt(t.artist || "", t.title || "", t.album || "");
-            if (online && t.filePath) {
-              const sp = t.filePath.replace(/\.[^.]+$/, ".novaart.jpg");
-              try {
-                fs.writeFileSync(sp, online.buf);
-                t.coverArt = sp;
-                t._hasCoverArt = true;
-                db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(JSON.stringify(t), t.id);
-                if (libraryById?.has(t.id)) libraryById.get(t.id).coverArt = sp;
-                db.prepare("INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)").run(t.id, sp);
-                return true;
-              } catch(_) {}
-            }
-          }
-          return false;
-        })();
-        if (result) filled++;
-        else skipped++;
-      } catch(_) { skipped++; }
-    }
-
-    sendProgress(total);
-    return { success: true, filled, skipped, total };
+        ManifestIPC.rebuildManifest(getLibrary()).catch(() => {});
+      } catch (_) {}
+    });
+    return {
+      success: true,
+      filled,
+      skipped,
+      total,
+      repaired: repairedInfo.cleared,
+      cancelled: _refillAllCancel,
+    };
   } catch (err) {
     console.error("[coverart:refill-all]", err.message);
     return { success: false, error: err.message };
+  } finally {
+    _refillAllRunning = false;
   }
 });
 
