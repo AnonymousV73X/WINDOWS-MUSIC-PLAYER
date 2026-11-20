@@ -2496,7 +2496,7 @@ async function _embeddableArt(b) {
   // Only real, decodable, square-ish JPEG/PNG artwork may be embedded (converts WebP etc.)
   try {
     const CA = require("./coverArt");
-    const v = await CA.validateImage(b, { minSide: 150 });
+    const v = await CA.validateImage(b, { minSide: 150, strict: true });
     if (!v.valid) return null;
     if (v.mime === "image/jpeg" || v.mime === "image/png") return b;
     return await require("sharp")(b).jpeg({ quality: 92 }).toBuffer();

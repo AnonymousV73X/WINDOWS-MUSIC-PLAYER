@@ -13,47 +13,16 @@ const https = require("https");
 const crypto = require("crypto");
 
 const IMG_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"]);
-const AUDIO_EXTS = new Set([
-  ".mp3",
-  ".flac",
-  ".wav",
-  ".ogg",
-  ".m4a",
-  ".aac",
-  ".wma",
-  ".opus",
-  ".ape",
-  ".wv",
-  ".tta",
-  ".mpc",
-]);
-const FOLDER_ART_NAMES = new Set([
-  "cover",
-  "folder",
-  "front",
-  "album",
-  "albumart",
-  "artwork",
-]);
-const UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const AUDIO_EXTS = new Set([".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aac", ".wma", ".opus", ".ape", ".wv", ".tta", ".mpc"]);
+const FOLDER_ART_NAMES = new Set(["cover", "folder", "front", "album", "albumart", "artwork"]);
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 // ─── Sniffing / validation ───────────────────────────────────────
 function sniff(buf) {
   if (!buf || buf.length < 12) return null;
-  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff)
-    return "image/jpeg";
-  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)
-    return "image/png";
-  if (
-    buf[0] === 0x52 &&
-    buf[1] === 0x49 &&
-    buf[2] === 0x46 &&
-    buf[3] === 0x46 &&
-    buf[8] === 0x57 &&
-    buf[9] === 0x45
-  )
-    return "image/webp";
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "image/png";
+  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 && buf[8] === 0x57 && buf[9] === 0x45) return "image/webp";
   if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return "image/gif";
   if (buf[0] === 0x42 && buf[1] === 0x4d) return "image/bmp";
   return null;
@@ -61,18 +30,14 @@ function sniff(buf) {
 
 function _textLike(buf) {
   const head = buf.slice(0, 512).toString("latin1").toLowerCase();
-  return (
-    head.includes("<svg") ||
-    head.includes("<?xml") ||
-    head.includes("<html") ||
-    head.includes("<!doctype")
-  );
+  return head.includes("<svg") || head.includes("<?xml") || head.includes("<html") || head.includes("<!doctype");
 }
 
 const md5 = (buf) => crypto.createHash("md5").update(buf).digest("hex");
 
-async function validateImage(buf, { minSide = 120 } = {}) {
-  if (!buf || buf.length < 1500) return { valid: false, reason: "too_small" };
+// Lenient by default (low-res / dark real thumbnails are fine); strict:true for online/new art
+async function validateImage(buf, { minSide = 48, strict = false } = {}) {
+  if (!buf || buf.length < 400) return { valid: false, reason: "too_small" };
   if (_textLike(buf)) return { valid: false, reason: "svg_or_text" };
   const mime = sniff(buf);
   if (!mime) return { valid: false, reason: "not_image" };
@@ -85,25 +50,14 @@ async function validateImage(buf, { minSide = 120 } = {}) {
   try {
     const m = await sharp(buf, { failOn: "error" }).metadata();
     if (!m.width || !m.height) return { valid: false, reason: "undecodable" };
-    if (Math.min(m.width, m.height) < minSide)
-      return { valid: false, reason: "too_small_dims" };
+    if (Math.min(m.width, m.height) < minSide) return { valid: false, reason: "too_small_dims" };
     const ratio = m.width / m.height;
-    if (ratio > 1.4 || ratio < 0.7)
-      return { valid: false, reason: "bad_aspect" };
-    const st = await sharp(buf, { failOn: "error" })
-      .resize(64, 64, { fit: "fill" })
-      .removeAlpha()
-      .stats();
-    const avgStdev =
-      st.channels.reduce((a, c) => a + c.stdev, 0) / st.channels.length;
-    if (avgStdev < 8) return { valid: false, reason: "flat_placeholder" };
-    return {
-      valid: true,
-      mime,
-      width: m.width,
-      height: m.height,
-      hash: md5(buf),
-    };
+    const [lo, hi] = strict ? [0.7, 1.4] : [0.45, 2.3];
+    if (ratio > hi || ratio < lo) return { valid: false, reason: "bad_aspect" };
+    const st = await sharp(buf, { failOn: "error" }).resize(64, 64, { fit: "fill" }).removeAlpha().stats();
+    const avgStdev = st.channels.reduce((a, c) => a + c.stdev, 0) / st.channels.length;
+    if (avgStdev < (strict ? 8 : 1.5)) return { valid: false, reason: "flat_placeholder" };
+    return { valid: true, mime, width: m.width, height: m.height, hash: md5(buf) };
   } catch (e) {
     return { valid: false, reason: "undecodable" };
   }
@@ -113,7 +67,7 @@ async function validateImage(buf, { minSide = 120 } = {}) {
 function quickCheckFile(file) {
   try {
     const st = fs.statSync(file);
-    if (st.size < 1500) return false;
+    if (st.size < 400) return false;
     const fd = fs.openSync(file, "r");
     const b = Buffer.alloc(512);
     const n = fs.readSync(fd, b, 0, 512, 0);
@@ -131,14 +85,7 @@ function usablePictures(result) {
   if (!Array.isArray(pics) || !pics.length) return false;
   const front = (p) => (/front/i.test(String(p.type || "")) ? 1 : 0);
   const good = pics
-    .filter(
-      (p) =>
-        p &&
-        p.data &&
-        p.data.length >= 1500 &&
-        sniff(p.data) &&
-        !_textLike(p.data),
-    )
+    .filter((p) => p && p.data && p.data.length >= 400 && sniff(p.data) && !_textLike(p.data))
     .sort((a, b) => front(b) - front(a) || b.data.length - a.data.length);
   result.common.picture = good;
   return good.length > 0;
@@ -172,16 +119,11 @@ function localCandidates(filePath, { allowFolderArt = false } = {}) {
 
   for (const f of files) {
     const l = f.toLowerCase();
-    if (isImg(f) && l.startsWith(`${stem}.novaart.`))
-      out.push({ path: path.join(dir, f), kind: "sidecar" });
+    if (isImg(f) && l.startsWith(`${stem}.novaart.`)) out.push({ path: path.join(dir, f), kind: "sidecar" });
   }
   for (const f of files) {
     const l = f.toLowerCase();
-    if (
-      isImg(f) &&
-      !l.includes(".novaart.") &&
-      path.basename(l, path.extname(l)) === stem
-    )
+    if (isImg(f) && !l.includes(".novaart.") && path.basename(l, path.extname(l)) === stem)
       out.push({ path: path.join(dir, f), kind: "exact" });
   }
   if (allowFolderArt) {
@@ -190,14 +132,8 @@ function localCandidates(filePath, { allowFolderArt = false } = {}) {
       for (const f of list) {
         if (!isImg(f) || f.toLowerCase().includes(".novaart.")) continue;
         const n = path.basename(f, path.extname(f)).toLowerCase();
-        if (FOLDER_ART_NAMES.has(n))
-          found.push({ path: path.join(base, f), kind: "folder", pri: 1 });
-        else if (n.startsWith("albumart") && !n.includes("small"))
-          found.push({
-            path: path.join(base, f),
-            kind: "folder",
-            pri: n.includes("large") ? 0 : 2,
-          });
+        if (FOLDER_ART_NAMES.has(n)) found.push({ path: path.join(base, f), kind: "folder", pri: 1 });
+        else if (n.startsWith("albumart") && !n.includes("small")) found.push({ path: path.join(base, f), kind: "folder", pri: n.includes("large") ? 0 : 2 });
       }
       return found.sort((a, b) => a.pri - b.pri);
     };
@@ -218,19 +154,14 @@ function findLocalCoverSync(filePath) {
     const dir = path.dirname(filePath);
     const files = _listDir(dir);
     const allowFolder = _audioCount(files) <= 40;
-    for (const c of localCandidates(filePath, {
-      allowFolderArt: allowFolder,
-    })) {
+    for (const c of localCandidates(filePath, { allowFolderArt: allowFolder })) {
       if (quickCheckFile(c.path)) return c.path;
     }
   } catch (_) {}
   return null;
 }
 
-async function findLocalCover(
-  filePath,
-  { allowFolderArt = false, excludeHashes } = {},
-) {
+async function findLocalCover(filePath, { allowFolderArt = false, excludeHashes } = {}) {
   for (const c of localCandidates(filePath, { allowFolderArt })) {
     let buf;
     try {
@@ -265,10 +196,8 @@ function _titleCore(t) {
   ).replace(/\s/g, "");
 }
 
-const _FLAG_RE =
-  /\b(remix|live|acoustic|instrumental|karaoke|cover|slowed|sped|reverb|nightcore|8d|demo|tribute|lofi|cappella)\b/g;
-const _flags = (s) =>
-  [...new Set(_norm(s).match(_FLAG_RE) || [])].sort().join(",");
+const _FLAG_RE = /\b(remix|live|acoustic|instrumental|karaoke|cover|slowed|sped|reverb|nightcore|8d|demo|tribute|lofi|cappella)\b/g;
+const _flags = (s) => [...new Set(_norm(s).match(_FLAG_RE) || [])].sort().join(",");
 
 function _artistTokens(name) {
   return String(name || "")
@@ -282,8 +211,7 @@ function _dice(a, b) {
   if (a === b) return 1;
   if (a.length < 2 || b.length < 2) return 0;
   const bg = new Map();
-  for (let i = 0; i < a.length - 1; i++)
-    bg.set(a.substr(i, 2), (bg.get(a.substr(i, 2)) || 0) + 1);
+  for (let i = 0; i < a.length - 1; i++) bg.set(a.substr(i, 2), (bg.get(a.substr(i, 2)) || 0) + 1);
   let hit = 0;
   for (let i = 0; i < b.length - 1; i++) {
     const k = b.substr(i, 2);
@@ -298,74 +226,41 @@ function _dice(a, b) {
 
 function _cleanTitle(t) {
   return String(t || "")
-    .replace(
-      /\((?:official|lyrics?|audio|video|music video|visualizer|hd|hq|4k|explicit)[^)]*\)/gi,
-      "",
-    )
-    .replace(
-      /\[(?:official|lyrics?|audio|video|visualizer|hd|hq|4k|explicit)[^\]]*\]/gi,
-      "",
-    )
+    .replace(/\((?:official|lyrics?|audio|video|music video|visualizer|hd|hq|4k|explicit)[^)]*\)/gi, "")
+    .replace(/\[(?:official|lyrics?|audio|video|visualizer|hd|hq|4k|explicit)[^\]]*\]/gi, "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
 function deriveQuery(track) {
-  const stem = track.filePath
-    ? path.basename(track.filePath, path.extname(track.filePath))
-    : "";
+  const stem = track.filePath ? path.basename(track.filePath, path.extname(track.filePath)) : "";
   let title = _cleanTitle(track.title || stem);
-  let artist = Array.isArray(track.artist)
-    ? track.artist.join(", ")
-    : String(track.artist || "");
+  let artist = Array.isArray(track.artist) ? track.artist.join(", ") : String(track.artist || "");
   const split = title.match(/^(.{2,60}?)\s+[-–—]\s+(.{2,})$/);
   if (!artist || /^unknown artist$/i.test(artist)) {
     if (split) {
       artist = split[1];
       title = split[2];
     } else artist = "";
-  } else if (
-    split &&
-    _norm(split[1]) &&
-    _artistTokens(artist).some((a) => _norm(split[1]).includes(a))
-  ) {
+  } else if (split && _norm(split[1]) && _artistTokens(artist).some((a) => _norm(split[1]).includes(a))) {
     title = split[2];
   }
-  const album = /^unknown album$/i.test(String(track.album || ""))
-    ? ""
-    : String(track.album || "");
-  return {
-    artist: artist.trim(),
-    title: title.trim(),
-    album: album.trim(),
-    durationMs: (Number(track.duration) || 0) * 1000,
-  };
+  const album = /^unknown album$/i.test(String(track.album || "")) ? "" : String(track.album || "");
+  return { artist: artist.trim(), title: title.trim(), album: album.trim(), durationMs: (Number(track.duration) || 0) * 1000 };
 }
 
 function scoreCandidate(q, c) {
   const qt = _titleCore(q.title);
   const ct = _titleCore(c.title);
   if (!qt || !ct) return 0;
-  if (
-    _flags(q.title + " " + q.album) !== _flags(c.title + " " + (c.album || ""))
-  )
-    return 0;
+  if (_flags(q.title + " " + q.album) !== _flags(c.title + " " + (c.album || ""))) return 0;
   const qa = _artistTokens(q.artist);
   const ca = _artistTokens(c.artist);
-  const artistOverlap = qa.some((x) =>
-    ca.some(
-      (y) =>
-        x === y ||
-        (x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x))),
-    ),
-  );
+  const artistOverlap = qa.some((x) => ca.some((y) => x === y || (x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x)))));
   if (qa.length && !artistOverlap) return 0;
 
   const ts = qt === ct ? 1 : _dice(qt, ct);
-  const durOk =
-    q.durationMs && c.durationMs
-      ? Math.abs(q.durationMs - c.durationMs) <= 8000
-      : null;
+  const durOk = q.durationMs && c.durationMs ? Math.abs(q.durationMs - c.durationMs) <= 8000 : null;
   if (q.durationMs && c.durationMs && !durOk) return 0;
 
   if (ts >= 0.82) {
@@ -374,22 +269,12 @@ function scoreCandidate(q, c) {
   }
   // Title mismatch: accept only an exact album + artist match (art is album-specific)
   const qal = _norm(q.album);
-  if (
-    qal &&
-    qa.length &&
-    artistOverlap &&
-    c.album &&
-    _dice(qal, _norm(c.album)) >= 0.92
-  )
-    return 0.7;
+  if (qal && qa.length && artistOverlap && c.album && _dice(qal, _norm(c.album)) >= 0.92) return 0.7;
   return 0;
 }
 
 // ─── Network ─────────────────────────────────────────────────────
-function fetchBuf(
-  url,
-  { timeout = 9000, maxBytes = 15 * 1024 * 1024, hops = 0 } = {},
-) {
+function fetchBuf(url, { timeout = 9000, maxBytes = 15 * 1024 * 1024, hops = 0 } = {}) {
   return new Promise((resolve, reject) => {
     if (hops > 5) return reject(new Error("Too many redirects"));
     let u;
@@ -399,54 +284,36 @@ function fetchBuf(
       return reject(e);
     }
     if (u.protocol !== "https:") return reject(new Error("https only"));
-    const req = https.get(
-      url,
-      { headers: { "User-Agent": UA, Accept: "*/*" }, timeout },
-      (res) => {
-        if (
-          res.statusCode >= 300 &&
-          res.statusCode < 400 &&
-          res.headers.location
-        ) {
-          res.resume();
-          return resolve(
-            fetchBuf(new URL(res.headers.location, url).href, {
-              timeout,
-              maxBytes,
-              hops: hops + 1,
-            }),
-          );
-        }
-        if (res.statusCode !== 200) {
-          res.resume();
-          return reject(new Error(`HTTP ${res.statusCode}`));
-        }
-        const chunks = [];
-        let size = 0;
-        res.on("data", (c) => {
-          size += c.length;
-          if (size > maxBytes) return req.destroy(new Error("too large"));
-          chunks.push(c);
-        });
-        res.on("end", () => resolve(Buffer.concat(chunks)));
-        res.on("error", reject);
-      },
-    );
+    const req = https.get(url, { headers: { "User-Agent": UA, Accept: "*/*" }, timeout }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        return resolve(fetchBuf(new URL(res.headers.location, url).href, { timeout, maxBytes, hops: hops + 1 }));
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`HTTP ${res.statusCode}`));
+      }
+      const chunks = [];
+      let size = 0;
+      res.on("data", (c) => {
+        size += c.length;
+        if (size > maxBytes) return req.destroy(new Error("too large"));
+        chunks.push(c);
+      });
+      res.on("end", () => resolve(Buffer.concat(chunks)));
+      res.on("error", reject);
+    });
     req.on("error", reject);
     req.on("timeout", () => req.destroy(new Error("timeout")));
   });
 }
 
-const fetchJson = async (url, opts) =>
-  JSON.parse((await fetchBuf(url, opts)).toString("utf8"));
+const fetchJson = async (url, opts) => JSON.parse((await fetchBuf(url, opts)).toString("utf8"));
 
 // ─── Online providers → candidates { artist, title, album, durationMs, artUrls[] } ─
 async function _itunes(q) {
   const term = [q.artist, q.title].filter(Boolean).join(" ");
-  const j = await fetchJson(
-    `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=song&limit=15`,
-    { timeout: 7000 },
-  );
+  const j = await fetchJson(`https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=song&limit=15`, { timeout: 7000 });
   return (j.results || []).map((r) => {
     const a = r.artworkUrl100 || "";
     return {
@@ -454,31 +321,20 @@ async function _itunes(q) {
       title: r.trackName,
       album: r.collectionName,
       durationMs: r.trackTimeMillis || 0,
-      artUrls: a
-        ? [
-            a.replace(/100x100(bb)?/, "1200x1200bb"),
-            a.replace(/100x100(bb)?/, "600x600bb"),
-            a.replace(/100x100(bb)?/, "300x300bb"),
-          ]
-        : [],
+      artUrls: a ? [a.replace(/100x100(bb)?/, "1200x1200bb"), a.replace(/100x100(bb)?/, "600x600bb"), a.replace(/100x100(bb)?/, "300x300bb")] : [],
     };
   });
 }
 
 async function _deezer(q) {
   const term = [q.artist, q.title].filter(Boolean).join(" ");
-  const j = await fetchJson(
-    `https://api.deezer.com/search?q=${encodeURIComponent(term)}&limit=15`,
-    { timeout: 7000 },
-  );
+  const j = await fetchJson(`https://api.deezer.com/search?q=${encodeURIComponent(term)}&limit=15`, { timeout: 7000 });
   return (j.data || []).map((r) => ({
     artist: r.artist && r.artist.name,
     title: r.title,
     album: r.album && r.album.title,
     durationMs: (r.duration || 0) * 1000,
-    artUrls: [r.album && r.album.cover_xl, r.album && r.album.cover_big].filter(
-      Boolean,
-    ),
+    artUrls: [r.album && r.album.cover_xl, r.album && r.album.cover_big].filter(Boolean),
   }));
 }
 
@@ -490,10 +346,7 @@ async function _ytm(q) {
     return [];
   }
   if (typeof DE.searchYouTubeMusic !== "function") return [];
-  const res = await DE.searchYouTubeMusic(
-    [q.artist, q.title].filter(Boolean).join(" "),
-    10,
-  );
+  const res = await DE.searchYouTubeMusic([q.artist, q.title].filter(Boolean).join(" "), 10);
   return res
     .filter((r) => r.albumName) // songs only; bare videos carry letterboxed video thumbnails
     .map((r) => ({
@@ -525,16 +378,10 @@ async function _searchOnlineOnce(q, excludeHashes) {
     for (const url of c.artUrls) {
       try {
         const buf = await fetchBuf(url, { timeout: 9000 });
-        const v = await validateImage(buf, { minSide: 200 });
+        const v = await validateImage(buf, { minSide: 200, strict: true });
         if (!v.valid) continue;
         if (excludeHashes && excludeHashes.has(v.hash)) continue;
-        return {
-          buf,
-          ...v,
-          url,
-          score: s,
-          matched: { artist: c.artist, title: c.title, album: c.album },
-        };
+        return { buf, ...v, url, score: s, matched: { artist: c.artist, title: c.title, album: c.album } };
       } catch (_) {}
     }
   }
@@ -549,25 +396,15 @@ function searchOnlineCover(track, { excludeHashes } = {}) {
   const hit = _onlineCache.get(key);
   const usable = (r) => r && !(excludeHashes && excludeHashes.has(r.hash));
   if (hit && Date.now() - hit.t < ONLINE_TTL) {
-    return hit.p.then((r) =>
-      r === null || usable(r) ? r : _searchOnlineOnce(q, excludeHashes),
-    );
+    return hit.p.then((r) => (r === null || usable(r) ? r : _searchOnlineOnce(q, excludeHashes)));
   }
   const p = _searchOnlineOnce(q, excludeHashes).catch(() => null);
   _onlineCache.set(key, { t: Date.now(), p });
-  if (_onlineCache.size > 200)
-    _onlineCache.delete(_onlineCache.keys().next().value);
+  if (_onlineCache.size > 200) _onlineCache.delete(_onlineCache.keys().next().value);
   return p;
 }
 
-const extForMime = (m) =>
-  ({
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
-    "image/gif": ".gif",
-    "image/bmp": ".bmp",
-  })[m] || ".jpg";
+const extForMime = (m) => ({ "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif", "image/bmp": ".bmp" }[m] || ".jpg");
 
 module.exports = {
   sniff,

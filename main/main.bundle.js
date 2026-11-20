@@ -792,10 +792,460 @@ var require_fileScanner = __commonJS({
   }
 });
 
+// main/coverArt.js
+var require_coverArt = __commonJS({
+  "main/coverArt.js"(exports2, module2) {
+    var fs = require("fs");
+    var path = require("path");
+    var https = require("https");
+    var crypto4 = require("crypto");
+    var IMG_EXTS = /* @__PURE__ */ new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"]);
+    var AUDIO_EXTS = /* @__PURE__ */ new Set([
+      ".mp3",
+      ".flac",
+      ".wav",
+      ".ogg",
+      ".m4a",
+      ".aac",
+      ".wma",
+      ".opus",
+      ".ape",
+      ".wv",
+      ".tta",
+      ".mpc"
+    ]);
+    var FOLDER_ART_NAMES = /* @__PURE__ */ new Set([
+      "cover",
+      "folder",
+      "front",
+      "album",
+      "albumart",
+      "artwork"
+    ]);
+    var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    function sniff(buf) {
+      if (!buf || buf.length < 12) return null;
+      if (buf[0] === 255 && buf[1] === 216 && buf[2] === 255)
+        return "image/jpeg";
+      if (buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71)
+        return "image/png";
+      if (buf[0] === 82 && buf[1] === 73 && buf[2] === 70 && buf[3] === 70 && buf[8] === 87 && buf[9] === 69)
+        return "image/webp";
+      if (buf[0] === 71 && buf[1] === 73 && buf[2] === 70) return "image/gif";
+      if (buf[0] === 66 && buf[1] === 77) return "image/bmp";
+      return null;
+    }
+    function _textLike(buf) {
+      const head = buf.slice(0, 512).toString("latin1").toLowerCase();
+      return head.includes("<svg") || head.includes("<?xml") || head.includes("<html") || head.includes("<!doctype");
+    }
+    var md52 = (buf) => crypto4.createHash("md5").update(buf).digest("hex");
+    async function validateImage(buf, { minSide = 120 } = {}) {
+      if (!buf || buf.length < 1500) return { valid: false, reason: "too_small" };
+      if (_textLike(buf)) return { valid: false, reason: "svg_or_text" };
+      const mime = sniff(buf);
+      if (!mime) return { valid: false, reason: "not_image" };
+      let sharp;
+      try {
+        sharp = require("sharp");
+      } catch (_) {
+        return { valid: true, mime, hash: md52(buf), reason: "no_decoder" };
+      }
+      try {
+        const m = await sharp(buf, { failOn: "error" }).metadata();
+        if (!m.width || !m.height) return { valid: false, reason: "undecodable" };
+        if (Math.min(m.width, m.height) < minSide)
+          return { valid: false, reason: "too_small_dims" };
+        const ratio = m.width / m.height;
+        if (ratio > 1.4 || ratio < 0.7)
+          return { valid: false, reason: "bad_aspect" };
+        const st = await sharp(buf, { failOn: "error" }).resize(64, 64, { fit: "fill" }).removeAlpha().stats();
+        const avgStdev = st.channels.reduce((a, c) => a + c.stdev, 0) / st.channels.length;
+        if (avgStdev < 8) return { valid: false, reason: "flat_placeholder" };
+        return {
+          valid: true,
+          mime,
+          width: m.width,
+          height: m.height,
+          hash: md52(buf)
+        };
+      } catch (e) {
+        return { valid: false, reason: "undecodable" };
+      }
+    }
+    function quickCheckFile(file) {
+      try {
+        const st = fs.statSync(file);
+        if (st.size < 1500) return false;
+        const fd = fs.openSync(file, "r");
+        const b = Buffer.alloc(512);
+        const n = fs.readSync(fd, b, 0, 512, 0);
+        fs.closeSync(fd);
+        const head = b.slice(0, n);
+        return !!sniff(head) && !_textLike(head);
+      } catch (_) {
+        return false;
+      }
+    }
+    function usablePictures(result) {
+      const pics = result && result.common && result.common.picture;
+      if (!Array.isArray(pics) || !pics.length) return false;
+      const front = (p) => /front/i.test(String(p.type || "")) ? 1 : 0;
+      const good = pics.filter(
+        (p) => p && p.data && p.data.length >= 1500 && sniff(p.data) && !_textLike(p.data)
+      ).sort((a, b) => front(b) - front(a) || b.data.length - a.data.length);
+      result.common.picture = good;
+      return good.length > 0;
+    }
+    function _listDir(dir) {
+      try {
+        return fs.readdirSync(dir);
+      } catch (_) {
+        return [];
+      }
+    }
+    function _audioCount(files) {
+      let n = 0;
+      for (const f of files) if (AUDIO_EXTS.has(path.extname(f).toLowerCase())) n++;
+      return n;
+    }
+    function localCandidates(filePath, { allowFolderArt = false } = {}) {
+      const dir = path.dirname(filePath);
+      const stem = path.basename(filePath, path.extname(filePath)).toLowerCase();
+      const files = _listDir(dir);
+      const out = [];
+      const isImg = (f) => IMG_EXTS.has(path.extname(f).toLowerCase());
+      for (const f of files) {
+        const l = f.toLowerCase();
+        if (isImg(f) && l.startsWith(`${stem}.novaart.`))
+          out.push({ path: path.join(dir, f), kind: "sidecar" });
+      }
+      for (const f of files) {
+        const l = f.toLowerCase();
+        if (isImg(f) && !l.includes(".novaart.") && path.basename(l, path.extname(l)) === stem)
+          out.push({ path: path.join(dir, f), kind: "exact" });
+      }
+      if (allowFolderArt) {
+        const folderArt = (list, base) => {
+          const found = [];
+          for (const f of list) {
+            if (!isImg(f) || f.toLowerCase().includes(".novaart.")) continue;
+            const n = path.basename(f, path.extname(f)).toLowerCase();
+            if (FOLDER_ART_NAMES.has(n))
+              found.push({ path: path.join(base, f), kind: "folder", pri: 1 });
+            else if (n.startsWith("albumart") && !n.includes("small"))
+              found.push({
+                path: path.join(base, f),
+                kind: "folder",
+                pri: n.includes("large") ? 0 : 2
+              });
+          }
+          return found.sort((a, b) => a.pri - b.pri);
+        };
+        out.push(...folderArt(files, dir));
+        if (/^(cd|disc|disk)\s*\d+$/i.test(path.basename(dir))) {
+          const parent = path.dirname(dir);
+          const pf = _listDir(parent);
+          if (_audioCount(pf) === 0) out.push(...folderArt(pf, parent));
+        }
+      }
+      return out;
+    }
+    function findLocalCoverSync(filePath) {
+      try {
+        const dir = path.dirname(filePath);
+        const files = _listDir(dir);
+        const allowFolder = _audioCount(files) <= 40;
+        for (const c of localCandidates(filePath, {
+          allowFolderArt: allowFolder
+        })) {
+          if (quickCheckFile(c.path)) return c.path;
+        }
+      } catch (_) {
+      }
+      return null;
+    }
+    async function findLocalCover(filePath, { allowFolderArt = false, excludeHashes } = {}) {
+      for (const c of localCandidates(filePath, { allowFolderArt })) {
+        let buf;
+        try {
+          buf = fs.readFileSync(c.path);
+        } catch (_) {
+          continue;
+        }
+        const v = await validateImage(buf);
+        if (!v.valid) continue;
+        if (excludeHashes && excludeHashes.has(v.hash)) continue;
+        return { path: c.path, kind: c.kind, buf, ...v };
+      }
+      return null;
+    }
+    var _norm = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/&/g, " and ").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+    function _titleCore(t) {
+      return _norm(
+        String(t || "").replace(/[\(\[]\s*(feat|ft|featuring|with|prod)\b[^\)\]]*[\)\]]/gi, "").replace(/\s[-–]\s*(feat|ft|featuring)\.?\s.*$/i, "")
+      ).replace(/\s/g, "");
+    }
+    var _FLAG_RE = /\b(remix|live|acoustic|instrumental|karaoke|cover|slowed|sped|reverb|nightcore|8d|demo|tribute|lofi|cappella)\b/g;
+    var _flags = (s) => [...new Set(_norm(s).match(_FLAG_RE) || [])].sort().join(",");
+    function _artistTokens(name) {
+      return String(name || "").replace(/\s-\s*topic$/i, "").split(/,|&|;|\/|\bfeat\.?\b|\bft\.?\b|\bx\b|\band\b/i).map(_norm).filter((x) => x && x !== "unknown artist");
+    }
+    function _dice(a, b) {
+      if (a === b) return 1;
+      if (a.length < 2 || b.length < 2) return 0;
+      const bg = /* @__PURE__ */ new Map();
+      for (let i = 0; i < a.length - 1; i++)
+        bg.set(a.substr(i, 2), (bg.get(a.substr(i, 2)) || 0) + 1);
+      let hit = 0;
+      for (let i = 0; i < b.length - 1; i++) {
+        const k = b.substr(i, 2);
+        const c = bg.get(k) || 0;
+        if (c > 0) {
+          bg.set(k, c - 1);
+          hit++;
+        }
+      }
+      return 2 * hit / (a.length + b.length - 2);
+    }
+    function _cleanTitle(t) {
+      return String(t || "").replace(
+        /\((?:official|lyrics?|audio|video|music video|visualizer|hd|hq|4k|explicit)[^)]*\)/gi,
+        ""
+      ).replace(
+        /\[(?:official|lyrics?|audio|video|visualizer|hd|hq|4k|explicit)[^\]]*\]/gi,
+        ""
+      ).replace(/\s+/g, " ").trim();
+    }
+    function deriveQuery(track) {
+      const stem = track.filePath ? path.basename(track.filePath, path.extname(track.filePath)) : "";
+      let title = _cleanTitle(track.title || stem);
+      let artist = Array.isArray(track.artist) ? track.artist.join(", ") : String(track.artist || "");
+      const split = title.match(/^(.{2,60}?)\s+[-–—]\s+(.{2,})$/);
+      if (!artist || /^unknown artist$/i.test(artist)) {
+        if (split) {
+          artist = split[1];
+          title = split[2];
+        } else artist = "";
+      } else if (split && _norm(split[1]) && _artistTokens(artist).some((a) => _norm(split[1]).includes(a))) {
+        title = split[2];
+      }
+      const album = /^unknown album$/i.test(String(track.album || "")) ? "" : String(track.album || "");
+      return {
+        artist: artist.trim(),
+        title: title.trim(),
+        album: album.trim(),
+        durationMs: (Number(track.duration) || 0) * 1e3
+      };
+    }
+    function scoreCandidate(q, c) {
+      const qt = _titleCore(q.title);
+      const ct = _titleCore(c.title);
+      if (!qt || !ct) return 0;
+      if (_flags(q.title + " " + q.album) !== _flags(c.title + " " + (c.album || "")))
+        return 0;
+      const qa = _artistTokens(q.artist);
+      const ca = _artistTokens(c.artist);
+      const artistOverlap = qa.some(
+        (x) => ca.some(
+          (y) => x === y || x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x))
+        )
+      );
+      if (qa.length && !artistOverlap) return 0;
+      const ts = qt === ct ? 1 : _dice(qt, ct);
+      const durOk = q.durationMs && c.durationMs ? Math.abs(q.durationMs - c.durationMs) <= 8e3 : null;
+      if (q.durationMs && c.durationMs && !durOk) return 0;
+      if (ts >= 0.82) {
+        if (!qa.length && (ts < 0.97 || durOk !== true)) return 0;
+        return ts * 0.6 + (qa.length ? 0.25 : 0.1) + (durOk ? 0.15 : 0.05);
+      }
+      const qal = _norm(q.album);
+      if (qal && qa.length && artistOverlap && c.album && _dice(qal, _norm(c.album)) >= 0.92)
+        return 0.7;
+      return 0;
+    }
+    function fetchBuf(url, { timeout = 9e3, maxBytes = 15 * 1024 * 1024, hops = 0 } = {}) {
+      return new Promise((resolve, reject) => {
+        if (hops > 5) return reject(new Error("Too many redirects"));
+        let u;
+        try {
+          u = new URL(url);
+        } catch (e) {
+          return reject(e);
+        }
+        if (u.protocol !== "https:") return reject(new Error("https only"));
+        const req = https.get(
+          url,
+          { headers: { "User-Agent": UA, Accept: "*/*" }, timeout },
+          (res) => {
+            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+              res.resume();
+              return resolve(
+                fetchBuf(new URL(res.headers.location, url).href, {
+                  timeout,
+                  maxBytes,
+                  hops: hops + 1
+                })
+              );
+            }
+            if (res.statusCode !== 200) {
+              res.resume();
+              return reject(new Error(`HTTP ${res.statusCode}`));
+            }
+            const chunks = [];
+            let size = 0;
+            res.on("data", (c) => {
+              size += c.length;
+              if (size > maxBytes) return req.destroy(new Error("too large"));
+              chunks.push(c);
+            });
+            res.on("end", () => resolve(Buffer.concat(chunks)));
+            res.on("error", reject);
+          }
+        );
+        req.on("error", reject);
+        req.on("timeout", () => req.destroy(new Error("timeout")));
+      });
+    }
+    var fetchJson = async (url, opts) => JSON.parse((await fetchBuf(url, opts)).toString("utf8"));
+    async function _itunes(q) {
+      const term = [q.artist, q.title].filter(Boolean).join(" ");
+      const j = await fetchJson(
+        `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=song&limit=15`,
+        { timeout: 7e3 }
+      );
+      return (j.results || []).map((r) => {
+        const a = r.artworkUrl100 || "";
+        return {
+          artist: r.artistName,
+          title: r.trackName,
+          album: r.collectionName,
+          durationMs: r.trackTimeMillis || 0,
+          artUrls: a ? [
+            a.replace(/100x100(bb)?/, "1200x1200bb"),
+            a.replace(/100x100(bb)?/, "600x600bb"),
+            a.replace(/100x100(bb)?/, "300x300bb")
+          ] : []
+        };
+      });
+    }
+    async function _deezer(q) {
+      const term = [q.artist, q.title].filter(Boolean).join(" ");
+      const j = await fetchJson(
+        `https://api.deezer.com/search?q=${encodeURIComponent(term)}&limit=15`,
+        { timeout: 7e3 }
+      );
+      return (j.data || []).map((r) => ({
+        artist: r.artist && r.artist.name,
+        title: r.title,
+        album: r.album && r.album.title,
+        durationMs: (r.duration || 0) * 1e3,
+        artUrls: [r.album && r.album.cover_xl, r.album && r.album.cover_big].filter(
+          Boolean
+        )
+      }));
+    }
+    async function _ytm(q) {
+      let DE;
+      try {
+        DE = require("./downloadEngine");
+      } catch (_) {
+        return [];
+      }
+      if (typeof DE.searchYouTubeMusic !== "function") return [];
+      const res = await DE.searchYouTubeMusic(
+        [q.artist, q.title].filter(Boolean).join(" "),
+        10
+      );
+      return res.filter((r) => r.albumName).map((r) => ({
+        artist: r.artistName,
+        title: r.trackName,
+        album: r.albumName,
+        durationMs: r.durationMs || 0,
+        artUrls: [r.artworkUrl, r.artworkThumbnail].filter(Boolean)
+      }));
+    }
+    var _onlineCache = /* @__PURE__ */ new Map();
+    var ONLINE_TTL = 10 * 60 * 1e3;
+    async function _searchOnlineOnce(q, excludeHashes) {
+      const providers = [_itunes, _deezer, _ytm];
+      const settled = await Promise.race([
+        Promise.allSettled(providers.map((p) => p(q))),
+        new Promise((r) => setTimeout(() => r([]), 12e3))
+      ]);
+      const cands = [];
+      for (const s of settled) if (s.status === "fulfilled") cands.push(...s.value);
+      const scored = cands.map((c) => ({ c, s: scoreCandidate(q, c) })).filter((x) => x.s >= 0.72 && x.c.artUrls.length).sort((a, b) => b.s - a.s).slice(0, 6);
+      for (const { c, s } of scored) {
+        for (const url of c.artUrls) {
+          try {
+            const buf = await fetchBuf(url, { timeout: 9e3 });
+            const v = await validateImage(buf, { minSide: 200 });
+            if (!v.valid) continue;
+            if (excludeHashes && excludeHashes.has(v.hash)) continue;
+            return {
+              buf,
+              ...v,
+              url,
+              score: s,
+              matched: { artist: c.artist, title: c.title, album: c.album }
+            };
+          } catch (_) {
+          }
+        }
+      }
+      return null;
+    }
+    function searchOnlineCover(track, { excludeHashes } = {}) {
+      const q = deriveQuery(track);
+      if (!q.title) return Promise.resolve(null);
+      const key = `${_norm(q.artist)}|${_norm(q.title)}|${_norm(q.album)}|${Math.round(q.durationMs / 4e3)}`;
+      const hit = _onlineCache.get(key);
+      const usable = (r) => r && !(excludeHashes && excludeHashes.has(r.hash));
+      if (hit && Date.now() - hit.t < ONLINE_TTL) {
+        return hit.p.then(
+          (r) => r === null || usable(r) ? r : _searchOnlineOnce(q, excludeHashes)
+        );
+      }
+      const p = _searchOnlineOnce(q, excludeHashes).catch(() => null);
+      _onlineCache.set(key, { t: Date.now(), p });
+      if (_onlineCache.size > 200)
+        _onlineCache.delete(_onlineCache.keys().next().value);
+      return p;
+    }
+    var extForMime = (m) => ({
+      "image/jpeg": ".jpg",
+      "image/png": ".png",
+      "image/webp": ".webp",
+      "image/gif": ".gif",
+      "image/bmp": ".bmp"
+    })[m] || ".jpg";
+    module2.exports = {
+      sniff,
+      md5: md52,
+      validateImage,
+      quickCheckFile,
+      usablePictures,
+      localCandidates,
+      findLocalCover,
+      findLocalCoverSync,
+      deriveQuery,
+      scoreCandidate,
+      searchOnlineCover,
+      fetchBuf,
+      extForMime,
+      FOLDER_ART_NAMES,
+      IMG_EXTS,
+      norm: _norm
+    };
+  }
+});
+
 // main/metadataReader.js
 var require_metadataReader = __commonJS({
   "main/metadataReader.js"(exports2, module2) {
     var path = require("path");
+    var CoverArt = require_coverArt();
     var fs = require("fs");
     function _readFlacDurationBinary(filePath) {
       try {
@@ -1036,7 +1486,7 @@ var require_metadataReader = __commonJS({
                 metadata.duration = binaryDur;
               }
             }
-            if (result.common.picture && result.common.picture.length > 0) {
+            if (CoverArt.usablePictures(result)) {
               const picture = result.common.picture[0];
               const buf = picture.data;
               if (buf.length < 200 * 1024) {
@@ -1092,7 +1542,7 @@ var require_metadataReader = __commonJS({
               format: (result.format.container || "").toUpperCase() || ext.replace(".", "").toUpperCase(),
               coverArt: null
             };
-            if (result.common.picture && result.common.picture.length > 0) {
+            if (CoverArt.usablePictures(result)) {
               const picture = result.common.picture[0];
               const picBuf = picture.data;
               if (picBuf.length < 200 * 1024) {
@@ -1219,7 +1669,7 @@ var require_metadataReader = __commonJS({
             format: (result.format.container || "").toUpperCase(),
             coverArt: null
           };
-          if (result.common.picture && result.common.picture.length > 0) {
+          if (CoverArt.usablePictures(result)) {
             const picture = result.common.picture[0];
             const buf = picture.data;
             if (buf.length < 200 * 1024) {
@@ -1248,7 +1698,7 @@ var require_metadataReader = __commonJS({
             duration: false,
             skipCovers: false
           });
-          if (result.common.picture && result.common.picture.length > 0) {
+          if (CoverArt.usablePictures(result)) {
             const picture = result.common.picture[0];
             const buf = picture.data;
             if (buf.length < 200 * 1024) {
@@ -1473,144 +1923,7 @@ var require_metadataReader = __commonJS({
        * @private
        */
       async _findOfflineCover(filePath) {
-        try {
-          const dir = path.dirname(filePath);
-          const audioName = path.basename(filePath, path.extname(filePath)).toLowerCase();
-          const extList = [
-            ".jpg",
-            ".jpeg",
-            ".png",
-            ".webp",
-            ".bmp",
-            ".gif",
-            ".tiff",
-            ".tif"
-          ];
-          const commonNames = /* @__PURE__ */ new Set([
-            "cover",
-            "folder",
-            "album",
-            "front",
-            "artwork",
-            "art",
-            "thumb",
-            "thumbnail",
-            "back",
-            "insert",
-            "booklet",
-            "jacket",
-            "label",
-            "sticker"
-          ]);
-          try {
-            await fs.promises.access(dir);
-          } catch (_) {
-            return null;
-          }
-          const files = await fs.promises.readdir(dir);
-          for (const file of files) {
-            const lower = file.toLowerCase();
-            if (lower.includes(".novaart") && extList.includes(path.extname(lower))) {
-              return path.join(dir, file);
-            }
-          }
-          for (const file of files) {
-            const fileExt = path.extname(file).toLowerCase();
-            if (extList.includes(fileExt)) {
-              const nameNoExt = path.basename(file, path.extname(file)).toLowerCase();
-              if (nameNoExt === audioName) {
-                return path.join(dir, file);
-              }
-            }
-          }
-          for (const file of files) {
-            const fileExt = path.extname(file).toLowerCase();
-            if (extList.includes(fileExt)) {
-              const nameNoExt = path.basename(file, path.extname(file)).toLowerCase();
-              if (commonNames.has(nameNoExt)) {
-                return path.join(dir, file);
-              }
-            }
-          }
-          let fallbackArt = null;
-          for (const file of files) {
-            const fileExt = path.extname(file).toLowerCase();
-            if (extList.includes(fileExt)) {
-              const nameNoExt = path.basename(file, path.extname(file)).toLowerCase();
-              if (nameNoExt.startsWith("albumart")) {
-                const fullPath = path.join(dir, file);
-                if (nameNoExt.includes("large")) {
-                  return fullPath;
-                }
-                fallbackArt = fallbackArt || fullPath;
-              }
-            }
-          }
-          if (fallbackArt) return fallbackArt;
-          for (const file of files) {
-            const subdir = path.join(dir, file);
-            let stat;
-            try {
-              stat = await fs.promises.stat(subdir);
-              if (!stat.isDirectory()) continue;
-            } catch (_) {
-              continue;
-            }
-            let subFiles;
-            try {
-              subFiles = await fs.promises.readdir(subdir);
-            } catch (_) {
-              continue;
-            }
-            for (const sf of subFiles) {
-              const lower = sf.toLowerCase();
-              if (lower.includes(".novaart") && extList.includes(path.extname(lower))) {
-                return path.join(subdir, sf);
-              }
-            }
-            for (const sf of subFiles) {
-              const sfExt = path.extname(sf).toLowerCase();
-              if (extList.includes(sfExt)) {
-                const nameNoExt = path.basename(sf, path.extname(sf)).toLowerCase();
-                if (commonNames.has(nameNoExt)) {
-                  return path.join(subdir, sf);
-                }
-              }
-            }
-          }
-          let current = dir;
-          for (let depth = 0; depth < 3; depth++) {
-            const parent = path.dirname(current);
-            if (!parent || parent === current) break;
-            try {
-              await fs.promises.access(parent);
-            } catch (_) {
-              break;
-            }
-            let parentFiles;
-            try {
-              parentFiles = await fs.promises.readdir(parent);
-            } catch (_) {
-              break;
-            }
-            for (const file of parentFiles) {
-              const fileExt = path.extname(file).toLowerCase();
-              if (extList.includes(fileExt)) {
-                const nameNoExt = path.basename(file, path.extname(file)).toLowerCase();
-                if (commonNames.has(nameNoExt)) {
-                  return path.join(parent, file);
-                }
-              }
-            }
-            current = parent;
-          }
-        } catch (err) {
-          console.warn(
-            `[metadataReader] Offline cover search failed for ${filePath}:`,
-            err.message
-          );
-        }
-        return null;
+        return CoverArt.findLocalCoverSync(filePath);
       }
     };
     module2.exports = MetadataReader;
@@ -10088,16 +10401,16 @@ function v35_default(name, version2, hashfunc) {
   } catch (err) {
   }
   generateUUID.DNS = DNS;
-  generateUUID.URL = URL;
+  generateUUID.URL = URL2;
   return generateUUID;
 }
-var DNS, URL;
+var DNS, URL2;
 var init_v35 = __esm({
   "node_modules/uuid/dist/esm-node/v35.js"() {
     init_stringify();
     init_parse();
     DNS = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
-    URL = "6ba7b811-9dad-11d1-80b4-00c04fd430c8";
+    URL2 = "6ba7b811-9dad-11d1-80b4-00c04fd430c8";
   }
 });
 
@@ -37898,6 +38211,7 @@ var require_ipc = __commonJS({
     var TagLib = require_dist();
     var ManifestReader = require_manifestReader();
     var DownloadEngine = require("./downloadEngine");
+    var CoverArt = require_coverArt();
     var SUPPORTED_FORMATS = [
       ".mp3",
       ".flac",
@@ -39271,7 +39585,7 @@ var require_ipc = __commonJS({
           const existingPaths = new Set(existingLibrary.map((t) => t.filePath));
           const newFiles = files.filter((f) => !existingPaths.has(f.filePath));
           const _norm = (x) => String(x || "").replace(/\\/g, "/").toLowerCase();
-          const _folderNorm = _norm(folderPath);
+          const _folderNorm = _norm(folderPath).replace(/\/+$/, "") + "/";
           const _onDisk = new Set(files.map((f) => _norm(f.filePath)));
           const removedIds = files.length === 0 ? [] : existingLibrary.filter(
             (t) => t.filePath && _norm(t.filePath).startsWith(_folderNorm) && !_onDisk.has(_norm(t.filePath))
@@ -39295,10 +39609,11 @@ var require_ipc = __commonJS({
             worker = new MetadataWorker();
             worker.setCoverCacheDir(coverCacheDir);
           } catch (err) {
-            if (newFiles.length > 0) console.warn(
-              "[library:quick-scan] MetadataWorker unavailable, using main thread:",
-              err.message
-            );
+            if (newFiles.length > 0)
+              console.warn(
+                "[library:quick-scan] MetadataWorker unavailable, using main thread:",
+                err.message
+              );
           }
           const newTracks = [];
           for (const file of newFiles) {
@@ -39343,6 +39658,7 @@ var require_ipc = __commonJS({
             } catch (_) {
             }
           }
+          await _sanitizeScannedCovers(newTracks);
           const _rmSet = new Set(removedIds);
           const mergedLibrary = [
             ...newTracks,
@@ -39502,6 +39818,7 @@ var require_ipc = __commonJS({
               url: `nova-media://thumb/${trackId}/${targetSize}`
             };
           } catch (err) {
+            if (trackId) _scheduleCoverHeal(trackId);
             return { success: false, error: err.message };
           }
         }
@@ -39788,9 +40105,15 @@ var require_ipc = __commonJS({
           saveLibrary(filtered);
           try {
             const st = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
-            await ManifestIPC.rebuildManifest(filtered, st._combinedFingerprint || "");
+            await ManifestIPC.rebuildManifest(
+              filtered,
+              st._combinedFingerprint || ""
+            );
           } catch (mErr) {
-            console.warn("[library:remove-track] Manifest rebuild failed:", mErr.message);
+            console.warn(
+              "[library:remove-track] Manifest rebuild failed:",
+              mErr.message
+            );
             try {
               ManifestIPC.deleteManifest();
             } catch (_) {
@@ -39800,7 +40123,9 @@ var require_ipc = __commonJS({
             for (let i = 0; i < 6; i++) {
               try {
                 await fs.promises.unlink(track.filePath);
-                console.log(`[library] Deleted file from storage: ${track.filePath}`);
+                console.log(
+                  `[library] Deleted file from storage: ${track.filePath}`
+                );
                 break;
               } catch (e) {
                 if (e.code === "ENOENT") break;
@@ -39822,10 +40147,13 @@ var require_ipc = __commonJS({
       });
       ipcMain.handle("library:update-tracks", async (event, updates) => {
         try {
-          if (!Array.isArray(updates) || updates.length === 0) return { success: true, count: 0 };
+          if (!Array.isArray(updates) || updates.length === 0)
+            return { success: true, count: 0 };
           if (db) {
             const selectStmt = db.prepare("SELECT data FROM tracks WHERE id = ?");
-            const updateStmt = db.prepare("UPDATE tracks SET title = ?, artist = ?, data = ? WHERE id = ?");
+            const updateStmt = db.prepare(
+              "UPDATE tracks SET title = ?, artist = ?, data = ? WHERE id = ?"
+            );
             const tx = db.transaction(() => {
               for (const u of updates) {
                 if (!u.id) continue;
@@ -39836,7 +40164,12 @@ var require_ipc = __commonJS({
                     if (u.artist !== void 0) track.artist = u.artist;
                     if (u.title !== void 0) track.title = u.title;
                     const artistStr = Array.isArray(track.artist) ? track.artist.join(", ") : track.artist || "";
-                    updateStmt.run(track.title || "", artistStr, JSON.stringify(track), u.id);
+                    updateStmt.run(
+                      track.title || "",
+                      artistStr,
+                      JSON.stringify(track),
+                      u.id
+                    );
                   } catch (_) {
                   }
                 }
@@ -40175,20 +40508,11 @@ var require_ipc = __commonJS({
             req.on("error", reject);
             req.end();
           });
-          const sidecarPath = track.filePath.replace(/\.[^.]+$/, ".novaart.jpg");
-          fs.writeFileSync(sidecarPath, imgData);
-          track.coverArt = sidecarPath;
-          db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(
-            JSON.stringify(track),
-            trackId
-          );
-          if (libraryById && libraryById.has(trackId)) {
-            libraryById.get(trackId).coverArt = sidecarPath;
-          }
-          if (libraryCache) {
-            const t = libraryCache.find((t2) => t2.id === trackId);
-            if (t) t.coverArt = sidecarPath;
-          }
+          const v = await CoverArt.validateImage(imgData);
+          if (!v.valid)
+            return { success: false, error: `Rejected image (${v.reason})` };
+          const sidecarPath = _writeCoverSidecar(track, imgData, v.mime, v.hash);
+          _commitTrackCover(trackId, sidecarPath);
           return { success: true, localPath: sidecarPath };
         } catch (err) {
           console.error("[coverart:save]", err.message);
@@ -40529,7 +40853,9 @@ var require_ipc = __commonJS({
                     if (tags.year !== void 0)
                       t.year = tags.year ? parseInt(tags.year, 10) || 0 : 0;
                     if (tags.coverArt) {
-                      const match = tags.coverArt.match(/^data:([^;]+);base64,(.+)$/);
+                      const match = tags.coverArt.match(
+                        /^data:([^;]+);base64,(.+)$/
+                      );
                       if (match) {
                         const mime = match[1];
                         const buf = Buffer.from(match[2], "base64");
@@ -42079,7 +42405,10 @@ ${items}
                 "-Command",
                 "Set-Clipboard -LiteralPath $env:NT_SHARE_PATH"
               ],
-              { env: { ...process.env, NT_SHARE_PATH: filePath }, windowsHide: true },
+              {
+                env: { ...process.env, NT_SHARE_PATH: filePath },
+                windowsHide: true
+              },
               (err) => err ? reject(err) : resolve()
             );
           });
@@ -42096,9 +42425,12 @@ ${items}
         const r = await dialog.showOpenDialog({
           title: "Select the app's executable",
           properties: ["openFile"],
-          filters: [{ name: "Applications", extensions: ["exe", "lnk", "bat", "cmd"] }]
+          filters: [
+            { name: "Applications", extensions: ["exe", "lnk", "bat", "cmd"] }
+          ]
         });
-        if (r.canceled || !r.filePaths.length) return { success: false, canceled: true };
+        if (r.canceled || !r.filePaths.length)
+          return { success: false, canceled: true };
         return { success: true, path: r.filePaths[0] };
       } catch (err) {
         return { success: false, error: err.message };
@@ -42108,18 +42440,34 @@ ${items}
       const path2 = require("path");
       const candidates = [];
       if (process.env.LOCALAPPDATA) {
-        candidates.push(path2.join(process.env.LOCALAPPDATA, "Programs", "LANBeam", "LANBeam.exe"));
-        candidates.push(path2.join(process.env.LOCALAPPDATA, "Programs", "lanbeam", "LANBeam.exe"));
-        candidates.push(path2.join(process.env.LOCALAPPDATA, "LANBeam", "LANBeam.exe"));
-        candidates.push(path2.join(process.env.LOCALAPPDATA, "lanbeam", "LANBeam.exe"));
+        candidates.push(
+          path2.join(process.env.LOCALAPPDATA, "Programs", "LANBeam", "LANBeam.exe")
+        );
+        candidates.push(
+          path2.join(process.env.LOCALAPPDATA, "Programs", "lanbeam", "LANBeam.exe")
+        );
+        candidates.push(
+          path2.join(process.env.LOCALAPPDATA, "LANBeam", "LANBeam.exe")
+        );
+        candidates.push(
+          path2.join(process.env.LOCALAPPDATA, "lanbeam", "LANBeam.exe")
+        );
       }
       if (process.env.ProgramFiles) {
-        candidates.push(path2.join(process.env.ProgramFiles, "LANBeam", "LANBeam.exe"));
-        candidates.push(path2.join(process.env.ProgramFiles, "lanbeam", "LANBeam.exe"));
+        candidates.push(
+          path2.join(process.env.ProgramFiles, "LANBeam", "LANBeam.exe")
+        );
+        candidates.push(
+          path2.join(process.env.ProgramFiles, "lanbeam", "LANBeam.exe")
+        );
       }
       if (process.env["ProgramFiles(x86)"]) {
-        candidates.push(path2.join(process.env["ProgramFiles(x86)"], "LANBeam", "LANBeam.exe"));
-        candidates.push(path2.join(process.env["ProgramFiles(x86)"], "lanbeam", "LANBeam.exe"));
+        candidates.push(
+          path2.join(process.env["ProgramFiles(x86)"], "LANBeam", "LANBeam.exe")
+        );
+        candidates.push(
+          path2.join(process.env["ProgramFiles(x86)"], "lanbeam", "LANBeam.exe")
+        );
       }
       for (const c of candidates) {
         if (fs.existsSync(c)) return { success: true, path: c };
@@ -42133,73 +42481,106 @@ ${items}
       const { spawn } = require("child_process");
       const sendProgress2 = (step, percent, msg) => {
         try {
-          event.sender.send("share:install-lanbeam-progress", { step, percent, message: msg });
+          event.sender.send("share:install-lanbeam-progress", {
+            step,
+            percent,
+            message: msg
+          });
         } catch (_) {
         }
       };
       try {
         sendProgress2("fetching", 10, "Checking latest LANBeam release...");
         const fetchJson = (url) => new Promise((resolve, reject) => {
-          const req = https.get(url, { headers: { "User-Agent": "NovaTune" } }, (res) => {
-            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-              return resolve(fetchJson(res.headers.location));
-            }
-            if (res.statusCode !== 200) return reject(new Error("GitHub API HTTP " + res.statusCode));
-            let data = "";
-            res.on("data", (c) => data += c);
-            res.on("end", () => {
-              try {
-                resolve(JSON.parse(data));
-              } catch (e) {
-                reject(e);
+          const req = https.get(
+            url,
+            { headers: { "User-Agent": "NovaTune" } },
+            (res) => {
+              if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                return resolve(fetchJson(res.headers.location));
               }
-            });
-          });
+              if (res.statusCode !== 200)
+                return reject(new Error("GitHub API HTTP " + res.statusCode));
+              let data = "";
+              res.on("data", (c) => data += c);
+              res.on("end", () => {
+                try {
+                  resolve(JSON.parse(data));
+                } catch (e) {
+                  reject(e);
+                }
+              });
+            }
+          );
           req.on("error", reject);
           req.setTimeout(15e3, () => {
             req.destroy();
             reject(new Error("GitHub API request timed out"));
           });
         });
-        const release = await fetchJson("https://api.github.com/repos/AnonymousV73X/LAN-FILE-TRANSFER-LANBEAM/releases/latest");
-        const asset = (release.assets || []).find((a) => a.name.endsWith(".exe") && !a.name.includes("blockmap"));
+        const release = await fetchJson(
+          "https://api.github.com/repos/AnonymousV73X/LAN-FILE-TRANSFER-LANBEAM/releases/latest"
+        );
+        const asset = (release.assets || []).find(
+          (a) => a.name.endsWith(".exe") && !a.name.includes("blockmap")
+        );
         if (!asset || !asset.browser_download_url) {
-          throw new Error("No installer asset found in latest LANBeam release (" + (release.tag_name || "unknown") + ")");
+          throw new Error(
+            "No installer asset found in latest LANBeam release (" + (release.tag_name || "unknown") + ")"
+          );
         }
-        sendProgress2("downloading", 20, "Downloading " + asset.name + " (" + (release.tag_name || "latest") + ")...");
+        sendProgress2(
+          "downloading",
+          20,
+          "Downloading " + asset.name + " (" + (release.tag_name || "latest") + ")..."
+        );
         const tmpDir = os.tmpdir();
         const installerPath = path2.join(tmpDir, asset.name);
         await new Promise((resolve, reject) => {
           const downloadFile = (fileUrl) => {
-            const req = https.get(fileUrl, { headers: { "User-Agent": "NovaTune" } }, (res) => {
-              if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                return downloadFile(res.headers.location);
-              }
-              if (res.statusCode !== 200) return reject(new Error("Installer download HTTP " + res.statusCode));
-              const total = parseInt(res.headers["content-length"], 10) || 0;
-              let downloaded = 0;
-              const outStream = fs.createWriteStream(installerPath);
-              res.on("data", (chunk) => {
-                downloaded += chunk.length;
-                if (total > 0) {
-                  const pct = 20 + Math.round(downloaded / total * 60);
-                  sendProgress2("downloading", pct, "Downloading LANBeam... " + pct + "%");
+            const req = https.get(
+              fileUrl,
+              { headers: { "User-Agent": "NovaTune" } },
+              (res) => {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                  return downloadFile(res.headers.location);
                 }
-              });
-              res.pipe(outStream);
-              outStream.on("finish", () => {
-                outStream.close();
-                resolve();
-              });
-              outStream.on("error", reject);
-            });
+                if (res.statusCode !== 200)
+                  return reject(
+                    new Error("Installer download HTTP " + res.statusCode)
+                  );
+                const total = parseInt(res.headers["content-length"], 10) || 0;
+                let downloaded = 0;
+                const outStream = fs.createWriteStream(installerPath);
+                res.on("data", (chunk) => {
+                  downloaded += chunk.length;
+                  if (total > 0) {
+                    const pct = 20 + Math.round(downloaded / total * 60);
+                    sendProgress2(
+                      "downloading",
+                      pct,
+                      "Downloading LANBeam... " + pct + "%"
+                    );
+                  }
+                });
+                res.pipe(outStream);
+                outStream.on("finish", () => {
+                  outStream.close();
+                  resolve();
+                });
+                outStream.on("error", reject);
+              }
+            );
             req.on("error", reject);
           };
           downloadFile(asset.browser_download_url);
         });
         sendProgress2("installing", 85, "Installing LANBeam silently...");
         await new Promise((resolve, reject) => {
-          const proc = spawn(installerPath, ["/S"], { windowsHide: true, detached: false });
+          const proc = spawn(installerPath, ["/S"], {
+            windowsHide: true,
+            detached: false
+          });
           proc.on("close", (code) => {
             try {
               fs.unlinkSync(installerPath);
@@ -42218,15 +42599,35 @@ ${items}
         await new Promise((r) => setTimeout(r, 1500));
         const candidates = [];
         if (process.env.LOCALAPPDATA) {
-          candidates.push(path2.join(process.env.LOCALAPPDATA, "Programs", "LANBeam", "LANBeam.exe"));
-          candidates.push(path2.join(process.env.LOCALAPPDATA, "Programs", "lanbeam", "LANBeam.exe"));
-          candidates.push(path2.join(process.env.LOCALAPPDATA, "LANBeam", "LANBeam.exe"));
+          candidates.push(
+            path2.join(
+              process.env.LOCALAPPDATA,
+              "Programs",
+              "LANBeam",
+              "LANBeam.exe"
+            )
+          );
+          candidates.push(
+            path2.join(
+              process.env.LOCALAPPDATA,
+              "Programs",
+              "lanbeam",
+              "LANBeam.exe"
+            )
+          );
+          candidates.push(
+            path2.join(process.env.LOCALAPPDATA, "LANBeam", "LANBeam.exe")
+          );
         }
         if (process.env.ProgramFiles) {
-          candidates.push(path2.join(process.env.ProgramFiles, "LANBeam", "LANBeam.exe"));
+          candidates.push(
+            path2.join(process.env.ProgramFiles, "LANBeam", "LANBeam.exe")
+          );
         }
         if (process.env["ProgramFiles(x86)"]) {
-          candidates.push(path2.join(process.env["ProgramFiles(x86)"], "LANBeam", "LANBeam.exe"));
+          candidates.push(
+            path2.join(process.env["ProgramFiles(x86)"], "LANBeam", "LANBeam.exe")
+          );
         }
         for (const c of candidates) {
           if (fs.existsSync(c)) {
@@ -42234,7 +42635,10 @@ ${items}
             return { success: true, path: c };
           }
         }
-        return { success: false, error: "Installer finished but LANBeam.exe was not found in standard directories." };
+        return {
+          success: false,
+          error: "Installer finished but LANBeam.exe was not found in standard directories."
+        };
       } catch (err) {
         console.error("[IPC] share:install-lanbeam error:", err);
         return { success: false, error: err.message };
@@ -42831,13 +43235,16 @@ ${items}
         const trackArtist = (track.artist || "").trim().toLowerCase();
         const isSpecialFolder = /downloads|desktop|music$/i.test(dir);
         const siblings = library.filter((t) => {
-          if (t.id === trackId || !t.filePath || path.dirname(t.filePath) !== dir) return false;
+          if (t.id === trackId || !t.filePath || path.dirname(t.filePath) !== dir)
+            return false;
           if (!t.coverArt && !t._hasCoverArt) return false;
           if (isSpecialFolder || !trackAlbum || trackAlbum === "unknown album") {
             const sibArtist = (t.artist || "").trim().toLowerCase();
             const sibAlbum = (t.album || "").trim().toLowerCase();
-            if (trackArtist && trackArtist !== "unknown artist" && sibArtist === trackArtist) return true;
-            if (trackAlbum && trackAlbum !== "unknown album" && sibAlbum === trackAlbum) return true;
+            if (trackArtist && trackArtist !== "unknown artist" && sibArtist === trackArtist)
+              return true;
+            if (trackAlbum && trackAlbum !== "unknown album" && sibAlbum === trackAlbum)
+              return true;
             return false;
           }
           return true;
@@ -42854,7 +43261,8 @@ ${items}
             let valid = false;
             if (coverArt.startsWith("data:")) {
               const b64 = coverArt.split(",")[1];
-              if (b64) valid = _isValidCoverArtBuffer(Buffer.from(b64, "base64")).valid;
+              if (b64)
+                valid = _isValidCoverArtBuffer(Buffer.from(b64, "base64")).valid;
             } else if (fs.existsSync(coverArt)) {
               try {
                 valid = _isValidCoverArtBuffer(fs.readFileSync(coverArt)).valid;
@@ -42956,7 +43364,9 @@ ${items}
             const stepMs = now - _tLast;
             const totalMs = now - _tStart;
             _tLast = now;
-            console.log(`[DownloadProgress] [+${(totalMs / 1e3).toFixed(1)}s (step: ${(stepMs / 1e3).toFixed(1)}s)] [${trackInfo.trackName || trackInfo.id}] ${prog.percent || 0}% | ${prog.status || ""} | ${prog.message || ""}`);
+            console.log(
+              `[DownloadProgress] [+${(totalMs / 1e3).toFixed(1)}s (step: ${(stepMs / 1e3).toFixed(1)}s)] [${trackInfo.trackName || trackInfo.id}] ${prog.percent || 0}% | ${prog.status || ""} | ${prog.message || ""}`
+            );
             event.sender.send("discovery:progress", {
               trackId: trackInfo.id,
               ...prog
@@ -42965,7 +43375,13 @@ ${items}
           }
         };
         const fmt = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS }).downloadFormat === "mp3" ? "mp3" : "m4a";
-        const savedPath = await DownloadEngine.downloadAndTagTrack(trackInfo, targetFolder, onProgress, trackInfo.id, fmt);
+        const savedPath = await DownloadEngine.downloadAndTagTrack(
+          trackInfo,
+          targetFolder,
+          onProgress,
+          trackInfo.id,
+          fmt
+        );
         let parsedTrack = null;
         try {
           const stats = fs.statSync(savedPath);
@@ -42994,7 +43410,7 @@ ${items}
             format: path.extname(fileName).replace(".", "").toUpperCase() || "MP3",
             fileSize: stats.size,
             coverArt: meta?.coverArt || null,
-            _hasCoverArt: !!(meta?.coverArt || trackInfo.artworkUrl),
+            _hasCoverArt: !!meta?.coverArt,
             dateAdded: Date.now(),
             dateModified: stats.mtimeMs || Date.now()
           };
@@ -43008,50 +43424,47 @@ ${items}
             });
           } catch (_) {
           }
-          if (!parsedTrack.coverArt && trackInfo && trackInfo.artworkUrl) {
-            try {
-              const sidecarPath = savedPath.replace(/\.[^.]+$/, ".novaart.jpg");
-              const imgBuf = await new Promise((resolve, reject) => {
-                const req = net.request(trackInfo.artworkUrl);
-                const chunks = [];
-                req.on("response", (res) => {
-                  res.on("data", (c) => chunks.push(c));
-                  res.on("end", () => resolve(Buffer.concat(chunks)));
-                  res.on("error", reject);
-                });
-                req.on("error", reject);
-                req.end();
-              });
-              if (imgBuf && imgBuf.length > 1e3) {
-                fs.writeFileSync(sidecarPath, imgBuf);
-                parsedTrack.coverArt = sidecarPath;
-                parsedTrack._hasCoverArt = true;
-                console.log("[IPC:download] Saved sidecar cover art:", sidecarPath);
-              }
-            } catch (imgErr) {
-              console.warn("[IPC:download] Could not save sidecar cover art:", imgErr.message);
-            }
+          try {
+            await _ensureDownloadedCover(parsedTrack, trackInfo);
+          } catch (imgErr) {
+            console.warn(
+              "[IPC:download] cover verification failed:",
+              imgErr.message
+            );
           }
           const currentLibrary = getLibrary();
-          const updatedLibrary = [parsedTrack, ...currentLibrary.filter((t) => t.id !== parsedTrack.id)];
+          const updatedLibrary = [
+            parsedTrack,
+            ...currentLibrary.filter((t) => t.id !== parsedTrack.id)
+          ];
           partialSaveLibrary(updatedLibrary, [parsedTrack], []);
           if (ManifestIPC && typeof ManifestIPC.rebuildManifest === "function") {
             setImmediate(async () => {
               try {
-                const freshSettings = readJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS });
+                const freshSettings = readJSON(SETTINGS_FILE, {
+                  ...DEFAULT_SETTINGS
+                });
                 const fp = freshSettings._combinedFingerprint || "";
                 await ManifestIPC.rebuildManifest(updatedLibrary, fp);
               } catch (mErr) {
-                console.warn("[IPC:download] Manifest rebuild failed:", mErr.message);
+                console.warn(
+                  "[IPC:download] Manifest rebuild failed:",
+                  mErr.message
+                );
               }
             });
           }
           BrowserWindow.getAllWindows().forEach((win) => {
             win.webContents.send("library:track-added", parsedTrack);
           });
-          console.log(`[IPC] Successfully saved & broadcasted downloaded track: "${parsedTrack.title}" (${parsedTrack.id})`);
+          console.log(
+            `[IPC] Successfully saved & broadcasted downloaded track: "${parsedTrack.title}" (${parsedTrack.id})`
+          );
         } catch (trackParseErr) {
-          console.warn("[IPC] Failed to hot-append track to library:", trackParseErr.message);
+          console.warn(
+            "[IPC] Failed to hot-append track to library:",
+            trackParseErr.message
+          );
         }
         return { success: true, filePath: savedPath, track: parsedTrack };
       } catch (err) {
@@ -43065,7 +43478,9 @@ ${items}
     ipcMain.handle("discovery:cancel", async (event, { trackId }) => {
       try {
         const cancelled = DownloadEngine.cancelDownload(trackId);
-        console.log(`[IPC] discovery:cancel trackId=${trackId} cancelled=${cancelled}`);
+        console.log(
+          `[IPC] discovery:cancel trackId=${trackId} cancelled=${cancelled}`
+        );
         return { success: cancelled };
       } catch (err) {
         console.error("[IPC] discovery:cancel error:", err);
@@ -43074,263 +43489,554 @@ ${items}
     });
     function _isValidCoverArtBuffer(buf) {
       if (!buf || buf.length < 1500) return { valid: false, reason: "too_small" };
-      const isPng = buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71;
-      const isJpeg = buf[0] === 255 && buf[1] === 216 && buf[2] === 255;
-      const isWebp = buf.length >= 12 && buf[0] === 82 && buf[1] === 73 && buf[8] === 87 && buf[9] === 69;
-      const isGif = buf[0] === 71 && buf[1] === 73 && buf[2] === 70;
-      const isBmp = buf[0] === 66 && buf[1] === 77;
-      if (!isPng && !isJpeg && !isWebp && !isGif && !isBmp) return { valid: false, reason: "not_image" };
+      if (!CoverArt.sniff(buf)) return { valid: false, reason: "not_image" };
       const head = buf.slice(0, Math.min(512, buf.length)).toString("latin1").toLowerCase();
-      if (head.includes("<svg") || head.includes("<?xml")) return { valid: false, reason: "svg_xml" };
+      if (head.includes("<svg") || head.includes("<?xml"))
+        return { valid: false, reason: "svg_xml" };
       return { valid: true };
     }
-    function _fetchImageBuffer(url, timeoutMs = 8e3) {
-      return new Promise((resolve, reject) => {
+    var _coverTablesReady = false;
+    function _ensureCoverTables() {
+      if (_coverTablesReady || !db) return;
+      db.exec(`
+    CREATE TABLE IF NOT EXISTS cover_audit (trackId TEXT PRIMARY KEY, sig TEXT, ok INTEGER, ts INTEGER);
+    CREATE TABLE IF NOT EXISTS cover_miss (trackId TEXT PRIMARY KEY, ts INTEGER);
+  `);
+      _coverTablesReady = true;
+    }
+    var COVER_MISS_TTL = 7 * 24 * 3600 * 1e3;
+    function _coverBroadcast(channel, payload) {
+      BrowserWindow.getAllWindows().forEach((w) => {
         try {
-          const req = net.request({ url, redirect: "follow" });
-          const chunks = [];
-          let size = 0;
-          req.on("response", (res) => {
-            if (res.statusCode < 200 || res.statusCode >= 300) {
-              reject(new Error(`HTTP ${res.statusCode}`));
-              return;
-            }
-            res.on("data", (c) => {
-              chunks.push(c);
-              size += c.length;
-            });
-            res.on("end", () => resolve(Buffer.concat(chunks, size)));
-            res.on("error", reject);
-          });
-          req.on("error", reject);
-          const timer = setTimeout(() => {
-            try {
-              req.abort();
-            } catch (_) {
-            }
-            reject(new Error("timeout"));
-          }, timeoutMs);
-          req.on("response", () => clearTimeout(timer));
-          req.end();
-        } catch (e) {
-          reject(e);
+          if (!w.isDestroyed()) w.webContents.send(channel, payload);
+        } catch (_) {
         }
       });
     }
-    async function _searchOnlineCoverArt(artist, title, album) {
-      const cleanArtist = (artist || "").replace(/unknown artist/i, "").trim();
-      const cleanTitle = (title || "").trim();
-      const cleanAlbum = (album || "").replace(/unknown album/i, "").trim();
-      const searches = [
-        cleanArtist && cleanTitle ? `${cleanArtist} ${cleanTitle}` : null,
-        cleanArtist && cleanAlbum ? `${cleanArtist} ${cleanAlbum}` : null,
-        cleanTitle ? cleanTitle : null
-      ].filter(Boolean);
-      for (const q of searches) {
-        try {
-          const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=musicTrack&limit=5&media=music`;
-          const req = net.request(itunesUrl);
-          const data = await new Promise((res, rej) => {
-            const c = [];
-            req.on("response", (r) => {
-              r.on("data", (d) => c.push(d));
-              r.on("end", () => res(Buffer.concat(c).toString()));
-              r.on("error", rej);
-            });
-            req.on("error", rej);
-            req.end();
-          });
-          const json = JSON.parse(data);
-          const results = json?.results || [];
-          for (const r of results) {
-            if (!r.artworkUrl100) continue;
-            const artUrl = r.artworkUrl100.replace(/100x100bb/g, "3000x3000bb").replace(/100x100/g, "3000x3000");
+    function _normKey(s) {
+      return CoverArt.norm(s);
+    }
+    function _loadCoverBuffer(art) {
+      try {
+        if (!art || typeof art !== "string") return null;
+        if (art.startsWith("data:")) {
+          const b64 = art.split(",")[1];
+          return b64 ? Buffer.from(b64, "base64") : null;
+        }
+        if (/^(nova-media|https?):/i.test(art)) return null;
+        return fs.existsSync(art) ? fs.readFileSync(art) : null;
+      } catch (_) {
+        return null;
+      }
+    }
+    function _coverSig(art) {
+      try {
+        if (!art) return "";
+        if (art.startsWith("data:"))
+          return `d${art.length}:${crypto4.createHash("md5").update(art).digest("hex")}`;
+        const st = fs.statSync(art);
+        return `f${art}|${st.size}|${Math.round(st.mtimeMs)}`;
+      } catch (_) {
+        return "missing";
+      }
+    }
+    function _buildCoverCtx(lib) {
+      const dirIndex = /* @__PURE__ */ new Map();
+      for (const t of lib) {
+        if (!t.filePath) continue;
+        const d = path.dirname(t.filePath).toLowerCase();
+        if (!dirIndex.has(d)) dirIndex.set(d, []);
+        dirIndex.get(d).push({
+          id: t.id,
+          album: _normKey(t.album),
+          artist: _normKey(
+            Array.isArray(t.artist) ? t.artist.join(" ") : t.artist
+          ),
+          track: t
+        });
+      }
+      return { dirIndex };
+    }
+    function _allowFolderArt(track, ctx) {
+      const alb = _normKey(track.album);
+      if (!alb || alb === "unknown album" || !track.filePath) return false;
+      const sibs = ctx && ctx.dirIndex.get(path.dirname(track.filePath).toLowerCase()) || [];
+      for (const s of sibs) {
+        if (s.id === track.id) continue;
+        if (s.album && s.album !== "unknown album" && s.album !== alb) return false;
+      }
+      return true;
+    }
+    function _coverBelongsToTrack(track, art, ctx) {
+      if (!art || art.startsWith("data:") || /^nova-media:/i.test(art)) return true;
+      if (!track.filePath) return true;
+      const audioDir = path.dirname(track.filePath);
+      if (path.dirname(art).toLowerCase() !== audioDir.toLowerCase()) return true;
+      const stem = path.basename(track.filePath, path.extname(track.filePath)).toLowerCase();
+      const name = path.basename(art).toLowerCase();
+      const nameStem = path.basename(name, path.extname(name));
+      if (name.startsWith(`${stem}.novaart.`) || nameStem === stem) return true;
+      if (name.includes(".novaart")) return false;
+      if (CoverArt.FOLDER_ART_NAMES.has(nameStem) || nameStem.startsWith("albumart") && !nameStem.includes("small"))
+        return _allowFolderArt(track, ctx);
+      return false;
+    }
+    async function _auditCover(track, art, buf, ctx) {
+      if (!art)
+        return {
+          ok: false,
+          reason: track._hasCoverArt ? "flag_without_art" : "none"
+        };
+      if (!buf) return { ok: false, reason: "missing_file" };
+      const v = await CoverArt.validateImage(buf);
+      if (!v.valid) return { ok: false, reason: v.reason };
+      if (!_coverBelongsToTrack(track, art, ctx))
+        return { ok: false, reason: "wrong_song" };
+      return { ok: true, hash: v.hash };
+    }
+    function _purgeTrackThumbs(trackIds) {
+      try {
+        const dir = path.join(app.getPath("userData"), "cached_covers", "thumbs");
+        const ids = new Set(trackIds);
+        for (const f of fs.readdirSync(dir)) {
+          const us = f.indexOf("_");
+          if (us > 0 && ids.has(f.slice(0, us))) {
             try {
-              const buf = await _fetchImageBuffer(artUrl, 8e3);
-              if (_isValidCoverArtBuffer(buf).valid) return { url: artUrl, buf };
+              fs.unlinkSync(path.join(dir, f));
             } catch (_) {
             }
           }
-        } catch (_) {
         }
-        try {
-          const deezerUrl = `https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=5`;
-          const req2 = net.request(deezerUrl);
-          const data2 = await new Promise((res, rej) => {
-            const c = [];
-            req2.on("response", (r) => {
-              r.on("data", (d) => c.push(d));
-              r.on("end", () => res(Buffer.concat(c).toString()));
-              r.on("error", rej);
-            });
-            req2.on("error", rej);
-            req2.end();
-          });
-          const json2 = JSON.parse(data2);
-          for (const r of json2?.data || []) {
-            const artUrl = r.album?.cover_xl || r.album?.cover_big || r.album?.cover_medium;
-            if (!artUrl) continue;
+      } catch (_) {
+      }
+    }
+    function _commitTrackCover(trackId, art, { silent = false } = {}) {
+      _ensureCoverTables();
+      const lib = getLibrary();
+      const track = libraryById && libraryById.get(trackId) || lib.find((t) => t.id === trackId);
+      if (!track) return false;
+      const { coverArt: _drop, ...stripped } = track;
+      stripped._hasCoverArt = !!art;
+      db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(
+        JSON.stringify(stripped),
+        trackId
+      );
+      if (art)
+        db.prepare(
+          "INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)"
+        ).run(trackId, art);
+      else db.prepare("DELETE FROM track_covers WHERE trackId = ?").run(trackId);
+      db.prepare(
+        "INSERT OR REPLACE INTO cover_audit (trackId, sig, ok, ts) VALUES (?, ?, ?, ?)"
+      ).run(trackId, art ? _coverSig(art) : "", art ? 1 : 0, Date.now());
+      if (art) db.prepare("DELETE FROM cover_miss WHERE trackId = ?").run(trackId);
+      track._hasCoverArt = !!art;
+      delete track.coverArt;
+      _coverArtByIdCache.delete(trackId);
+      _purgeTrackThumbs([trackId]);
+      try {
+        const mainModule = require_main();
+        if (mainModule && typeof mainModule.clearProtocolCache === "function")
+          mainModule.clearProtocolCache();
+      } catch (_) {
+      }
+      if (!silent)
+        _coverBroadcast("coverart:updated", {
+          trackId,
+          coverArt: art || null,
+          version: Date.now()
+        });
+      return true;
+    }
+    function _writeCoverSidecar(track, buf, mime, hash) {
+      const ext = CoverArt.extForMime(mime);
+      const tag = (hash || CoverArt.md5(buf)).slice(0, 8);
+      const tryWrite = (dir, base) => {
+        fs.mkdirSync(dir, { recursive: true });
+        const target = path.join(dir, `${base}.novaart.${tag}${ext}`);
+        const tmp = `${target}.tmp`;
+        fs.writeFileSync(tmp, buf);
+        fs.renameSync(tmp, target);
+        for (const f of fs.readdirSync(dir)) {
+          if (f.toLowerCase().startsWith(`${base.toLowerCase()}.novaart.`) && path.join(dir, f) !== target) {
             try {
-              const buf = await _fetchImageBuffer(artUrl, 8e3);
-              if (_isValidCoverArtBuffer(buf).valid) return { url: artUrl, buf };
+              fs.unlinkSync(path.join(dir, f));
             } catch (_) {
             }
+          }
+        }
+        return target;
+      };
+      if (track.filePath) {
+        try {
+          return tryWrite(
+            path.dirname(track.filePath),
+            path.basename(track.filePath, path.extname(track.filePath))
+          );
+        } catch (_) {
+        }
+      }
+      return tryWrite(
+        path.join(app.getPath("userData"), "cached_covers", "online"),
+        String(track.id)
+      );
+    }
+    async function _refillTrackCore(track, { force = false, online = true, ctx = null } = {}) {
+      _ensureCoverTables();
+      const cur = getCoverArtByTrackId(track.id);
+      const curBuf = _loadCoverBuffer(cur);
+      const audit = await _auditCover(track, cur, curBuf, ctx);
+      const curHash = audit.ok ? audit.hash : null;
+      if (audit.ok && !force)
+        return { coverArt: cur, source: "existing", changed: false };
+      const exclude = force && curHash ? /* @__PURE__ */ new Set([curHash]) : void 0;
+      const take = (art, source, extra) => {
+        _commitTrackCover(track.id, art);
+        return { coverArt: art, source, changed: true, ...extra };
+      };
+      if (track.filePath) {
+        const local = await CoverArt.findLocalCover(track.filePath, {
+          allowFolderArt: _allowFolderArt(
+            track,
+            ctx || _buildCoverCtx(getLibrary())
+          ),
+          excludeHashes: exclude
+        });
+        if (local) return take(local.path, "filesystem");
+      }
+      const alb = _normKey(track.album);
+      if (alb && alb !== "unknown album") {
+        const art = _normKey(
+          Array.isArray(track.artist) ? track.artist.join(" ") : track.artist
+        );
+        const lib = ctx ? null : getLibrary();
+        const pool = ctx ? [].concat(...ctx.dirIndex.values()).map((s) => s.track) : lib;
+        for (const s of pool) {
+          if (s.id === track.id || !s._hasCoverArt || _normKey(s.album) !== alb)
+            continue;
+          const sa = _normKey(
+            Array.isArray(s.artist) ? s.artist.join(" ") : s.artist
+          );
+          if (art && sa && art !== sa && !art.includes(sa) && !sa.includes(art))
+            continue;
+          const sArt = getCoverArtByTrackId(s.id);
+          const sBuf = _loadCoverBuffer(sArt);
+          const sAudit = await _auditCover(s, sArt, sBuf, ctx);
+          if (!sAudit.ok || exclude && exclude.has(sAudit.hash)) continue;
+          const v = await CoverArt.validateImage(sBuf);
+          return take(_writeCoverSidecar(track, sBuf, v.mime, v.hash), "sibling");
+        }
+      }
+      if (online) {
+        const hit = await CoverArt.searchOnlineCover(track, {
+          excludeHashes: exclude
+        });
+        if (hit)
+          return take(
+            _writeCoverSidecar(track, hit.buf, hit.mime, hit.hash),
+            "online",
+            { matched: hit.matched }
+          );
+        db.prepare(
+          "INSERT OR REPLACE INTO cover_miss (trackId, ts) VALUES (?, ?)"
+        ).run(track.id, Date.now());
+      }
+      if (audit.ok)
+        return {
+          coverArt: cur,
+          source: "existing",
+          changed: false,
+          note: "no better match"
+        };
+      const wasFlagged = !!(cur || track._hasCoverArt);
+      if (wasFlagged) _commitTrackCover(track.id, null);
+      return {
+        coverArt: null,
+        source: "none",
+        changed: wasFlagged,
+        cleared: wasFlagged,
+        reason: audit.reason
+      };
+    }
+    function _recentMiss(trackId) {
+      try {
+        _ensureCoverTables();
+        const r = db.prepare("SELECT ts FROM cover_miss WHERE trackId = ?").get(trackId);
+        return !!r && Date.now() - r.ts < COVER_MISS_TTL;
+      } catch (_) {
+        return false;
+      }
+    }
+    var _healing = /* @__PURE__ */ new Set();
+    function _scheduleCoverHeal(trackId) {
+      if (_healing.has(trackId)) return;
+      _healing.add(trackId);
+      setImmediate(async () => {
+        try {
+          const t = getLibrary().find((x) => x.id === trackId);
+          if (t) await _refillTrackCore(t, { force: false, online: false });
+        } catch (_) {
+        } finally {
+          _healing.delete(trackId);
+        }
+      });
+    }
+    async function _sanitizeScannedCovers(tracks) {
+      const ctx = _buildCoverCtx(tracks);
+      for (const t of tracks) {
+        try {
+          if (!t.coverArt) continue;
+          const buf = _loadCoverBuffer(t.coverArt);
+          const a = await _auditCover(
+            { ...t, _hasCoverArt: true },
+            t.coverArt,
+            buf,
+            ctx
+          );
+          if (!a.ok) {
+            t.coverArt = null;
+            t._hasCoverArt = false;
           }
         } catch (_) {
         }
       }
-      return null;
     }
-    ipcMain.handle("coverart:refill-track", async (event, { trackId, force } = {}) => {
+    async function _ensureDownloadedCover(track, info) {
+      if (track.coverArt) {
+        const a = await _auditCover(
+          { ...track, _hasCoverArt: true },
+          track.coverArt,
+          _loadCoverBuffer(track.coverArt),
+          null
+        );
+        if (a.ok) return;
+        track.coverArt = null;
+        track._hasCoverArt = false;
+      }
+      let buf = null;
+      let v = null;
+      if (info && info.artworkUrl) {
+        try {
+          buf = await CoverArt.fetchBuf(info.artworkUrl, { timeout: 8e3 });
+          v = await CoverArt.validateImage(buf, { minSide: 150 });
+          if (!v.valid) buf = null;
+        } catch (_) {
+          buf = null;
+        }
+      }
+      if (!buf) {
+        const hit = await CoverArt.searchOnlineCover(track).catch(() => null);
+        if (hit) {
+          buf = hit.buf;
+          v = hit;
+        }
+      }
+      if (buf && v) {
+        track.coverArt = _writeCoverSidecar(track, buf, v.mime, v.hash);
+        track._hasCoverArt = true;
+      }
+    }
+    var _auditRunning = false;
+    async function _runCoverAudit({ force = false, onProgress } = {}) {
+      if (_auditRunning) return { checked: 0, cleared: 0, recovered: 0 };
+      _auditRunning = true;
       try {
-        if (!trackId) return { success: false, error: "trackId required" };
-        const library = getLibrary();
-        const track = library.find((t) => t.id === trackId);
+        _ensureCoverTables();
+        const lib = getLibrary().slice();
+        const ctx = _buildCoverCtx(lib);
+        const known = new Map(
+          db.prepare("SELECT trackId, sig, ok FROM cover_audit").all().map((r) => [r.trackId, r])
+        );
+        let checked = 0;
+        let cleared = 0;
+        let recovered = 0;
+        for (let i = 0; i < lib.length; i++) {
+          const t = lib[i];
+          if (i % 20 === 0) {
+            await new Promise((r2) => setImmediate(r2));
+            if (onProgress) onProgress(i, lib.length);
+          }
+          if (!t._hasCoverArt) continue;
+          const art = getCoverArtByTrackId(t.id);
+          const sig = _coverSig(art);
+          const k = known.get(t.id);
+          if (!force && k && k.ok === 1 && k.sig === sig) continue;
+          checked++;
+          const a = await _auditCover(t, art, _loadCoverBuffer(art), ctx);
+          if (a.ok) {
+            db.prepare(
+              "INSERT OR REPLACE INTO cover_audit (trackId, sig, ok, ts) VALUES (?, ?, 1, ?)"
+            ).run(t.id, sig, Date.now());
+            continue;
+          }
+          cleared++;
+          _commitTrackCover(t.id, null);
+          const r = await _refillTrackCore(
+            { ...t, _hasCoverArt: false },
+            { online: false, ctx }
+          ).catch(() => null);
+          if (r && r.coverArt) recovered++;
+        }
+        if (cleared)
+          console.log(
+            `[CoverAudit] checked ${checked}, cleared ${cleared} bad cover(s), recovered ${recovered} locally`
+          );
+        return { checked, cleared, recovered };
+      } finally {
+        _auditRunning = false;
+      }
+    }
+    setTimeout(() => {
+      try {
+        if (db) _runCoverAudit().catch(() => {
+        });
+      } catch (_) {
+      }
+    }, 25e3);
+    ipcMain.handle(
+      "coverart:refill-track",
+      async (event, { trackId, force, auto } = {}) => {
+        try {
+          if (!trackId) return { success: false, error: "trackId required" };
+          const track = getLibrary().find((t) => t.id === trackId);
+          if (!track) return { success: false, error: "Track not found" };
+          if (auto && !track._hasCoverArt && _recentMiss(trackId))
+            return {
+              success: true,
+              coverArt: null,
+              source: "none",
+              changed: false
+            };
+          const r = await _refillTrackCore(track, { force: !!force, online: true });
+          return { success: true, ...r };
+        } catch (err) {
+          console.error("[coverart:refill-track]", err.message);
+          return { success: false, error: err.message };
+        }
+      }
+    );
+    ipcMain.handle("coverart:verify", async (event, { trackId } = {}) => {
+      try {
+        const track = getLibrary().find((t) => t.id === trackId);
         if (!track) return { success: false, error: "Track not found" };
-        if (!force && track._hasCoverArt) {
-          const existing = getCoverArtByTrackId(trackId);
-          if (existing) {
-            let isValid = false;
-            if (existing.startsWith("data:")) {
-              const b64 = existing.split(",")[1];
-              if (b64) {
-                const buf = Buffer.from(b64, "base64");
-                isValid = _isValidCoverArtBuffer(buf).valid;
-              }
-            } else if (fs.existsSync(existing)) {
-              const buf = fs.readFileSync(existing);
-              isValid = _isValidCoverArtBuffer(buf).valid;
-            }
-            if (isValid) return { success: true, coverArt: existing, source: "embedded" };
-          }
-        }
-        if (!force && track.coverArt && typeof track.coverArt === "string") {
-          const ca = track.coverArt;
-          let isValid = false;
-          if (ca.startsWith("data:")) {
-            const buf = Buffer.from(ca.split(",")[1] || "", "base64");
-            isValid = _isValidCoverArtBuffer(buf).valid;
-          } else if (fs.existsSync(ca)) {
-            const buf = fs.readFileSync(ca);
-            isValid = _isValidCoverArtBuffer(buf).valid;
-          }
-          if (isValid) return { success: true, coverArt: ca, source: "existing" };
-        }
-        if (track.filePath && fs.existsSync(track.filePath)) {
-          const dir = path.dirname(track.filePath);
-          const IMAGE_EXTS = /* @__PURE__ */ new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp"]);
-          const COMMON = ["cover", "folder", "album", "front", "artwork", "art", "thumbnail"];
-          const audioName = path.basename(track.filePath, path.extname(track.filePath)).toLowerCase();
-          let files = [];
-          try {
-            files = fs.readdirSync(dir);
-          } catch (_) {
-          }
-          const candidates = [];
-          for (const f of files) {
-            const ext = path.extname(f).toLowerCase();
-            if (!IMAGE_EXTS.has(ext)) continue;
-            const nameNoExt = path.basename(f, ext).toLowerCase();
-            let pri = 99;
-            if (f.toLowerCase().includes(".novaart")) pri = 0;
-            else if (nameNoExt === audioName) pri = 1;
-            else if (COMMON.includes(nameNoExt)) pri = 2;
-            else if (nameNoExt.startsWith("albumart")) pri = 3;
-            candidates.push({ path: path.join(dir, f), pri });
-          }
-          candidates.sort((a, b) => a.pri - b.pri);
-          for (const c of candidates) {
-            try {
-              const buf = fs.readFileSync(c.path);
-              if (_isValidCoverArtBuffer(buf).valid) {
-                track.coverArt = c.path;
-                track._hasCoverArt = true;
-                db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(JSON.stringify(track), trackId);
-                if (libraryById?.has(trackId)) libraryById.get(trackId).coverArt = c.path;
-                db.prepare("INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)").run(trackId, c.path);
-                return { success: true, coverArt: c.path, source: "filesystem" };
-              }
-            } catch (_) {
-            }
-          }
-        }
-        const artist = track.artist || "";
-        const title = track.title || "";
-        const album = track.album || "";
-        const online = await _searchOnlineCoverArt(artist, title, album);
-        if (online) {
-          let sidecarPath = null;
-          if (track.filePath) {
-            sidecarPath = track.filePath.replace(/\.[^.]+$/, ".novaart.jpg");
-            try {
-              fs.writeFileSync(sidecarPath, online.buf);
-              track.coverArt = sidecarPath;
-              track._hasCoverArt = true;
-              db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(JSON.stringify(track), trackId);
-              if (libraryById?.has(trackId)) libraryById.get(trackId).coverArt = sidecarPath;
-              db.prepare("INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)").run(trackId, sidecarPath);
-            } catch (e) {
-              sidecarPath = online.url;
-            }
-          }
-          return { success: true, coverArt: sidecarPath || online.url, source: "online" };
-        }
-        return { success: true, coverArt: null, source: "none" };
+        const r = await _refillTrackCore(track, { force: false, online: false });
+        return { success: true, ...r };
       } catch (err) {
-        console.error("[coverart:refill-track]", err.message);
         return { success: false, error: err.message };
       }
     });
-    ipcMain.handle("coverart:refill-all", async (event, { force } = {}) => {
+    ipcMain.handle("coverart:pick-file", async (event, { trackId } = {}) => {
       try {
-        const library = getLibrary();
-        const missing = force ? library : library.filter((t) => !t.coverArt && !t._hasCoverArt);
+        const track = getLibrary().find((t) => t.id === trackId);
+        if (!track) return { success: false, error: "Track not found" };
+        const win = BrowserWindow.fromWebContents(event.sender);
+        const res = await dialog.showOpenDialog(win, {
+          title: "Choose cover art",
+          properties: ["openFile"],
+          filters: [
+            { name: "Images", extensions: ["jpg", "jpeg", "png", "webp", "bmp"] }
+          ]
+        });
+        if (res.canceled || !res.filePaths.length)
+          return { success: true, cancelled: true };
+        const buf = fs.readFileSync(res.filePaths[0]);
+        const v = await CoverArt.validateImage(buf, { minSide: 100 });
+        if (!v.valid)
+          return {
+            success: false,
+            error: `That file isn't usable cover art (${v.reason.replace(/_/g, " ")})`
+          };
+        const art = _writeCoverSidecar(track, buf, v.mime, v.hash);
+        _commitTrackCover(trackId, art);
+        return { success: true, coverArt: art, source: "manual", changed: true };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
+    ipcMain.handle("coverart:audit", async (event, { force } = {}) => {
+      try {
+        const r = await _runCoverAudit({ force: !!force });
+        return { success: true, ...r };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    });
+    var _refillAllRunning = false;
+    var _refillAllCancel = false;
+    ipcMain.handle("coverart:refill-cancel", async () => {
+      _refillAllCancel = true;
+      return { success: true };
+    });
+    ipcMain.handle("coverart:refill-all", async (event, { force } = {}) => {
+      if (_refillAllRunning)
+        return { success: false, error: "A refill is already running" };
+      _refillAllRunning = true;
+      _refillAllCancel = false;
+      try {
+        _ensureCoverTables();
+        const repairedInfo = await _runCoverAudit({ force: !!force });
+        const lib = getLibrary().slice();
+        const ctx = _buildCoverCtx(lib);
+        const targets = force ? lib.filter((t) => t.filePath) : lib.filter((t) => t.filePath && !t._hasCoverArt);
         let filled = 0;
         let skipped = 0;
-        const total = missing.length;
-        const win = require("electron").BrowserWindow.getAllWindows()[0];
-        const sendProgress2 = (n) => {
-          if (win && !win.isDestroyed()) {
-            win.webContents.send("coverart:refill-progress", { filled, skipped, total, current: n });
+        let done = 0;
+        const total = targets.length;
+        let lastSend = 0;
+        const send = (final) => {
+          const now = Date.now();
+          if (!final && now - lastSend < 150) return;
+          lastSend = now;
+          _coverBroadcast("coverart:refill-progress", {
+            filled,
+            skipped,
+            repaired: repairedInfo.cleared,
+            total,
+            current: done
+          });
+        };
+        let idx = 0;
+        const worker = async () => {
+          while (!_refillAllCancel) {
+            const t = targets[idx++];
+            if (!t) return;
+            try {
+              const r = await _refillTrackCore(t, {
+                force: !!force,
+                online: true,
+                ctx
+              });
+              if (r.changed && r.coverArt) filled++;
+              else skipped++;
+            } catch (_) {
+              skipped++;
+            }
+            done++;
+            send(false);
           }
         };
-        for (let i = 0; i < missing.length; i++) {
-          const t = missing[i];
-          sendProgress2(i + 1);
+        await Promise.all([worker(), worker(), worker()]);
+        send(true);
+        setImmediate(() => {
           try {
-            const res = await new Promise(
-              (r) => ipcMain.emit("coverart:refill-track-internal", null, { trackId: t.id, force }, r)
-            );
-            const result = await (async () => {
-              if (!t._hasCoverArt && !t.coverArt) {
-                const online = await _searchOnlineCoverArt(t.artist || "", t.title || "", t.album || "");
-                if (online && t.filePath) {
-                  const sp = t.filePath.replace(/\.[^.]+$/, ".novaart.jpg");
-                  try {
-                    fs.writeFileSync(sp, online.buf);
-                    t.coverArt = sp;
-                    t._hasCoverArt = true;
-                    db.prepare("UPDATE tracks SET data = ? WHERE id = ?").run(JSON.stringify(t), t.id);
-                    if (libraryById?.has(t.id)) libraryById.get(t.id).coverArt = sp;
-                    db.prepare("INSERT OR REPLACE INTO track_covers (trackId, coverArt) VALUES (?, ?)").run(t.id, sp);
-                    return true;
-                  } catch (_) {
-                  }
-                }
-              }
-              return false;
-            })();
-            if (result) filled++;
-            else skipped++;
+            ManifestIPC.rebuildManifest(getLibrary()).catch(() => {
+            });
           } catch (_) {
-            skipped++;
           }
-        }
-        sendProgress2(total);
-        return { success: true, filled, skipped, total };
+        });
+        return {
+          success: true,
+          filled,
+          skipped,
+          total,
+          repaired: repairedInfo.cleared,
+          cancelled: _refillAllCancel
+        };
       } catch (err) {
         console.error("[coverart:refill-all]", err.message);
         return { success: false, error: err.message };
+      } finally {
+        _refillAllRunning = false;
       }
     });
     function compareVersions(a, b) {
@@ -43573,7 +44279,7 @@ var require_main = __commonJS({
     var autoUpdater = null;
     var path = require("path");
     var fs = require("fs");
-    var { URL: URL2, pathToFileURL } = require("url");
+    var { URL: URL3, pathToFileURL } = require("url");
     var WindowStateManager = require_windowManager();
     var registerIPCHandlers = require_ipc();
     var SMTCBridge;
@@ -44102,7 +44808,7 @@ var require_main = __commonJS({
             if (url.startsWith("nova-media://thumb/")) {
               const parts = url.slice("nova-media://thumb/".length).split("/");
               const trackId = parts[0];
-              const size = parts[1] || "48";
+              const size = (parts[1] || "48").split("?")[0];
               const thumbDir = path.join(
                 app.getPath("userData"),
                 "cached_covers",
@@ -44386,7 +45092,7 @@ var require_main = __commonJS({
     });
     app.on("web-contents-created", (event, contents) => {
       contents.on("will-navigate", (event2, navigationUrl) => {
-        const parsedUrl = new URL2(navigationUrl);
+        const parsedUrl = new URL3(navigationUrl);
         if (parsedUrl.protocol !== "file:") event2.preventDefault();
       });
     });
