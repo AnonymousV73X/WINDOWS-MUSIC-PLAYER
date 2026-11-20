@@ -15105,8 +15105,9 @@ function _qdEnd() {
   const win = $("virtual-track-window");
   const H = VIRTUAL_ROW_HEIGHT;
   q.ghost.style.transition =
-    "top 0.16s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.16s ease, box-shadow 0.16s ease";
+    "top 0.16s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.16s ease, box-shadow 0.16s ease, border-radius 0.16s ease, background-color 0.16s ease, backdrop-filter 0.16s ease";
   q.ghost.classList.remove("qd-lift");
+  q.ghost.classList.add("qd-drop");
   if (win) q.ghost.style.top = win.getBoundingClientRect().top + q.to * H + "px";
   setTimeout(() => {
     q.ghost.remove();
