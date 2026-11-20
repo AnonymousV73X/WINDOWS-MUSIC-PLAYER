@@ -1341,6 +1341,43 @@ var require_coverArt = __commonJS({
       }
       return null;
     }
+    async function normalizeArtBuffer(buf) {
+      let v = await validateImage(buf, { minSide: 100 });
+      if (!v.valid) return null;
+      const sharp = require("sharp");
+      const m = await sharp(buf).metadata();
+      const ratio = m.width / m.height;
+      if (ratio < 0.9 || ratio > 1.1) {
+        try {
+          buf = await _toSquareJpeg(buf);
+          v = await validateImage(buf, { minSide: 100 });
+          if (!v.valid) return null;
+        } catch (_) {
+          return null;
+        }
+      }
+      return { buf, ...v };
+    }
+    async function fetchSourceArt(url) {
+      if (!url) return null;
+      const urls = [url];
+      const yt = String(url).match(/i\.ytimg\.com\/vi(?:_webp)?\/([\w-]{6,})\//);
+      if (yt)
+        for (const n of ["maxresdefault", "sddefault", "hqdefault"])
+          urls.push(`https://i.ytimg.com/vi/${yt[1]}/${n}.jpg`);
+      if (/googleusercontent\.com|ggpht\.com/.test(url))
+        urls.unshift(
+          url.replace(/=(?:w\d+-h\d+|s\d+)[^?#]*$/, "=w800-h800-l90-rj")
+        );
+      for (const u of urls) {
+        try {
+          const r = await normalizeArtBuffer(await fetchBuf(u, { timeout: 9e3 }));
+          if (r) return r;
+        } catch (_) {
+        }
+      }
+      return null;
+    }
     var _onlineCache = /* @__PURE__ */ new Map();
     var ONLINE_TTL = 10 * 60 * 1e3;
     async function _searchOnlineOnce(q, excludeHashes) {
@@ -1408,6 +1445,8 @@ var require_coverArt = __commonJS({
       deriveQuery,
       scoreCandidate,
       scoreVideo,
+      normalizeArtBuffer,
+      fetchSourceArt,
       _toSquareJpeg,
       searchOnlineCover,
       fetchBuf,
@@ -43589,6 +43628,7 @@ ${items}
             fileSize: stats.size,
             coverArt: meta?.coverArt || null,
             _hasCoverArt: !!meta?.coverArt,
+            artworkSource: trackInfo.artworkUrl || "",
             dateAdded: Date.now(),
             dateModified: stats.mtimeMs || Date.now()
           };
@@ -43916,6 +43956,16 @@ ${items}
           return take(_writeCoverSidecar(track, sBuf, v.mime, v.hash), "sibling");
         }
       }
+      if (online && track.artworkSource) {
+        const src = await CoverArt.fetchSourceArt(track.artworkSource).catch(
+          () => null
+        );
+        if (src && !(exclude && exclude.has(src.hash)))
+          return take(
+            _writeCoverSidecar(track, src.buf, src.mime, src.hash),
+            "source"
+          );
+      }
       if (online) {
         const hit = await CoverArt.searchOnlineCover(track, {
           excludeHashes: exclude
@@ -44005,12 +44055,12 @@ ${items}
       let buf = null;
       let v = null;
       if (info && info.artworkUrl) {
-        try {
-          buf = await CoverArt.fetchBuf(info.artworkUrl, { timeout: 8e3 });
-          v = await CoverArt.validateImage(buf, { minSide: 150, strict: true });
-          if (!v.valid) buf = null;
-        } catch (_) {
-          buf = null;
+        const src = await CoverArt.fetchSourceArt(info.artworkUrl).catch(
+          () => null
+        );
+        if (src) {
+          buf = src.buf;
+          v = src;
         }
       }
       if (!buf) {
