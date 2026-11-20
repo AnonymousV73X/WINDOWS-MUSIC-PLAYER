@@ -166,15 +166,100 @@ function _updateSplashStatus(subsystem, status, message) {
     const btn = document.getElementById(id);
     if (btn && !btn.classList.contains("spinning")) btn.click();
   });
+  // ── Minimal text context menu: Cut / Copy / Paste / Select all ──
+  let _txMenu = null;
+  const _txClose = () => {
+    if (_txMenu) _txMenu.remove();
+    _txMenu = null;
+  };
+  const _NON_TEXT =
+    /^(button|checkbox|radio|range|color|file|submit|reset|image)$/i;
+  const _txSelection = (el) =>
+    el && el.selectionStart != null && typeof el.value === "string"
+      ? el.value.substring(el.selectionStart, el.selectionEnd)
+      : String(window.getSelection() || "");
+  async function _txRun(act, el) {
+    if (el && el.focus) el.focus();
+    const sel = _txSelection(el);
+    try {
+      if (act === "copy" || act === "cut") {
+        try {
+          await navigator.clipboard.writeText(sel);
+          if (act === "cut") document.execCommand("delete");
+        } catch (_) {
+          document.execCommand(act);
+        }
+      } else if (act === "paste") {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text) document.execCommand("insertText", false, text);
+        } catch (_) {
+          document.execCommand("paste");
+        }
+      } else if (act === "all") {
+        if (el && el.select) el.select();
+        else document.execCommand("selectAll");
+      }
+    } catch (_) {}
+  }
+  function _txOpen(x, y, el, editable, sel) {
+    _txClose();
+    const items = [];
+    if (editable && sel) items.push(["cut", "Cut", "Ctrl+X"]);
+    if (sel) items.push(["copy", "Copy", "Ctrl+C"]);
+    if (editable) items.push(["paste", "Paste", "Ctrl+V"]);
+    if (editable) items.push(["all", "Select all", "Ctrl+A"]);
+    if (!items.length) return;
+    const m = document.createElement("div");
+    m.className = "text-ctx-menu";
+    m.innerHTML = items
+      .map(
+        ([a, l, k]) =>
+          `<button type="button" data-a="${a}">${l}<span>${k}</span></button>`,
+      )
+      .join("");
+    m.addEventListener("mousedown", (ev) => ev.preventDefault()); // keep focus + selection
+    m.addEventListener("click", (ev) => {
+      const b = ev.target.closest("button[data-a]");
+      if (!b) return;
+      _txClose();
+      _txRun(b.dataset.a, el);
+    });
+    document.body.appendChild(m);
+    const r = m.getBoundingClientRect();
+    m.style.left = Math.max(4, Math.min(x, innerWidth - r.width - 4)) + "px";
+    m.style.top = Math.max(4, Math.min(y, innerHeight - r.height - 4)) + "px";
+    _txMenu = m;
+  }
+  document.addEventListener(
+    "mousedown",
+    (e) => {
+      if (_txMenu && !_txMenu.contains(e.target)) _txClose();
+    },
+    true,
+  );
+  window.addEventListener("keydown", (e) => e.key === "Escape" && _txClose());
+  window.addEventListener("blur", _txClose);
+  window.addEventListener("resize", _txClose);
+  window.addEventListener("wheel", _txClose, { passive: true });
   window.addEventListener("contextmenu", (e) => {
-    if (
+    e.preventDefault();
+    const t =
       e.target.closest &&
       e.target.closest(
         "input, textarea, [contenteditable='true'], .lyrics-body",
-      )
-    )
-      return;
-    e.preventDefault();
+      );
+    const editable =
+      !!t &&
+      !t.readOnly &&
+      !t.disabled &&
+      (t.isContentEditable ||
+        t.tagName === "TEXTAREA" ||
+        (t.tagName === "INPUT" && !_NON_TEXT.test(t.type)));
+    if (!editable && e.target.closest(".track-row, .playlist-song-row"))
+      return _txClose();
+    const el = t || null;
+    _txOpen(e.clientX, e.clientY, el, editable, _txSelection(el));
   });
   window.addEventListener("dragover", (e) => e.preventDefault());
   window.addEventListener("drop", (e) => e.preventDefault());
