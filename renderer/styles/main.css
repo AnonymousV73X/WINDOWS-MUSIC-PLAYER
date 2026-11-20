@@ -6053,12 +6053,10 @@ body.is-playing .ov-play svg,
   }
 
   .lyrics-panel.floating .lyrics-header {
-    cursor: grab;
+    position: relative;
+    cursor: default;
     user-select: none;
-  }
-
-  .lyrics-panel.floating .lyrics-header:active {
-    cursor: grabbing;
+    touch-action: none;
   }
 
   .lyrics-panel.floating.float-open {
@@ -9549,4 +9547,46 @@ textarea,
   to {
     opacity: 1;
   }
+}
+
+/* ── Lyrics card: custom drag grip + lift ── */
+.lyrics-grip {
+  display: none;
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  width: 34px;
+  height: 4px;
+  margin-left: -17px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  transition:
+    width 0.18s ease,
+    margin-left 0.18s ease,
+    background 0.18s ease;
+  pointer-events: none;
+}
+.lyrics-panel.floating .lyrics-grip {
+  display: block;
+}
+.lyrics-panel.floating .lyrics-header:hover .lyrics-grip {
+  background: rgba(255, 255, 255, 0.4);
+}
+.lyrics-panel.floating.float-open.dragging {
+  transform: scale(1.025);
+  border-color: var(--accent-color, #e879f9);
+  box-shadow:
+    0 28px 72px rgba(0, 0, 0, 0.75),
+    0 0 0 1px var(--accent-color, #e879f9),
+    0 0 28px rgba(232, 121, 249, 0.18);
+}
+.lyrics-panel.dragging .lyrics-grip {
+  width: 52px;
+  margin-left: -26px;
+  background: var(--accent-color, #e879f9);
+}
+body.lyrics-dragging,
+body.lyrics-dragging * {
+  cursor: default !important;
+  user-select: none !important;
 }
