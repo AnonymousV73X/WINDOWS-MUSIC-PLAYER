@@ -172,8 +172,7 @@ function _updateSplashStatus(subsystem, status, message) {
     if (_txMenu) _txMenu.remove();
     _txMenu = null;
   };
-  const _NON_TEXT =
-    /^(button|checkbox|radio|range|color|file|submit|reset|image)$/i;
+  const _NON_TEXT = /^(button|checkbox|radio|range|color|file|submit|reset|image)$/i;
   const _txSelection = (el) =>
     el && el.selectionStart != null && typeof el.value === "string"
       ? el.value.substring(el.selectionStart, el.selectionEnd)
@@ -238,13 +237,9 @@ function _updateSplashStatus(subsystem, status, message) {
     m.style.top = Math.max(4, Math.min(y, innerHeight - r.height - 4)) + "px";
     _txMenu = m;
   }
-  document.addEventListener(
-    "mousedown",
-    (e) => {
-      if (_txMenu && !_txMenu.contains(e.target)) _txClose();
-    },
-    true,
-  );
+  document.addEventListener("mousedown", (e) => {
+    if (_txMenu && !_txMenu.contains(e.target)) _txClose();
+  }, true);
   window.addEventListener("keydown", (e) => e.key === "Escape" && _txClose());
   window.addEventListener("blur", _txClose);
   window.addEventListener("resize", _txClose);
@@ -253,9 +248,7 @@ function _updateSplashStatus(subsystem, status, message) {
     e.preventDefault();
     const t =
       e.target.closest &&
-      e.target.closest(
-        "input, textarea, [contenteditable='true'], .lyrics-body",
-      );
+      e.target.closest("input, textarea, [contenteditable='true'], .lyrics-body");
     const editable =
       !!t &&
       !t.readOnly &&
@@ -263,8 +256,7 @@ function _updateSplashStatus(subsystem, status, message) {
       (t.isContentEditable ||
         t.tagName === "TEXTAREA" ||
         (t.tagName === "INPUT" && !_NON_TEXT.test(t.type)));
-    if (!editable && e.target.closest(".track-row, .playlist-song-row"))
-      return _txClose();
+    if (!editable && e.target.closest(".track-row, .playlist-song-row")) return _txClose();
     const el = t || null;
     _txOpen(e.clientX, e.clientY, el, editable, _txSelection(el));
   });
@@ -354,10 +346,7 @@ const state = {
   currentView: "library",
   currentTab: "songs",
   sortKey: _cachedSettings.sortKey || "dateAdded",
-  sortAsc:
-    typeof _cachedSettings.sortAsc === "boolean"
-      ? _cachedSettings.sortAsc
-      : false,
+  sortAsc: typeof _cachedSettings.sortAsc === "boolean" ? _cachedSettings.sortAsc : false,
   overlayOpen: false,
   sidebarOpen: false,
   activeNavSection: "library",
@@ -1978,10 +1967,7 @@ function _isCurrentRowInView(area, idx) {
   // Row not rendered (virtualised away) → definitely out of view, unless pitch math says otherwise
   const pitch = _measuredRowPitch();
   const top = idx * pitch;
-  return (
-    top + pitch * 0.5 >= area.scrollTop &&
-    top + pitch * 0.5 <= area.scrollTop + area.clientHeight
-  );
+  return top + pitch * 0.5 >= area.scrollTop && top + pitch * 0.5 <= area.scrollTop + area.clientHeight;
 }
 let _pillRaf = 0;
 const _pillIdxCache = { items: null, len: -1, id: null, idx: -1 };
@@ -5322,11 +5308,7 @@ async function _resolveCoverArt(track) {
   if (_coverArtSearchCache.get(track.id) === null) return;
   // Backend does strict local → album sibling → verified online (artist/title/duration matched)
   try {
-    const res = await window.novaAPI.invoke("coverart:refill-track", {
-      trackId: track.id,
-      force: false,
-      auto: true,
-    });
+    const res = await window.novaAPI.invoke("coverart:refill-track", { trackId: track.id, force: false, auto: true });
     if (res?.success && res.coverArt) {
       track.coverArt = res.coverArt;
       track._hasCoverArt = true;
@@ -5358,52 +5340,25 @@ function _showCoverArtToast(msg, ms = 3200) {
 
 async function _refillTrackCoverArt(track, force = false, pick = false) {
   if (!track || !window.novaAPI) return;
-  _showCoverArtToast(
-    pick
-      ? "Choose an image…"
-      : `Searching cover art for "${track.title || "track"}"…`,
-    30000,
-  );
+  _showCoverArtToast(pick ? "Choose an image…" : `Searching cover art for "${track.title || "track"}"…`, 30000);
   const rows = document.querySelectorAll(`[data-track-id="${track.id}"]`);
   rows.forEach((r) => (r.style.opacity = "0.5"));
   try {
-    const res = await window.novaAPI.invoke(
-      pick ? "coverart:pick-file" : "coverart:refill-track",
-      { trackId: track.id, force },
-    );
+    const res = await window.novaAPI.invoke(pick ? "coverart:pick-file" : "coverart:refill-track", { trackId: track.id, force });
     if (res?.cancelled) {
       _showCoverArtToast("Cancelled");
     } else if (!res?.success) {
       _showCoverArtToast(res?.error || "Cover art refill failed");
     } else if (res.coverArt && res.changed) {
-      const m = res.matched
-        ? ` (${res.matched.artist} – ${res.matched.title})`
-        : "";
-      _showCoverArtToast(
-        res.source === "online"
-          ? res.provider
-            ? `Cover from ${res.provider === "youtube-music" ? "YouTube Music" : "YouTube"} ✓${m}`
-            : `Cover found online ✓${m}`
-          : "Cover art updated ✓",
-      );
+      const m = res.matched ? ` (${res.matched.artist} – ${res.matched.title})` : "";
+      _showCoverArtToast(res.source === "online" ? (res.provider ? `Cover from ${res.provider === "youtube-music" ? "YouTube Music" : "YouTube"} ✓${m}` : `Cover found online ✓${m}`) : "Cover art updated ✓");
     } else if (res.coverArt) {
-      _showCoverArtToast(
-        res.note
-          ? "No better match found — kept current art"
-          : "Cover art verified ✓",
-      );
+      _showCoverArtToast(res.note ? "No better match found — kept current art" : "Cover art verified ✓");
     } else {
-      _showCoverArtToast(
-        res.cleared
-          ? "Bad cover removed — no verified match found"
-          : "No verified cover art found",
-      );
+      _showCoverArtToast(res.cleared ? "Bad cover removed — no verified match found" : "No verified cover art found");
     }
     if (res?.meta) {
-      for (const t of [
-        state.tracks.find((x) => x.id === track.id),
-        state.currentTrack?.id === track.id ? state.currentTrack : null,
-      ])
+      for (const t of [state.tracks.find((x) => x.id === track.id), state.currentTrack?.id === track.id ? state.currentTrack : null])
         if (t) Object.assign(t, res.meta, { _userEdited: true });
       _repaintTrackRow(track.id);
       _showCoverArtToast(`Filled ${Object.keys(res.meta).join(", ")} ✓`);
@@ -5471,13 +5426,9 @@ async function _refillAllCoverArt(btn) {
   window.novaAPI.on?.("coverart:refill-progress", progressHandler);
 
   try {
-    const res = await window.novaAPI.invoke("coverart:refill-all", {
-      force: false,
-    });
+    const res = await window.novaAPI.invoke("coverart:refill-all", { force: false });
     if (res?.success) {
-      _showCoverArtToast(
-        `Cover art done — ${res.filled} filled, ${res.repaired || 0} bad removed, ${res.skipped} unmatched${res.cancelled ? " (cancelled)" : ""}`,
-      );
+      _showCoverArtToast(`Cover art done — ${res.filled} filled, ${res.repaired || 0} bad removed, ${res.skipped} unmatched${res.cancelled ? " (cancelled)" : ""}`);
       // Re-resolve art for tracks that got filled
       if (res.filled > 0 && state.tracks) {
         for (const t of state.tracks) {
@@ -8757,9 +8708,7 @@ function renderSettings() {
     if (statusEl) statusEl.textContent = "Searching for missing cover art…";
     await _refillAllCoverArt(btn);
     if (statusEl) statusEl.textContent = "Done!";
-    setTimeout(() => {
-      if (statusEl) statusEl.textContent = "";
-    }, 4000);
+    setTimeout(() => { if (statusEl) statusEl.textContent = ""; }, 4000);
   });
 
   // ── Re-search All Art (force: re-searches even existing art) ──
@@ -8770,16 +8719,11 @@ function renderSettings() {
     btn.disabled = true;
     btn.textContent = "Re-searching…";
     try {
-      const res = await window.novaAPI.invoke("coverart:refill-all", {
-        force: true,
-      });
+      const res = await window.novaAPI.invoke("coverart:refill-all", { force: true });
       if (res?.success) {
         _showCoverArtToast(`Re-search done — ${res.filled} art(s) updated`);
-        if (statusEl)
-          statusEl.textContent = `Done — ${res.filled} updated, ${res.skipped} skipped`;
-        setTimeout(() => {
-          if (statusEl) statusEl.textContent = "";
-        }, 5000);
+        if (statusEl) statusEl.textContent = `Done — ${res.filled} updated, ${res.skipped} skipped`;
+        setTimeout(() => { if (statusEl) statusEl.textContent = ""; }, 5000);
         if (res.filled > 0 && state.tracks) {
           for (const t of state.tracks) {
             _coverArtSearchCache.delete(t.id);
@@ -8787,7 +8731,7 @@ function renderSettings() {
           }
         }
       }
-    } catch (_) {
+    } catch(_) {
       if (statusEl) statusEl.textContent = "Error during re-search";
     } finally {
       btn.disabled = false;
@@ -11702,7 +11646,9 @@ function _showFinalFallback(img) {
           Math.abs((img.dataset.artPath || "").hashCode?.() || 0) % 8;
         const placeholder = document.createElement("div");
         placeholder.className = `art-placeholder art-${artIdx}`;
-        placeholder.innerHTML = "&#127925;";
+        placeholder.innerHTML = img.closest("[data-card-type='artist']")
+          ? _ARTIST_ICON_SVG
+          : "&#127925;";
         placeholder.style.cssText =
           "width:100%;height:100%;display:flex;align-items:center;justify-content:center;";
         albumCover.appendChild(placeholder);
@@ -11725,7 +11671,9 @@ function _showFinalFallback(img) {
   const artIdx = Math.abs((img.dataset.artPath || "").hashCode?.() || 0) % 8;
   const placeholder = document.createElement("div");
   placeholder.className = `art-placeholder art-${artIdx}`;
-  placeholder.innerHTML = "&#127925;";
+  placeholder.innerHTML = img.closest("[data-card-type='artist']")
+    ? _ARTIST_ICON_SVG
+    : "&#127925;";
   placeholder.style.cssText = "position:absolute;inset:0;z-index:2;";
   container.appendChild(placeholder);
 }
@@ -12933,9 +12881,13 @@ function _openArtistImageEditor(artistName) {
   modal.classList.add("aie-open");
 }
 
+const _ARTIST_ICON_SVG =
+  '<svg viewBox="0 0 24 24" fill="currentColor" style="width:45%;height:45%;color:rgba(0,0,0,0.35)"><circle cx="12" cy="8" r="4.5"/><path d="M3.5 21c0-4.7 3.8-7.5 8.5-7.5s8.5 2.8 8.5 7.5z"/></svg>';
+
 function _makeArtistCard(artist) {
   const card = document.createElement("div");
   card.className = "album-card";
+  card.dataset.cardType = "artist";
   card.dataset.cardKey = artist.key;
   const coverDiv = document.createElement("div");
   coverDiv.className = "album-cover";
@@ -12981,7 +12933,7 @@ function _makeArtistCard(artist) {
     coverDiv.appendChild(container);
     _attachEagerThumb(img, effectiveCoverArt, 200, artTrackId);
   } else {
-    coverDiv.innerHTML = `<div class="art-placeholder art-${getArtIndex(artist.tracks[0])}">&#127925;</div>`;
+    coverDiv.innerHTML = `<div class="art-placeholder art-${getArtIndex(artist.tracks[0])}">${_ARTIST_ICON_SVG}</div>`;
   }
 
   card.appendChild(coverDiv);
@@ -13086,7 +13038,7 @@ function renderArtistDetail(artistKey) {
   // REVFIX v1: Wrap artist detail image in .cover-img-container (same fix as album detail)
   const coverHtml = effectiveCoverArt
     ? `<div class="cover-img-container" style="background-color:${_getDominantColorForTrack(artist.tracks[0])}"><img id="artist-detail-cover-img" alt=""></div>`
-    : `<div class="art-placeholder art-${getArtIndex(artist.tracks[0])}">&#127925;</div>`;
+    : `<div class="art-placeholder art-${getArtIndex(artist.tracks[0])}">${_ARTIST_ICON_SVG}</div>`;
   renderSectionSurface(`
     <div class="playlist-detail-header">
       <button class="playlist-back-btn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;vertical-align:-2px;"><polyline points="15 18 9 12 15 6"/></svg> Back</button>
