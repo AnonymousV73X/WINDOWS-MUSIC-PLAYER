@@ -1121,6 +1121,7 @@ var require_coverArt = __commonJS({
           artist: r.artistName,
           title: r.trackName,
           album: r.collectionName,
+          year: parseInt(String(r.releaseDate || "").slice(0, 4), 10) || 0,
           durationMs: r.trackTimeMillis || 0,
           artUrls: a ? [
             a.replace(/100x100(bb)?/, "1200x1200bb"),
@@ -1425,7 +1426,12 @@ var require_coverArt = __commonJS({
               url,
               score: s,
               provider: c.provider === "ytm" ? "youtube-music" : void 0,
-              matched: { artist: c.artist, title: c.title, album: c.album }
+              matched: {
+                artist: c.artist,
+                title: c.title,
+                album: c.album,
+                year: c.year || 0
+              }
             };
           } catch (_) {
           }
@@ -43851,9 +43857,7 @@ ${items}
         dirIndex.get(d).push({
           id: t.id,
           album: _normKey(t.album),
-          artist: _normKey(
-            Array.isArray(t.artist) ? t.artist.join(" ") : t.artist
-          ),
+          artist: _normKey(Array.isArray(t.artist) ? t.artist.join(" ") : t.artist),
           track: t
         });
       }
@@ -44081,6 +44085,50 @@ ${items}
         reason: audit.reason
       };
     }
+    var _isUnk = (v, unk) => {
+      const s = (Array.isArray(v) ? v.join(", ") : String(v || "")).trim();
+      return !s || s === unk;
+    };
+    async function _fillUnknownMeta(track, matched, provider) {
+      const needArtist = _isUnk(track.artist, "Unknown Artist");
+      const needAlbum = _isUnk(track.album, "Unknown Album");
+      const needYear = !Number(track.year);
+      if (!needArtist && !needAlbum && !needYear) return null;
+      if (!matched) {
+        const hit = await CoverArt.searchOnlineCover(track).catch(() => null);
+        matched = hit && hit.matched;
+        provider = hit && hit.provider;
+      }
+      if (!matched) return null;
+      const meta = {};
+      if (needArtist && matched.artist && provider !== "youtube")
+        meta.artist = matched.artist;
+      if (needAlbum && matched.album) meta.album = matched.album;
+      if (needYear && matched.year) meta.year = matched.year;
+      if (!Object.keys(meta).length) return null;
+      const t = libraryById && libraryById.get(track.id) || track;
+      Object.assign(t, meta, { _userEdited: true });
+      try {
+        const row = db.prepare("SELECT data FROM tracks WHERE id = ?").get(track.id);
+        if (row) {
+          const d = Object.assign(JSON.parse(row.data), meta, {
+            _userEdited: true
+          });
+          db.prepare(
+            "UPDATE tracks SET artist = ?, album = ?, year = ?, data = ? WHERE id = ?"
+          ).run(
+            Array.isArray(d.artist) ? d.artist.join(", ") : d.artist || "",
+            d.album || "",
+            Number(d.year) || null,
+            JSON.stringify(d),
+            track.id
+          );
+        }
+      } catch (e) {
+        console.warn("[fillUnknownMeta]", e.message);
+      }
+      return meta;
+    }
     function _recentMiss(trackId) {
       try {
         _ensureCoverTables();
@@ -44284,7 +44332,9 @@ ${items}
               changed: false
             };
           const r = await _refillTrackCore(track, { force: !!force, online: true });
-          return { success: true, ...r };
+          let meta = null;
+          if (!auto) meta = await _fillUnknownMeta(track, r.matched, r.provider);
+          return { success: true, ...r, meta };
         } catch (err) {
           console.error("[coverart:refill-track]", err.message);
           return { success: false, error: err.message };

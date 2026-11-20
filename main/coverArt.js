@@ -468,6 +468,55 @@ async function _itunes(q) {
   });
 }
 
+// MusicBrainz → Cover Art Archive (front cover of the recording's releases)
+async function _caa(q) {
+  const esc = (s) =>
+    String(s || "")
+      .replace(/["\\]/g, " ")
+      .trim();
+  const parts = [`recording:"${esc(q.title)}"`];
+  if (q.artist) parts.push(`artist:"${esc(q.artist)}"`);
+  const j = await fetchJson(
+    `https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(parts.join(" AND "))}&fmt=json&limit=10`,
+    { timeout: 8000 },
+  );
+  return (j.recordings || []).map((r) => {
+    const rel = (r.releases || []).slice(0, 2);
+    return {
+      artist: (r["artist-credit"] || [])
+        .map((a) => a.name)
+        .filter(Boolean)
+        .join(", "),
+      title: r.title,
+      album: rel[0] && rel[0].title,
+      year:
+        parseInt(String((rel[0] && rel[0].date) || "").slice(0, 4), 10) || 0,
+      durationMs: r.length || 0,
+      artUrls: rel.flatMap((x) => [
+        `https://coverartarchive.org/release/${x.id}/front-1200`,
+        `https://coverartarchive.org/release/${x.id}/front-500`,
+      ]),
+    };
+  });
+}
+
+// Art embedded in the audio file's own tags (re-read; validated like any other candidate)
+async function readEmbeddedArt(filePath, { excludeHashes } = {}) {
+  try {
+    const mm = await import("music-metadata");
+    const parse = mm.parseFile || (mm.default && mm.default.parseFile);
+    const res = await parse(filePath, { skipCovers: false, duration: false });
+    if (!usablePictures(res)) return null;
+    for (const p of res.common.picture) {
+      const buf = Buffer.from(p.data);
+      const v = await validateImage(buf, { minSide: 100 });
+      if (!v.valid || (excludeHashes && excludeHashes.has(v.hash))) continue;
+      return { buf, mime: v.mime, hash: v.hash };
+    }
+  } catch (_) {}
+  return null;
+}
+
 async function _deezer(q) {
   const term = [q.artist, q.title].filter(Boolean).join(" ");
   const j = await fetchJson(
@@ -776,16 +825,17 @@ async function _gather(q) {
     DE = require("./downloadEngine");
   } catch (_) {}
   const term = [q.artist, q.title].filter(Boolean).join(" ");
-  const [it, dz, ytm, web] = await Promise.allSettled([
+  const [it, dz, ytm, web, mb] = await Promise.allSettled([
     _itunes(q),
     _deezer(q),
     DE && DE.searchYouTubeMusic
       ? DE.searchYouTubeMusic(term, 15)
       : Promise.resolve([]),
     _ytWebSearch(q),
+    _caa(q),
   ]);
   const ok = (r) => (r.status === "fulfilled" ? r.value || [] : []);
-  const catalog = [...ok(it), ...ok(dz)];
+  const catalog = [...ok(it), ...ok(dz), ...ok(mb)];
   const yt = [];
   for (const r of ok(ytm)) {
     const square = /googleusercontent|ggpht/.test(r.artworkUrl || "")
@@ -963,6 +1013,7 @@ module.exports = {
   fetchSourceArt,
   _toSquareJpeg,
   searchOnlineCover,
+  readEmbeddedArt,
   deriveVariants,
   scoreLoose,
   fetchBuf,

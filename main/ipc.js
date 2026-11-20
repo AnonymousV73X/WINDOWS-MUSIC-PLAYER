@@ -7354,6 +7354,18 @@ async function _refillTrackCore(
     if (local) return take(local.path, "filesystem");
   }
 
+  // 1b. art embedded in the file's own tags
+  if (track.filePath) {
+    const emb = await CoverArt.readEmbeddedArt(track.filePath, {
+      excludeHashes: exclude,
+    });
+    if (emb)
+      return take(
+        _writeCoverSidecar(track, emb.buf, emb.mime, emb.hash),
+        "embedded",
+      );
+  }
+
   // 2. same-album sibling (only when album is known and artists agree)
   const alb = _normKey(track.album);
   if (alb && alb !== "unknown album") {
@@ -7451,9 +7463,14 @@ async function _fillUnknownMeta(track, matched, provider) {
   }
   if (!matched) return null;
   const meta = {};
-  // plain-YouTube "artist" is just the channel name → unreliable
-  if (needArtist && matched.artist && provider !== "youtube")
-    meta.artist = matched.artist;
+  // catalog hits give the real artist; plain-YouTube hits fall back to the channel name
+  if (needArtist && matched.artist) {
+    const a = String(matched.artist)
+      .replace(/\s*-\s*Topic$/i, "")
+      .replace(/VEVO$/i, "")
+      .trim();
+    if (a) meta.artist = a;
+  }
   if (needAlbum && matched.album) meta.album = matched.album;
   if (needYear && matched.year) meta.year = matched.year;
   if (!Object.keys(meta).length) return null;
