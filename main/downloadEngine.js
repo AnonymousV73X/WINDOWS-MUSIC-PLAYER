@@ -608,6 +608,7 @@ function searchDeezerInternal(query, limit = 15) {
             artworkUrl: art,
             artworkThumbnail: thumb,
             genre: "Music",
+            popularity: item.rank || 0,
           };
         });
         resolve(results);
@@ -754,7 +755,7 @@ const _PENALTIES = [
   ["slowed", /\b(slowed|sped up|reverb|nightcore|8d)\b/],
 ];
 
-function _score(t, qn, qWords, srcCount, idx) {
+function _score(t, qn, qWords, srcCount, idx, pop = 0) {
   const title = _norm(t.trackName),
     artist = _norm(t.artistName),
     album = _norm(t.albumName);
@@ -797,7 +798,11 @@ function _score(t, qn, qWords, srcCount, idx) {
     if (d >= 60000 && d <= 600000) s += 3;
     else if (d > 900000) s -= 8;
   }
-  return s - idx * 0.05;
+  // Popularity: Deezer rank (0..~1M) + how high the source ranked it
+  // (YTM comes first and is already view/relevance ordered).
+  s += Math.min(pop / 1000000, 1) * 12;
+  s += Math.max(0, 8 - idx * 0.4);
+  return s - Math.min(idx, 60) * 0.1;
 }
 
 function rankAndMerge(tracks, query) {
@@ -807,10 +812,16 @@ function rankAndMerge(tracks, query) {
     const info = _info(t);
     const g = groups.find((x) => _sameSong(x, info, t.durationMs || 0));
     if (!g) {
-      groups.push({ primary: t, info, sources: new Set([t.source]) });
+      groups.push({
+        primary: t,
+        info,
+        sources: new Set([t.source]),
+        pop: t.popularity || 0,
+      });
       continue;
     }
     g.sources.add(t.source);
+    g.pop = Math.max(g.pop || 0, t.popularity || 0);
     if (!g.primary.durationMs && t.durationMs)
       g.primary.durationMs = t.durationMs;
     if (!g.primary.videoId && t.videoId) g.primary.videoId = t.videoId;
@@ -820,7 +831,7 @@ function rankAndMerge(tracks, query) {
   return groups
     .map((g, i) => ({
       t: g.primary,
-      sc: _score(g.primary, qn, qWords, g.sources.size, i),
+      sc: _score(g.primary, qn, qWords, g.sources.size, i, g.pop),
     }))
     .sort((a, b) => b.sc - a.sc)
     .map((x) => x.t);
