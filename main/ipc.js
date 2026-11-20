@@ -2043,7 +2043,8 @@ function registerIPCHandlers(mainWindow, smtcBridge) {
                 (t) =>
                   t.filePath &&
                   _norm(t.filePath).startsWith(_folderNorm) &&
-                  !_onDisk.has(_norm(t.filePath)),
+                  !_onDisk.has(_norm(t.filePath)) &&
+                  !fs.existsSync(t.filePath),
               )
               .map((t) => t.id);
 
