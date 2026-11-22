@@ -94,6 +94,184 @@ function _updateSplashStatus(subsystem, status, message) {
   _renderSplashStatus();
 }
 
+// Splash icon cycler — handshake-based: the next icon is only activated
+// AFTER the previous one is confirmed fully hidden (transitionend + computed
+// opacity check), so two icons can never be visible together, however long
+// the main thread stalls. A stalled thread just delays the swap.
+(function _startSplashIconCycle() {
+  const wrap = document.querySelector(".splash-icon-wrap");
+  if (!wrap) return;
+  const icons = Array.from(wrap.querySelectorAll(".splash-cycle-icon"));
+  if (icons.length < 2) return;
+  wrap.classList.add("is-cycling");
+  let cur = 0;
+  icons[0].classList.add("is-active");
+
+  const whenHidden = (el, done) => {
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      if (parseFloat(getComputedStyle(el).opacity) > 0.01) {
+        setTimeout(finish, 50); // not fully faded yet — keep waiting
+        return;
+      }
+      finished = true;
+      el.removeEventListener("transitionend", finish);
+      done();
+    };
+    el.addEventListener("transitionend", finish);
+    setTimeout(finish, 450); // fallback if transitionend never fires
+  };
+
+  const swap = () => {
+    if (!wrap.isConnected) return; // splash removed
+    const old = icons[cur];
+    old.classList.remove("is-active");
+    whenHidden(old, () => {
+      if (!wrap.isConnected) return;
+      cur = (cur + 1) % icons.length;
+      icons[cur].classList.add("is-active");
+      setTimeout(swap, 3000);
+    });
+  };
+  setTimeout(swap, 3000);
+})();
+
+// Native-app feel: no zoom, no stray browser context menu, no file-drop
+// navigation. Inputs keep their native menu (cut/copy/paste).
+(function _lockBrowserBehaviors() {
+  window.addEventListener(
+    "wheel",
+    (e) => {
+      if (e.ctrlKey || e.metaKey) e.preventDefault();
+    },
+    { passive: false },
+  );
+  window.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (["+", "=", "-", "_", "0"].includes(e.key)) e.preventDefault();
+  });
+  // Ctrl+R → quick refresh, Ctrl+F5 → full (heavy) refresh
+  window.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.repeat) return;
+    const key = e.key.toLowerCase();
+    const id =
+      key === "r"
+        ? "sidebar-quick-refresh-btn"
+        : e.key === "F5"
+          ? "sidebar-refresh-btn"
+          : null;
+    if (!id) return;
+    e.preventDefault();
+    const btn = document.getElementById(id);
+    if (btn && !btn.classList.contains("spinning")) btn.click();
+  });
+  // ── Minimal text context menu: Cut / Copy / Paste / Select all ──
+  let _txMenu = null;
+  const _txClose = () => {
+    if (_txMenu) _txMenu.remove();
+    _txMenu = null;
+  };
+  const _NON_TEXT =
+    /^(button|checkbox|radio|range|color|file|submit|reset|image)$/i;
+  const _txSelection = (el) =>
+    el && el.selectionStart != null && typeof el.value === "string"
+      ? el.value.substring(el.selectionStart, el.selectionEnd)
+      : String(window.getSelection() || "");
+  async function _txRun(act, el) {
+    if (el && el.focus) el.focus();
+    const sel = _txSelection(el);
+    try {
+      if (act === "copy" || act === "cut") {
+        try {
+          await navigator.clipboard.writeText(sel);
+          if (act === "cut") document.execCommand("delete");
+        } catch (_) {
+          document.execCommand(act);
+        }
+      } else if (act === "paste") {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text) document.execCommand("insertText", false, text);
+        } catch (_) {
+          document.execCommand("paste");
+        }
+      } else if (act === "all") {
+        if (el && el.select) el.select();
+        else document.execCommand("selectAll");
+      }
+    } catch (_) {}
+  }
+  function _txOpen(x, y, el, editable, sel) {
+    _txClose();
+    const items = [];
+    if (editable && sel) items.push(["cut", "Cut", "Ctrl+X"]);
+    if (sel) items.push(["copy", "Copy", "Ctrl+C"]);
+    if (editable) items.push(["paste", "Paste", "Ctrl+V"]);
+    if (editable) items.push(["all", "Select all", "Ctrl+A"]);
+    if (!items.length) return;
+    const m = document.createElement("div");
+    m.className = "text-ctx-menu";
+    m.innerHTML = items
+      .map(
+        ([a, l, k]) =>
+          `<button type="button" data-a="${a}">${l}<span>${k}</span></button>`,
+      )
+      .join("");
+    m.addEventListener("mousedown", (ev) => ev.preventDefault()); // keep focus + selection
+    m.addEventListener("click", (ev) => {
+      const b = ev.target.closest("button[data-a]");
+      if (!b) return;
+      if (b.dataset.a === "all") {
+        // stay open: re-render so Cut / Copy appear for the new selection
+        _txRun("all", el).then(() =>
+          _txOpen(x, y, el, editable, _txSelection(el)),
+        );
+        return;
+      }
+      _txClose();
+      _txRun(b.dataset.a, el);
+    });
+    document.body.appendChild(m);
+    const r = m.getBoundingClientRect();
+    m.style.left = Math.max(4, Math.min(x, innerWidth - r.width - 4)) + "px";
+    m.style.top = Math.max(4, Math.min(y, innerHeight - r.height - 4)) + "px";
+    _txMenu = m;
+  }
+  document.addEventListener(
+    "mousedown",
+    (e) => {
+      if (_txMenu && !_txMenu.contains(e.target)) _txClose();
+    },
+    true,
+  );
+  window.addEventListener("keydown", (e) => e.key === "Escape" && _txClose());
+  window.addEventListener("blur", _txClose);
+  window.addEventListener("resize", _txClose);
+  window.addEventListener("wheel", _txClose, { passive: true });
+  window.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    const t =
+      e.target.closest &&
+      e.target.closest(
+        "input, textarea, [contenteditable='true'], .lyrics-body",
+      );
+    const editable =
+      !!t &&
+      !t.readOnly &&
+      !t.disabled &&
+      (t.isContentEditable ||
+        t.tagName === "TEXTAREA" ||
+        (t.tagName === "INPUT" && !_NON_TEXT.test(t.type)));
+    if (!editable && e.target.closest(".track-row, .playlist-song-row"))
+      return _txClose();
+    const el = t || null;
+    _txOpen(e.clientX, e.clientY, el, editable, _txSelection(el));
+  });
+  window.addEventListener("dragover", (e) => e.preventDefault());
+  window.addEventListener("drop", (e) => e.preventDefault());
+})();
+
 function _renderSplashStatus() {
   const panel = document.getElementById("splash-status");
   if (!panel) return; // splash may already be removed
@@ -157,6 +335,12 @@ function _renderSplashStatus() {
 }
 
 // ─── State ─────────────────────────────────────────────────────────
+let _cachedSettings = {};
+try {
+  const _raw = localStorage.getItem("novatune_settings");
+  if (_raw) _cachedSettings = JSON.parse(_raw) || {};
+} catch (_) {}
+
 const state = {
   tracks: [],
   filteredTracks: [],
@@ -169,8 +353,11 @@ const state = {
   volume: 0.5,
   currentView: "library",
   currentTab: "songs",
-  sortKey: "dateAdded",
-  sortAsc: false,
+  sortKey: _cachedSettings.sortKey || "dateAdded",
+  sortAsc:
+    typeof _cachedSettings.sortAsc === "boolean"
+      ? _cachedSettings.sortAsc
+      : false,
   overlayOpen: false,
   sidebarOpen: false,
   activeNavSection: "library",
@@ -180,7 +367,7 @@ const state = {
   playingPlaylistId: null,
   _playingFromPlaylistCard: false,
   queueSource: null, // { type: 'artist'|'album'|'playlist', name: string } | null (null = music library)
-  settings: {},
+  settings: _cachedSettings,
   equalizer: new Array(10).fill(0),
   eqEnabled: true,
   volumeBoost: 1.0,
@@ -1341,7 +1528,7 @@ const VIRTUAL_ROW_HEIGHT = 58;
 // 15 rows × 58px = 870px of overscan above + below viewport.
 // This means rows are pre-rendered almost a full screen before they
 // scroll into view, eliminating the "blank space then rows show" stutter.
-const VIRTUAL_ROW_BUFFER_BASE = 15;
+const VIRTUAL_ROW_BUFFER_BASE = 10;
 let VIRTUAL_ROW_BUFFER = VIRTUAL_ROW_BUFFER_BASE;
 let searchDebounceTimer = null;
 let scrollEndTimer = null;
@@ -1589,7 +1776,7 @@ function _resolveCoverArtSrc(track) {
     return _getCoverArtDisplayUrl(track.coverArt);
   }
   if (track._hasCoverArt) {
-    return `nova-media://art/${encodeURIComponent(track.id)}`;
+    return `nova-media://art/${encodeURIComponent(track.id)}${track._coverVer ? `?v=${track._coverVer}` : ""}`;
   }
   if (track._thumb) {
     // _thumb can be a nova-media:// protocol URL or a data: URI
@@ -1747,12 +1934,13 @@ function scrollToCurrentTrack() {
   if (idx < 0) return;
   const area = $("track-area");
   if (!area) return;
-  const targetScrollTop = idx * VIRTUAL_ROW_HEIGHT;
+  const pitch = _measuredRowPitch();
+  const targetScrollTop = idx * pitch;
   const areaHeight = area.clientHeight;
   const currentScroll = area.scrollTop;
   if (
     targetScrollTop < currentScroll ||
-    targetScrollTop + VIRTUAL_ROW_HEIGHT > currentScroll + areaHeight
+    targetScrollTop + pitch > currentScroll + areaHeight
   ) {
     area.scrollTo({
       top: Math.max(0, targetScrollTop - areaHeight / 2),
@@ -1761,6 +1949,42 @@ function scrollToCurrentTrack() {
   }
 }
 // ─── Scroll-to-playing pill ────────────────────────────────────────
+// Real row pitch (CSS changes row height per breakpoint), measured from rendered slots
+function _measuredRowPitch() {
+  const tops = [];
+  for (const slot of virtualList.activeSlots.values()) {
+    if (slot && slot.isConnected) tops.push(slot.offsetTop);
+  }
+  tops.sort((a, b) => a - b);
+  let pitch = 0;
+  for (let i = 1; i < tops.length; i++) {
+    const d = tops[i] - tops[i - 1];
+    if (d > 0 && (!pitch || d < pitch)) pitch = d;
+  }
+  if (pitch) return pitch;
+  const first = virtualList.activeSlots.values().next().value;
+  return (first && first.offsetHeight) || VIRTUAL_ROW_HEIGHT;
+}
+
+// In view = the playing row's rendered box overlaps the scroll area by >= half its height
+function _isCurrentRowInView(area, idx) {
+  const slot = virtualList.activeSlots.get(state.currentTrack.id);
+  if (slot && slot.isConnected) {
+    const r = slot.getBoundingClientRect();
+    const a = area.getBoundingClientRect();
+    const overlap = Math.min(r.bottom, a.bottom) - Math.max(r.top, a.top);
+    return r.height > 0 && overlap >= r.height * 0.5;
+  }
+  // Row not rendered (virtualised away) → definitely out of view, unless pitch math says otherwise
+  const pitch = _measuredRowPitch();
+  const top = idx * pitch;
+  return (
+    top + pitch * 0.5 >= area.scrollTop &&
+    top + pitch * 0.5 <= area.scrollTop + area.clientHeight
+  );
+}
+let _pillRaf = 0;
+const _pillIdxCache = { items: null, len: -1, id: null, idx: -1 };
 function _updateScrollPill() {
   const pill = document.getElementById("scroll-to-track-pill");
   if (!pill) return;
@@ -1771,9 +1995,18 @@ function _updateScrollPill() {
     pill.classList.add("hidden");
     return;
   }
-  const idx = virtualList.items.findIndex(
-    (t) => t.id === state.currentTrack.id,
-  );
+  const _c = _pillIdxCache;
+  if (
+    _c.items !== virtualList.items ||
+    _c.len !== virtualList.items.length ||
+    _c.id !== state.currentTrack.id
+  ) {
+    _c.items = virtualList.items;
+    _c.len = virtualList.items.length;
+    _c.id = state.currentTrack.id;
+    _c.idx = virtualList.items.findIndex((t) => t.id === state.currentTrack.id);
+  }
+  const idx = _c.idx;
   if (idx < 0) {
     pill.classList.add("hidden");
     return;
@@ -1783,13 +2016,16 @@ function _updateScrollPill() {
     pill.classList.add("hidden");
     return;
   }
-  const rowTop = idx * VIRTUAL_ROW_HEIGHT;
-  const inView =
-    rowTop >= area.scrollTop &&
-    rowTop + VIRTUAL_ROW_HEIGHT <= area.scrollTop + area.clientHeight;
+  const inView = _isCurrentRowInView(area, idx);
   if (inView) {
     pill.classList.add("hidden");
+  } else if (
+    pill._key === state.currentTrack.id + ":" + state.isPlaying &&
+    !pill.classList.contains("hidden")
+  ) {
+    return; // already up to date — nothing to rewrite while scrolling
   } else {
+    pill._key = state.currentTrack.id + ":" + state.isPlaying;
     // Update art
     const pillArt = document.getElementById("scroll-pill-art");
     const pillTitle = document.getElementById("scroll-pill-title");
@@ -1856,11 +2092,15 @@ document.addEventListener("DOMContentLoaded", () => {
     area.addEventListener(
       "scroll",
       () => {
-        if (
-          state.activeNavSection === "library" ||
-          state.activeNavSection === "queue"
-        )
-          _updateScrollPill();
+        if (_pillRaf) return;
+        _pillRaf = requestAnimationFrame(() => {
+          _pillRaf = 0;
+          if (
+            state.activeNavSection === "library" ||
+            state.activeNavSection === "queue"
+          )
+            _updateScrollPill();
+        });
       },
       { passive: true },
     );
@@ -1894,44 +2134,82 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Draggable floating lyrics panel
+  // Draggable floating lyrics panel — custom grip, lift effect, edge snapping
   (function _wireLyricsDrag() {
     const panel = $("lyrics-panel");
     const header = panel?.querySelector(".lyrics-header");
     if (!panel || !header) return;
-    let dragging = false,
-      ox = 0,
-      oy = 0;
-    header.addEventListener("mousedown", (e) => {
-      if (!panel.classList.contains("floating")) return;
-      dragging = true;
-      const rect = panel.getBoundingClientRect();
-      ox = e.clientX - rect.left;
-      oy = e.clientY - rect.top;
-      panel.style.transition = "none";
+    const grip = document.createElement("div");
+    grip.className = "lyrics-grip";
+    header.prepend(grip);
+    const M = 12; // viewport margin
+    const SNAP = 28; // edge snap distance
+    let drag = null;
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    header.addEventListener("pointerdown", (e) => {
+      if (!panel.classList.contains("floating") || e.button > 0) return;
+      if (e.target.closest(".lyrics-action-btn")) return;
+      const r = panel.getBoundingClientRect();
+      drag = {
+        ox: e.clientX - r.left,
+        oy: e.clientY - r.top,
+        raf: 0,
+        x: r.left,
+        y: r.top,
+      };
       panel.style.bottom = "auto";
       panel.style.right = "auto";
-      panel.style.top = rect.top + "px";
-      panel.style.left = rect.left + "px";
+      panel.style.left = r.left + "px";
+      panel.style.top = r.top + "px";
+      panel.style.transition = "transform 0.18s ease, box-shadow 0.18s ease";
+      panel.classList.add("dragging");
+      document.body.classList.add("lyrics-dragging");
+      header.setPointerCapture(e.pointerId);
       e.preventDefault();
     });
-    document.addEventListener("mousemove", (e) => {
-      if (!dragging) return;
-      let nx = e.clientX - ox;
-      let ny = e.clientY - oy;
-      const pw = panel.offsetWidth,
-        ph = panel.offsetHeight;
-      nx = Math.max(0, Math.min(window.innerWidth - pw, nx));
-      ny = Math.max(0, Math.min(window.innerHeight - ph, ny));
-      panel.style.left = nx + "px";
-      panel.style.top = ny + "px";
+    header.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      drag.x = clamp(
+        e.clientX - drag.ox,
+        M,
+        innerWidth - panel.offsetWidth - M,
+      );
+      drag.y = clamp(
+        e.clientY - drag.oy,
+        M,
+        innerHeight - panel.offsetHeight - M,
+      );
+      if (!drag.raf)
+        drag.raf = requestAnimationFrame(() => {
+          if (!drag) return;
+          drag.raf = 0;
+          panel.style.left = drag.x + "px";
+          panel.style.top = drag.y + "px";
+        });
     });
-    document.addEventListener("mouseup", () => {
-      if (dragging) {
-        dragging = false;
-        panel.style.transition = "";
-      }
-    });
+    const end = () => {
+      if (!drag) return;
+      cancelAnimationFrame(drag.raf);
+      let { x, y } = drag;
+      const maxX = innerWidth - panel.offsetWidth - M;
+      const maxY = innerHeight - panel.offsetHeight - M;
+      if (x - M < SNAP) x = M;
+      else if (maxX - x < SNAP) x = maxX;
+      if (y - M < SNAP) y = M;
+      else if (maxY - y < SNAP) y = maxY;
+      drag = null;
+      panel.classList.remove("dragging");
+      document.body.classList.remove("lyrics-dragging");
+      panel.style.transition =
+        "left 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1), top 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1), transform 0.18s ease, box-shadow 0.18s ease";
+      panel.style.left = x + "px";
+      panel.style.top = y + "px";
+      setTimeout(() => {
+        if (!drag) panel.style.transition = "";
+      }, 320);
+    };
+    header.addEventListener("pointerup", end);
+    header.addEventListener("pointercancel", end);
   })();
 });
 
@@ -3033,8 +3311,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   console.log("NovaTune ready!");
 
-  
-
   // Dismiss splash screen only after the audio engine has finished buffering
   // the restored track (or after a hard cap on HDD). This ensures
   // the play button is functional the instant the user sees the main UI.
@@ -3663,6 +3939,7 @@ function _wireSidebar() {
 
   // Listener for instant hot-reload of newly downloaded tracks from Music Downloader
   if (window.novaAPI?.on) {
+    window.novaAPI.on("coverart:updated", _onCoverArtUpdated);
     window.novaAPI.on("library:track-added", async (newTrack) => {
       try {
         if (!newTrack || !newTrack.id) return;
@@ -4142,6 +4419,24 @@ function _sortTracks() {
     let vb = b[key];
     if (va === undefined || va === null) va = "";
     if (vb === undefined || vb === null) vb = "";
+
+    // Numeric comparison for duration, year, trackNumber, bitrate, fileSize
+    if (
+      key === "duration" ||
+      key === "year" ||
+      key === "trackNumber" ||
+      key === "bitrate" ||
+      key === "fileSize" ||
+      key === "sampleRate" ||
+      key === "dateAdded"
+    ) {
+      const na = Number(va) || 0;
+      const nb = Number(vb) || 0;
+      if (na < nb) return state.sortAsc ? -1 : 1;
+      if (na > nb) return state.sortAsc ? 1 : -1;
+      return 0;
+    }
+
     if (typeof va === "string") va = va.toLowerCase();
     if (typeof vb === "string") vb = vb.toLowerCase();
     if (va < vb) return state.sortAsc ? -1 : 1;
@@ -4158,12 +4453,24 @@ function _sortTracks() {
 // reused and repositioned on each hover.
 let _sidebarTooltipEl = null;
 function _initSidebarTooltipPortal() {
-  const sidebar = $("sidebar");
-  if (!sidebar) return;
+  // Global portal tooltip: every [data-tooltip] in the app renders as a
+  // <body>-level node (max z-index, position:fixed) so no ancestor overflow
+  // or stacking context can clip or cover it. Flips below when no room above.
+  let current = null;
+  let timer = null;
+
+  function clearTimer() {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  }
 
   function show(target) {
+    clearTimer();
     const text = target.getAttribute("data-tooltip");
     if (!text) return;
+    current = target;
     if (!_sidebarTooltipEl) {
       _sidebarTooltipEl = document.createElement("div");
       _sidebarTooltipEl.className = "sidebar-tooltip-portal";
@@ -4171,46 +4478,63 @@ function _initSidebarTooltipPortal() {
     }
     _sidebarTooltipEl.textContent = text;
     const rect = target.getBoundingClientRect();
-    // Position above and horizontally centered on the target, then clamp
-    // so it can overflow the sidebar freely but still stays on-screen.
     _sidebarTooltipEl.style.left = "0px";
     _sidebarTooltipEl.style.top = "0px";
     _sidebarTooltipEl.classList.add("visible");
-    // Measure after content/visibility is set so offsetWidth is accurate.
     const tw = _sidebarTooltipEl.offsetWidth;
     const th = _sidebarTooltipEl.offsetHeight;
     let left = rect.left + rect.width / 2 - tw / 2;
     left = Math.max(6, Math.min(left, window.innerWidth - tw - 6));
-    const top = rect.top - th - 10;
+    let top = rect.top - th - 10;
+    if (top < 6) top = rect.bottom + 10;
+    top = Math.max(6, Math.min(top, window.innerHeight - th - 6));
     _sidebarTooltipEl.style.left = `${left}px`;
-    _sidebarTooltipEl.style.top = `${Math.max(6, top)}px`;
+    _sidebarTooltipEl.style.top = `${top}px`;
+
+    // Auto-dismiss after 3s on hover so it won't interfere
+    timer = setTimeout(() => {
+      if (_sidebarTooltipEl) _sidebarTooltipEl.classList.remove("visible");
+    }, 3000);
   }
 
   function hide() {
+    clearTimer();
+    current = null;
     if (_sidebarTooltipEl) _sidebarTooltipEl.classList.remove("visible");
   }
 
-  // Delegate so dynamically-added sidebar content (folder list, etc.)
-  // still gets tooltips without re-binding listeners.
-  sidebar.addEventListener(
+  document.addEventListener(
     "mouseover",
     (e) => {
-      const target = e.target.closest("[data-tooltip]");
-      if (target && sidebar.contains(target)) show(target);
+      // Swap native title="" for the portal tooltip before the OS one fires.
+      const tEl = e.target.closest?.("[title]");
+      if (tEl && !(tEl instanceof SVGElement)) {
+        const t = tEl.getAttribute("title");
+        if (
+          t &&
+          (!tEl.hasAttribute("data-tooltip") || tEl.dataset.tipFromTitle)
+        ) {
+          tEl.setAttribute("data-tooltip", t);
+          tEl.dataset.tipFromTitle = "1";
+        }
+        tEl.removeAttribute("title");
+      }
+      const target = e.target.closest?.("[data-tooltip]");
+      if (target) show(target);
+      else if (current) hide();
     },
     true,
   );
-  sidebar.addEventListener(
+  document.addEventListener(
     "mouseout",
     (e) => {
-      const target = e.target.closest("[data-tooltip]");
-      if (target && sidebar.contains(target)) hide();
+      if (current && !current.contains(e.relatedTarget)) hide();
     },
     true,
   );
-  // Also hide on scroll so a stale tooltip doesn't float away from its
-  // (now-scrolled) target.
-  sidebar.addEventListener("scroll", hide);
+  document.addEventListener("mousedown", hide, true);
+  window.addEventListener("scroll", hide, true);
+  window.addEventListener("blur", hide);
 }
 
 function _wireAddFolder() {
@@ -4334,9 +4658,47 @@ function _wireAddFolder() {
   $("sidebar-quick-refresh-btn")?.addEventListener("click", async (e) => {
     e.stopPropagation();
     const btn = e.currentTarget;
-    const scanFolders = Array.isArray(state.settings.scanFolders)
-      ? state.settings.scanFolders
-      : [];
+
+    // Fetch the freshest scanFolders from settings or disk
+    try {
+      const liveSettings = await window.novaAPI.invoke("settings:get-all");
+      if (liveSettings && Array.isArray(liveSettings.scanFolders)) {
+        state.settings.scanFolders = liveSettings.scanFolders;
+      }
+    } catch (_) {}
+
+    // Gather all known scan folders plus root directories of any existing library tracks
+    const folderSet = new Set(
+      Array.isArray(state.settings.scanFolders)
+        ? state.settings.scanFolders.filter(Boolean)
+        : [],
+    );
+
+    // If tracks are already loaded, ensure all root music folders they came from are covered
+    if (Array.isArray(state.tracks)) {
+      for (const t of state.tracks) {
+        if (!t.filePath) continue;
+        const norm = t.filePath.replace(/\\/g, "/");
+        // Match against known scan folders; if track isn't within any existing scan folder, add its dir
+        let covered = false;
+        for (const f of folderSet) {
+          const fnorm = f.replace(/\\/g, "/").replace(/\/+$/, "");
+          if (norm.startsWith(fnorm + "/") || norm === fnorm) {
+            covered = true;
+            break;
+          }
+        }
+        if (!covered) {
+          const lastSlash = norm.lastIndexOf("/");
+          if (lastSlash > 0) {
+            const dir = norm.substring(0, lastSlash);
+            folderSet.add(dir.replace(/\//g, "\\"));
+          }
+        }
+      }
+    }
+
+    const scanFolders = Array.from(folderSet);
     if (scanFolders.length === 0) return;
 
     btn.classList.add("spinning");
@@ -4411,7 +4773,7 @@ function _wireAddFolder() {
       // Directly inject the new tracks into the live library — no secondary
       // round-trip needed since quick-scan already returned the track objects.
       await _applyIDBThumbs(allNewTracks);
-      state.tracks.push(...allNewTracks);
+      state.tracks.push(..._dropKnownTracks(allNewTracks));
       state.filteredTracks = [...state.tracks];
       if (state.sortKey) _sortTracks(state.sortKey, state.sortAsc);
       invalidateSectionCache();
@@ -4674,6 +5036,13 @@ const _thumbBuildInFlight = new Set(); // trackIds currently being built
 
 // Per-track thumbnail fetch deduplication map: trackId → Promise
 const _thumbFetchInFlight = new Map();
+
+function _scheduleThumbnailAtlasBuild(track) {
+  try {
+    const p = _ensureThumbInAtlas(track);
+    if (p && p.catch) p.catch(() => {});
+  } catch (_) {}
+}
 
 async function _ensureThumbInAtlas(track) {
   if (!track) return;
@@ -4994,104 +5363,189 @@ function _buildSearchTrack(track) {
  * Updates track.coverArt in-place and refreshes the visible row.
  */
 async function _resolveCoverArt(track) {
-  if (!track) return;
-
-  // Revolutionary: If track has _hasCoverArt flag (base64 was stripped from library:get-all),
-  // use nova-media://art/{trackId} to serve it from the main process's SQLite cache.
-  // This is the key fix that makes ALL embedded cover art display without re-fetching.
+  if (!track || !window.novaAPI) return;
   if (!track.coverArt && track._hasCoverArt) {
-    track.coverArt = `nova-media://art/${encodeURIComponent(track.id)}`;
+    track.coverArt = `nova-media://art/${encodeURIComponent(track.id)}${track._coverVer ? `?v=${track._coverVer}` : ""}`;
     _applyCoverArtToTrack(track);
     return;
   }
-
   if (track.coverArt) return;
-
-  // Album-level dedup: all tracks sharing same album reuse one fetch
-  const albumKey =
-    `${getArtistText(track)}::${track.album || ""}`.toLowerCase();
-  if (_albumArtCache.has(albumKey)) {
-    const url = await _albumArtCache.get(albumKey);
-    if (url) {
-      track.coverArt = url;
+  if (_coverArtSearchCache.get(track.id) === null) return;
+  // Backend does strict local → album sibling → verified online (artist/title/duration matched)
+  try {
+    const res = await window.novaAPI.invoke("coverart:refill-track", {
+      trackId: track.id,
+      force: false,
+      auto: true,
+    });
+    if (res?.success && res.coverArt) {
+      track.coverArt = res.coverArt;
+      track._hasCoverArt = true;
       _applyCoverArtToTrack(track);
+      return;
     }
-    return;
-  }
+  } catch (_) {}
+  _coverArtSearchCache.set(track.id, null);
+}
 
-  // Exhaustive resolution chain: try EVERY source before giving up
-  const fetchPromise = (async () => {
-    // 1. Sidecar files (folder.jpg, cover.jpg, AlbumArt*.jpg, etc.)
-    const sidecar = await _findSidecarCoverArt(track);
-    if (sidecar) return sidecar;
-    // 2. Exhaustive filesystem search (deep directory scan, parent/subdir walk)
-    const exhaustive = await _exhaustiveSearchForTrack(track);
-    if (exhaustive) return exhaustive;
-    // v1.1.4 — 3. Sibling cover fallback: find another track in the same
-    // folder that has cover art. This is the KEY fix for YouTube rips
-    // (don_toliver_high_unreleased__yaxBLgIoHuI_140.mp3) which have no
-    // embedded art and no sidecar — if any other song in the same folder
-    // has art, use it. Visually all songs in a folder share the same
-    // album cover anyway.
-    try {
-      const sibling = await window.novaAPI.invoke("coverart:sibling-cover", {
-        trackId: track.id,
-      });
-      if (sibling?.success && sibling.coverArt) {
-        console.log(
-          `[CoverArt] Sibling cover for "${track.title}": from "${sibling.sourceTitle}"`,
-        );
-        // If the sibling's coverArt is a data: URI or file path, return as-is.
-        // If it's a nova-media:// URL, also return as-is.
-        return sibling.coverArt;
+/**
+ * Robust per-track cover art refill.
+ * Calls coverart:refill-track IPC (validates real image, searches filesystem + iTunes/Deezer).
+ * force=true clears existing art first (from actions menu "Refill Cover Art").
+ */
+function _showCoverArtToast(msg, ms = 3200) {
+  const existing = document.querySelector(".action-toast");
+  if (existing) existing.remove();
+  const toast = document.createElement("div");
+  toast.className = "action-toast";
+  toast.innerHTML = `<span class="action-toast-title" style="max-width:70vw">${escapeHtml(msg)}</span>`;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add("visible"));
+  setTimeout(() => {
+    toast.classList.remove("visible");
+    setTimeout(() => toast.remove(), 300);
+  }, ms);
+}
+
+async function _refillTrackCoverArt(track, force = false, pick = false) {
+  if (!track || !window.novaAPI) return;
+  _showCoverArtToast(
+    pick
+      ? "Choose an image…"
+      : `Searching cover art for "${track.title || "track"}"…`,
+    30000,
+  );
+  const rows = document.querySelectorAll(`[data-track-id="${track.id}"]`);
+  rows.forEach((r) => (r.style.opacity = "0.5"));
+  try {
+    const res = await window.novaAPI.invoke(
+      pick ? "coverart:pick-file" : "coverart:refill-track",
+      { trackId: track.id, force },
+    );
+    if (res?.cancelled) {
+      _showCoverArtToast("Cancelled");
+    } else if (!res?.success) {
+      _showCoverArtToast(res?.error || "Cover art refill failed");
+    } else if (res.coverArt && res.changed) {
+      const m = res.matched
+        ? ` (${res.matched.artist} – ${res.matched.title})`
+        : "";
+      _showCoverArtToast(
+        res.source === "online"
+          ? res.provider
+            ? `Cover from ${res.provider === "youtube-music" ? "YouTube Music" : "YouTube"} ✓${m}`
+            : `Cover found online ✓${m}`
+          : "Cover art updated ✓",
+      );
+    } else if (res.coverArt) {
+      _showCoverArtToast(
+        res.note
+          ? "No better match found — kept current art"
+          : "Cover art verified ✓",
+      );
+    } else {
+      _showCoverArtToast(
+        res.cleared
+          ? "Bad cover removed — no verified match found"
+          : "No verified cover art found",
+      );
+    }
+    if (res?.meta) {
+      for (const t of [
+        state.tracks.find((x) => x.id === track.id),
+        state.currentTrack?.id === track.id ? state.currentTrack : null,
+      ])
+        if (t) Object.assign(t, res.meta, { _userEdited: true });
+      _repaintTrackRow(track.id);
+      _showCoverArtToast(`Filled ${Object.keys(res.meta).join(", ")} ✓`);
+    }
+  } catch (err) {
+    console.error("[RefillArt]", err);
+    _showCoverArtToast("Cover art refill error");
+  } finally {
+    rows.forEach((r) => (r.style.opacity = ""));
+  }
+}
+
+// Backend pushes every cover change (refill, repair, manual pick, audit)
+function _onCoverArtUpdated({ trackId, coverArt, version } = {}) {
+  if (!trackId) return;
+  thumbnailAtlas.delete(trackId);
+  _idbSet(`batch96::${trackId}`, null);
+  _trackThumbHot.delete(trackId);
+  delete _trackThumbPatchPending[trackId];
+  _idbSet(`trackThumb::${trackId}`, null);
+  _coverArtSearchCache.delete(trackId);
+  const t = (state.tracks || []).find((x) => x.id === trackId);
+  if (!t) return;
+  t._coverVer = version;
+  _invalidatePlaylistCollagesForTrack(trackId);
+  if (coverArt) {
+    t.coverArt = coverArt;
+    t._hasCoverArt = true;
+    _applyCoverArtToTrack(t);
+  } else {
+    t.coverArt = null;
+    t._hasCoverArt = false;
+    _repaintTrackRow(trackId);
+  }
+}
+
+// Rebuild one visible row in place (renderVirtualRows skips already-active slots)
+function _repaintTrackRow(trackId) {
+  const slot = virtualList.activeSlots.get(trackId);
+  if (!slot) return;
+  const i = parseInt(slot.dataset.idx, 10);
+  const t = virtualList.items[i];
+  if (t && t.id === trackId) {
+    _populateSlot(slot, t, i);
+    slot._trackId = trackId;
+  }
+}
+
+/**
+ * Batch refill all missing cover art in the library.
+ * Called from Settings → "Refill Thumbnails" button.
+ */
+async function _refillAllCoverArt(btn) {
+  if (!window.novaAPI) return;
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Scanning…";
+
+  // Listen for per-track progress
+  const progressHandler = (data) => {
+    if (data && data.total > 0) {
+      btn.textContent = `Filling… ${data.filled}/${data.total}`;
+    }
+  };
+  window.novaAPI.on?.("coverart:refill-progress", progressHandler);
+
+  try {
+    const res = await window.novaAPI.invoke("coverart:refill-all", {
+      force: false,
+    });
+    if (res?.success) {
+      _showCoverArtToast(
+        `Cover art done — ${res.filled} filled, ${res.repaired || 0} bad removed, ${res.skipped} unmatched${res.cancelled ? " (cancelled)" : ""}`,
+      );
+      // Re-resolve art for tracks that got filled
+      if (res.filled > 0 && state.tracks) {
+        for (const t of state.tracks) {
+          if (!t.coverArt && !t._hasCoverArt) continue;
+          _coverArtSearchCache.delete(t.id);
+          _applyCoverArtToTrack(t);
+        }
       }
-    } catch (_) {}
-    // 4. iTunes API (high quality, up to 3000x3000)
-    // v1.1.4 — For tracks with "Unknown Artist" (YouTube rips via the
-    // underscore parser), extract the first 1-2 words from the title
-    // as the artist for the search. e.g. "Don Toliver High (Unreleased)"
-    // → search artist="Don Toliver", title="High".
-    const searchTrack = _buildSearchTrack(track);
-    const itunes = await _searchiTunesArt(searchTrack);
-    if (itunes) return itunes;
-    // 5. Deezer API (fallback, often has different coverage)
-    const deezer = await _searchDeezerArt(searchTrack);
-    if (deezer) return deezer;
-    return null;
-  })();
-
-  _albumArtCache.set(albumKey, fetchPromise);
-  const url = await fetchPromise;
-  if (!url) {
-    _coverArtSearchCache.set(track.id, null);
-    return;
-  }
-
-  track.coverArt = url;
-  _applyCoverArtToTrack(track);
-
-  // ALWAYS persist online art to disk so it survives offline restarts.
-  // This is critical: if we found art online, we must download it so
-  // next launch doesn't need network access to show it.
-  if (window.novaAPI) {
-    // Persist any URL that isn't already a local file path
-    const isLocalPath =
-      url.startsWith("file://") ||
-      url.startsWith("/") ||
-      url.match(/^[A-Za-z]:\\/);
-    const isProtocolUrl = url.startsWith("nova-media://");
-    if (!isLocalPath && !isProtocolUrl) {
-      window.novaAPI
-        .invoke("coverart:save", { trackId: track.id, url })
-        .then((res) => {
-          if (res?.success && res.localPath) {
-            track.coverArt = res.localPath;
-            // Invalidate any playlist collages containing this track
-            _invalidatePlaylistCollagesForTrack(track.id);
-          }
-        })
-        .catch(() => {});
+    } else {
+      _showCoverArtToast("Refill failed: " + (res?.error || "unknown error"));
     }
+  } catch (err) {
+    _showCoverArtToast("Refill error");
+  } finally {
+    window.novaAPI.off?.("coverart:refill-progress", progressHandler);
+    btn.disabled = false;
+    btn.textContent = origText;
   }
 }
 
@@ -5141,14 +5595,7 @@ function _applyCoverArtToTrack(track) {
         });
         thumbnailAtlas.set(track.id, bitmap);
       } catch (_) {}
-      // Refresh the row in the virtual list
-      const slot = virtualList.activeSlots.get(track.id);
-      if (slot) {
-        slot._trackId = null; // force repopulate
-      }
-      virtualList.lastStart = -1;
-      virtualList.lastEnd = -1;
-      renderVirtualRows();
+      _repaintTrackRow(track.id);
       // Also refresh now-playing UI if this is the active track
       if (state.currentTrack && state.currentTrack.id === track.id) {
         const artIdx = getArtIndex(track);
@@ -6311,7 +6758,7 @@ async function _partialLibraryUpdate() {
 
     // Add new tracks
     if (newTracks.length > 0) {
-      state.tracks.push(...newTracks);
+      state.tracks.push(..._dropKnownTracks(newTracks));
     }
 
     // Update filtered tracks
@@ -6528,7 +6975,7 @@ async function _loadRemainingPages(startPage, pageSize, totalTracks) {
       });
       if (result?.success && result.tracks?.length > 0) {
         await _applyIDBThumbs(result.tracks);
-        state.tracks.push(...result.tracks);
+        state.tracks.push(..._dropKnownTracks(result.tracks));
       }
     } catch (err) {
       console.warn(`[progressive] Failed to load page ${page}:`, err.message);
@@ -6671,6 +7118,9 @@ async function _loadSettings() {
     if (state.settings.sortKey) state.sortKey = state.settings.sortKey;
     if (typeof state.settings.sortAsc === "boolean")
       state.sortAsc = state.settings.sortAsc;
+    try {
+      localStorage.setItem("novatune_settings", JSON.stringify(state.settings));
+    } catch (_) {}
     state.customQueues = Array.isArray(state.settings.customQueues)
       ? state.settings.customQueues
       : [];
@@ -6695,6 +7145,9 @@ async function _loadSettings() {
 
 async function saveSetting(key, value) {
   state.settings[key] = value;
+  try {
+    localStorage.setItem("novatune_settings", JSON.stringify(state.settings));
+  } catch (_) {}
   try {
     await window.novaAPI.invoke("settings:set", key, value);
   } catch (err) {
@@ -7440,7 +7893,9 @@ function _applyUiScale(scale) {
  * "firefly"  = glowing pulsing head with a fading light-trail behind it
  */
 function _applySquigglyThumbStyle(style) {
-  const s = ["amoeba", "snake", "pacman", "ant", "firefly"].includes(style)
+  const s = ["amoeba", "boring", "snake", "pacman", "ant", "firefly"].includes(
+    style,
+  )
     ? style
     : "circle";
   if (squigglyNP) squigglyNP.setThumbStyle(s);
@@ -7979,6 +8434,23 @@ function renderSettings() {
         ${foldersListHtml}
         <button class="settings-row action" id="settings-open-library" style="margin-top:12px;">Back to Music Library</button>
       </div>
+
+      <!-- Row 6: Cover Art -->
+      <div class="section-panel">
+        <div class="section-panel-title">Cover Art</div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;">Auto-fills missing album art by searching your music files, then iTunes &amp; Deezer online. Only fills tracks with no valid cover art.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="settings-row action" id="settings-refill-thumbs" style="flex:1;min-width:140px;margin-bottom:0;display:flex;align-items:center;gap:7px;justify-content:center;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            Refill Thumbnails
+          </button>
+          <button class="settings-row action" id="settings-refill-thumbs-force" style="flex:1;min-width:140px;margin-bottom:0;background:var(--surface);display:flex;align-items:center;gap:7px;justify-content:center;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Re-search All Art
+          </button>
+        </div>
+        <div id="refill-art-status" style="font-size:11px;color:var(--text-muted);margin-top:8px;min-height:16px;"></div>
+      </div>
     </div>
 
     <div style="height:30px;"></div>
@@ -8328,6 +8800,51 @@ function renderSettings() {
   $("settings-open-library")?.addEventListener("click", () =>
     navigateFromSurface("library"),
   );
+
+  // ── Refill Thumbnails (missing art only) ──
+  $("settings-refill-thumbs")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const statusEl = $("refill-art-status");
+    if (statusEl) statusEl.textContent = "Searching for missing cover art…";
+    await _refillAllCoverArt(btn);
+    if (statusEl) statusEl.textContent = "Done!";
+    setTimeout(() => {
+      if (statusEl) statusEl.textContent = "";
+    }, 4000);
+  });
+
+  // ── Re-search All Art (force: re-searches even existing art) ──
+  $("settings-refill-thumbs-force")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const statusEl = $("refill-art-status");
+    if (statusEl) statusEl.textContent = "Re-searching art for all tracks…";
+    btn.disabled = true;
+    btn.textContent = "Re-searching…";
+    try {
+      const res = await window.novaAPI.invoke("coverart:refill-all", {
+        force: true,
+      });
+      if (res?.success) {
+        _showCoverArtToast(`Re-search done — ${res.filled} art(s) updated`);
+        if (statusEl)
+          statusEl.textContent = `Done — ${res.filled} updated, ${res.skipped} skipped`;
+        setTimeout(() => {
+          if (statusEl) statusEl.textContent = "";
+        }, 5000);
+        if (res.filled > 0 && state.tracks) {
+          for (const t of state.tracks) {
+            _coverArtSearchCache.delete(t.id);
+            _applyCoverArtToTrack(t);
+          }
+        }
+      }
+    } catch (_) {
+      if (statusEl) statusEl.textContent = "Error during re-search";
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Re-search All Art";
+    }
+  });
 
   // Refresh all folders
   $("settings-refresh-all")?.addEventListener("click", async () => {
@@ -9343,7 +9860,7 @@ function closePlaylistMenus() {
  * Shows: Add to Playlist →, Add Next to Queue, Tag Editor, Delete Song.
  * "Add to Playlist" opens a sub-popup with playlist list.
  */
-function openActionsMenu(anchor, track) {
+function openActionsMenu(anchor, track, opts = {}) {
   // TOGGLE BEHAVIOR: same anchor → close
   if (_playlistMenuOpener && _playlistMenuOpener === anchor) {
     closePlaylistMenus();
@@ -9355,10 +9872,14 @@ function openActionsMenu(anchor, track) {
   _playlistMenuOpener = anchor;
   const isInQueue = virtualList.mode === "queue";
 
+  const trackTitle = (track.title || "Unknown").trim();
   const menu = document.createElement("div");
   menu.className = "playlist-popover track-context-menu actions-menu";
   menu.innerHTML = `
-    <div class="playlist-popover-title">Actions</div>
+    <div class="playlist-popover-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <span>Actions</span>
+      <span class="actions-header-track-title" title="${escapeHtml(trackTitle)}" style="font-weight:500;font-size:10.5px;text-transform:none;opacity:0.5;max-width:125px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:normal;">${escapeHtml(trackTitle)}</span>
+    </div>
     <button type="button" data-action="add-to-playlist" class="action-has-sub">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;vertical-align:-2px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><circle cx="12" cy="12" r="3"/></svg>
       Add to Playlist
@@ -9380,7 +9901,23 @@ function openActionsMenu(anchor, track) {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;vertical-align:-2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
       Properties
     </button>
+    <button type="button" data-action="refill-art">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;vertical-align:-2px;"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+      Refill Cover Art
+    </button>
+    <button type="button" data-action="pick-art">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;vertical-align:-2px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Choose Cover Art…
+    </button>
     <div class="context-menu-divider"></div>
+    ${
+      opts.onRemove
+        ? `<button type="button" class="context-menu-danger" data-action="remove-from-card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex-shrink:0;vertical-align:-2px;"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      ${escapeHtml(opts.removeLabel || "Remove")}
+    </button>`
+        : ""
+    }
     <button type="button" class="context-menu-danger" data-action="delete">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex-shrink:0;vertical-align:-2px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
       ${isInQueue ? "Remove from Queue" : "Delete Song"}
@@ -9493,6 +10030,26 @@ function openActionsMenu(anchor, track) {
     if (btn.dataset.action === "properties") {
       closePlaylistMenus();
       _openTrackProperties(track);
+      return;
+    }
+
+    if (btn.dataset.action === "pick-art") {
+      closePlaylistMenus();
+      _refillTrackCoverArt(track, false, true);
+      return;
+    }
+
+    // ── Refill Cover Art ──
+    if (btn.dataset.action === "refill-art") {
+      closePlaylistMenus();
+      _refillTrackCoverArt(track, true);
+      return;
+    }
+
+    // ── Card-specific: remove from playlist/card ──
+    if (btn.dataset.action === "remove-from-card") {
+      closePlaylistMenus();
+      await opts.onRemove?.();
       return;
     }
 
@@ -11196,7 +11753,9 @@ function _showFinalFallback(img) {
           Math.abs((img.dataset.artPath || "").hashCode?.() || 0) % 8;
         const placeholder = document.createElement("div");
         placeholder.className = `art-placeholder art-${artIdx}`;
-        placeholder.innerHTML = "&#127925;";
+        placeholder.innerHTML = img.closest("[data-card-type='artist']")
+          ? _ARTIST_ICON_SVG
+          : "&#127925;";
         placeholder.style.cssText =
           "width:100%;height:100%;display:flex;align-items:center;justify-content:center;";
         albumCover.appendChild(placeholder);
@@ -11219,7 +11778,9 @@ function _showFinalFallback(img) {
   const artIdx = Math.abs((img.dataset.artPath || "").hashCode?.() || 0) % 8;
   const placeholder = document.createElement("div");
   placeholder.className = `art-placeholder art-${artIdx}`;
-  placeholder.innerHTML = "&#127925;";
+  placeholder.innerHTML = img.closest("[data-card-type='artist']")
+    ? _ARTIST_ICON_SVG
+    : "&#127925;";
   placeholder.style.cssText = "position:absolute;inset:0;z-index:2;";
   container.appendChild(placeholder);
 }
@@ -11456,7 +12017,50 @@ function renderHelp() {
 
       <div class="help-sections">
         <div class="section-panel" id="help-updates-section">
-          <div class="section-panel-title">What's New in v1.1.11</div>
+          <div class="section-panel-title">What's New in v2.0.3</div>
+
+          <div class="help-item">
+            <div class="help-item-title">🎛️ Song Actions Everywhere</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>Full Actions Menu in Playlists:</strong> Song rows in playlist cards now open the same Actions menu as the Music Library (button or right-click), with a dedicated <strong>Remove from Playlist</strong> option kept right inside it.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="help-item">
+            <div class="help-item-title">💿 Interactive Vinyl &amp; Tonearm</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>Realistic Tonearm:</strong> The no-lyrics vinyl now has a detailed tonearm that rests beside the record when paused and swings onto it when playing, subtly tinted with your accent color.</li>
+                <li><strong>Click to Play / Pause:</strong> Click the vinyl to pause or resume the current song.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="help-item">
+            <div class="help-item-title">⌨️ Refresh Shortcuts</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>Ctrl+R:</strong> Quick Refresh &mdash; picks up new songs only.</li>
+                <li><strong>Ctrl+F5:</strong> Full Refresh &mdash; rescans your whole library.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="help-item">
+            <div class="help-item-title">🛠️ Bug Fixes &amp; Improvements</div>
+            <div class="help-item-body" style="padding-left: 15px;">
+              <ul style="padding-left: 10px;">
+                <li><strong>Tooltips Always on Top:</strong> Tooltips now render above every card and panel, and are never clipped by overflow.</li>
+                <li><strong>Boring Progress Style:</strong> The Boring style now shows a true straight progress bar instead of falling back to the squiggle.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-panel" id="help-updates-section-prev-1111">
+          <div class="section-panel-title">Previously in v1.1.11</div>
 
           <div class="help-item">
             <div class="help-item-title">📥 Fast Music Downloader Engine</div>
@@ -11636,6 +12240,8 @@ function renderHelp() {
             <div class="help-shortcut"><kbd>Ctrl+L</kbd><span>Switch to Light Mode</span></div>
             <div class="help-shortcut"><kbd>Ctrl+D</kbd><span>Switch to Dark Mode</span></div>
             <div class="help-shortcut"><kbd>Ctrl+F</kbd> / <kbd>/</kbd><span>Focus Search</span></div>
+            <div class="help-shortcut"><kbd>Ctrl+R</kbd><span>Quick Refresh (New Songs)</span></div>
+            <div class="help-shortcut"><kbd>Ctrl+F5</kbd><span>Full Refresh</span></div>
             <div class="help-shortcut"><kbd>Esc</kbd><span>Close Overlay / Dialog</span></div>
             <div class="help-shortcut"><kbd>F11</kbd><span>Close Overlay</span></div>
           </div>
@@ -11687,7 +12293,7 @@ function renderHelp() {
       </div>
 
       <div class="help-footer" style="text-align:center;padding:24px 0 12px;color:var(--text-muted);font-size:12px;">
-        NovaTune v1.1.8 &bull; Made by SIR ALEX for music lovers
+        NovaTune v2.0.3 &bull; Made by SIR ALEX for music lovers
       </div>
     </div>
   `);
@@ -12382,9 +12988,13 @@ function _openArtistImageEditor(artistName) {
   modal.classList.add("aie-open");
 }
 
+const _ARTIST_ICON_SVG =
+  '<svg viewBox="0 0 24 24" fill="currentColor" style="width:45%;height:45%;color:rgba(0,0,0,0.35)"><circle cx="12" cy="8" r="4.5"/><path d="M3.5 21c0-4.7 3.8-7.5 8.5-7.5s8.5 2.8 8.5 7.5z"/></svg>';
+
 function _makeArtistCard(artist) {
   const card = document.createElement("div");
   card.className = "album-card";
+  card.dataset.cardType = "artist";
   card.dataset.cardKey = artist.key;
   const coverDiv = document.createElement("div");
   coverDiv.className = "album-cover";
@@ -12430,7 +13040,7 @@ function _makeArtistCard(artist) {
     coverDiv.appendChild(container);
     _attachEagerThumb(img, effectiveCoverArt, 200, artTrackId);
   } else {
-    coverDiv.innerHTML = `<div class="art-placeholder art-${getArtIndex(artist.tracks[0])}">&#127925;</div>`;
+    coverDiv.innerHTML = `<div class="art-placeholder art-${getArtIndex(artist.tracks[0])}">${_ARTIST_ICON_SVG}</div>`;
   }
 
   card.appendChild(coverDiv);
@@ -12535,7 +13145,7 @@ function renderArtistDetail(artistKey) {
   // REVFIX v1: Wrap artist detail image in .cover-img-container (same fix as album detail)
   const coverHtml = effectiveCoverArt
     ? `<div class="cover-img-container" style="background-color:${_getDominantColorForTrack(artist.tracks[0])}"><img id="artist-detail-cover-img" alt=""></div>`
-    : `<div class="art-placeholder art-${getArtIndex(artist.tracks[0])}">&#127925;</div>`;
+    : `<div class="art-placeholder art-${getArtIndex(artist.tracks[0])}">${_ARTIST_ICON_SVG}</div>`;
   renderSectionSurface(`
     <div class="playlist-detail-header">
       <button class="playlist-back-btn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;vertical-align:-2px;"><polyline points="15 18 9 12 15 6"/></svg> Back</button>
@@ -13038,7 +13648,12 @@ function _createTrackRow(track, contextQueue, sourceContext) {
       const idx = contextQueue.findIndex((t) => t.id === track.id);
       const before = idx >= 0 ? contextQueue.slice(0, idx) : [];
       const after = idx >= 0 ? contextQueue.slice(idx + 1) : contextQueue;
-      state.queue = [track, ...after, ...before];
+      const rest = [...after, ...before];
+      state.queue = [
+        track,
+        ...(state.shuffleEnabled ? _fastShuffle(rest) : rest),
+      ];
+      state.queueSource = sourceContext || null;
     } else {
       // Default: queue starts with clicked track, then continues through the
       // rest of the list in its current sort order (wrap-around).
@@ -13225,7 +13840,6 @@ function renderPlaylistDetail(playlistId) {
     row.appendChild(dotsBtn);
     row.addEventListener("click", () => {
       prefetchLyrics(track); // start lyrics race before audio init
-      state.shuffleEnabled = false;
       state.queueSource = { type: "playlist", name: playlist.name };
       // BUGFIX: Previously the queue was built as `[track, ...remaining]`
       // where `remaining = tracks.filter(t => t.id !== track.id)`. This put
@@ -13239,35 +13853,24 @@ function renderPlaylistDetail(playlistId) {
       // always advances through the playlist in its original arrangement.
       const clickedIdx = tracks.findIndex((t) => t.id === track.id);
       if (clickedIdx >= 0) {
-        const after = tracks.slice(clickedIdx); // [clicked, ...rest in order]
-        const before = tracks.slice(0, clickedIdx); // [tracks before clicked]
-        state.queue = [...after, ...before];
+        const rest = [
+          ...tracks.slice(clickedIdx + 1),
+          ...tracks.slice(0, clickedIdx),
+        ];
+        state.queue = [
+          track,
+          ...(state.shuffleEnabled ? _fastShuffle(rest) : rest),
+        ];
       } else {
         // Fallback (shouldn't happen) — old behaviour
         state.queue = [track, ...tracks.filter((t) => t.id !== track.id)];
       }
       state.queueIndex = 0;
-      $("shuffle-btn").classList.remove("active");
       playTrack(track);
     });
-    dotsBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      // Toggle remove pill
-      const existing = row.querySelector(".playlist-remove-pill");
-      if (existing) {
-        existing.remove();
-        return;
-      }
-      // Close any other open pills
-      document
-        .querySelectorAll(".playlist-remove-pill")
-        .forEach((p) => p.remove());
-      const pill = document.createElement("button");
-      pill.className = "playlist-remove-pill";
-      pill.type = "button";
-      pill.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg> Remove`;
-      pill.addEventListener("click", async (ev) => {
-        ev.stopPropagation();
+    row._menuOpts = {
+      removeLabel: "Remove from Playlist",
+      onRemove: async () => {
         const result = await window.novaAPI.invoke(
           "playlist:remove-track",
           playlist.id,
@@ -13278,15 +13881,17 @@ function renderPlaylistDetail(playlistId) {
             (p) => p.id === playlist.id,
           );
           if (playlistIdx >= 0) state.playlists[playlistIdx] = result.playlist;
-          // Invalidate collage cache since track list changed
           _invalidateCollageCache(playlist.id);
           _syncHeartButton();
           _activePanelTarget = _getPanel("playlists");
           renderPlaylistDetail(playlist.id);
           _activePanelTarget = null;
         }
-      });
-      row.appendChild(pill);
+      },
+    };
+    dotsBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openActionsMenu(dotsBtn, track, row._menuOpts);
     });
     list.appendChild(row);
   });
@@ -13319,14 +13924,47 @@ function getArtIndex(track) {
   return Math.abs(hash) % 5; // match CSS art‑gradient classes (0‑4)
 }
 
+// Slots are keyed by track id — a duplicate id in the list leaves an empty
+// gap at its first index. Returns the same array when already unique.
+function _uniqueById(list) {
+  const seen = new Set();
+  let dup = false;
+  for (let i = 0; i < list.length; i++) {
+    const id = list[i] && list[i].id;
+    if (seen.has(id)) {
+      dup = true;
+      break;
+    }
+    seen.add(id);
+  }
+  if (!dup) return list;
+  seen.clear();
+  return list.filter((t) => {
+    if (!t || seen.has(t.id)) return false;
+    seen.add(t.id);
+    return true;
+  });
+}
+
+// Drop incoming tracks already in state.tracks (and dupes within the batch).
+function _dropKnownTracks(incoming) {
+  const known = new Set(state.tracks.map((t) => t.id));
+  return incoming.filter((t) => {
+    if (!t || known.has(t.id)) return false;
+    known.add(t.id);
+    return true;
+  });
+}
+
 function renderTracks(list, mode = "library") {
   const container = $("track-list");
   const headers = $("col-headers");
   if (headers) headers.style.display = _colHeadersAllowed() ? "" : "none";
   container.className = "virtual-track-list";
   container.innerHTML = "";
-  virtualList.items = Array.isArray(list) ? list : [];
+  virtualList.items = _uniqueById(Array.isArray(list) ? list : []);
   virtualList.mode = mode;
+  virtualList._sig = _listSig(list);
   if (virtualList.raf) {
     cancelAnimationFrame(virtualList.raf);
     virtualList.raf = 0;
@@ -13386,6 +14024,72 @@ function renderTracks(list, mode = "library") {
     `${virtualList.items.length} track${virtualList.items.length !== 1 ? "s" : ""} \u2022 ${calcTotalDuration(virtualList.items)}`;
 }
 
+// ── Live list sync ─────────────────────────────────────────────────────────
+// Queue / library views are a function of state: when the source list changes
+// (queue edits, downloads, scans) the visible rows update in place — scroll kept.
+function _listSig(list) {
+  if (!Array.isArray(list)) return "";
+  let h = list.length;
+  for (let i = 0; i < list.length; i++) {
+    const id = list[i] && list[i].id;
+    if (id)
+      h =
+        (Math.imul(h, 31) +
+          id.length +
+          id.charCodeAt(0) +
+          id.charCodeAt(id.length >> 1) +
+          id.charCodeAt(id.length - 1)) |
+        0;
+  }
+  return `${h}:${list.length}`;
+}
+
+function _refreshListInPlace(list, mode) {
+  const win = $("virtual-track-window");
+  const spacer = win && win.parentElement;
+  if (!win || !spacer || !list.length || !virtualList.items.length)
+    return renderTracks(list, mode); // empty ↔ filled transitions
+  const prev = new Set(virtualList.items.map((t) => t.id));
+  virtualList.items = _uniqueById(list);
+  virtualList._sig = _listSig(list);
+  const h =
+    virtualList.items.length * VIRTUAL_ROW_HEIGHT + (mode === "queue" ? 80 : 0);
+  spacer.style.height = h + "px";
+  win.style.height = h + "px";
+  virtualList.lastStart = -1;
+  virtualList.lastEnd = -1;
+  renderVirtualRows();
+  for (const [id, slot] of virtualList.activeSlots) {
+    if (mode === "queue") {
+      const b = slot.querySelector(".queue-num-badge");
+      if (b) b.textContent = parseInt(slot.dataset.idx, 10) + 1;
+    }
+    if (!prev.has(id)) {
+      slot.classList.add("row-enter");
+      slot.addEventListener(
+        "animationend",
+        () => slot.classList.remove("row-enter"),
+        { once: true },
+      );
+    }
+  }
+  $("content-subtitle").textContent =
+    `${virtualList.items.length} track${virtualList.items.length !== 1 ? "s" : ""} \u2022 ${calcTotalDuration(virtualList.items)}`;
+}
+
+setInterval(() => {
+  if (document.hidden) return;
+  const sec = state.activeNavSection;
+  const list =
+    sec === "queue"
+      ? state.queue
+      : sec === "library"
+        ? state.filteredTracks
+        : null;
+  if (!list || virtualList.mode !== sec || _queueDragSrcIdx >= 0) return;
+  if (_listSig(list) !== virtualList._sig) _refreshListInPlace(list, sec);
+}, 400);
+
 // Pre-allocate a fixed pool of row <div> elements.
 // Each slot uses position:absolute + transform:translateY so it can be
 // recycled independently. translateY triggers only compositing (no layout).
@@ -13410,7 +14114,6 @@ function _ensureSlotPool() {
     row.style.right = "0";
     row.style.height = VIRTUAL_ROW_HEIGHT + "px";
     row.style.transform = "translateY(0)";
-    row.style.willChange = "transform";
     row.style.display = "none";
     row._trackId = null;
     pool.push(row);
@@ -13419,6 +14122,7 @@ function _ensureSlotPool() {
   virtualList.poolSize = Math.max(virtualList.poolSize, needed);
 }
 
+let _scrollEndTimer = 0;
 function scheduleVirtualRender() {
   // ── Velocity-gated overscan ──
   const now = performance.now();
@@ -13434,12 +14138,23 @@ function scheduleVirtualRender() {
         // 15 × 3 = 45 rows of overscan = ~2600px above + below.
         // This is a lot of DOM but each row is just a <div> with innerHTML —
         // the bitmap canvas is only drawn if the bitmap exists.
-        VIRTUAL_ROW_BUFFER = VIRTUAL_ROW_BUFFER_BASE * 3;
+        VIRTUAL_ROW_BUFFER = VIRTUAL_ROW_BUFFER_BASE * 2;
       }
     }
     _lastScrollTop = currentScrollTop;
     _lastScrollTime = now;
   }
+
+  if (area && !area.classList.contains("is-scrolling")) {
+    const _w = $("virtual-track-window");
+    if (!_w || !_w.classList.contains("drag-selecting"))
+      area.classList.add("is-scrolling");
+  }
+  clearTimeout(_scrollEndTimer);
+  _scrollEndTimer = setTimeout(() => {
+    const a = $("track-area");
+    if (a) a.classList.remove("is-scrolling");
+  }, 120);
 
   clearTimeout(_velocityIdleTimer);
   _velocityIdleTimer = setTimeout(() => {
@@ -13449,6 +14164,13 @@ function scheduleVirtualRender() {
       renderVirtualRows();
     }
     _scrollVelocity = 0;
+    // Fill in thumbnails that were deferred during the fast scroll.
+    for (const [trackId, slot] of virtualList.activeSlots) {
+      if (!slot._thumbDeferred) continue;
+      const i = parseInt(slot.dataset.idx, 10);
+      const t = virtualList.items[i];
+      if (t && t.id === trackId) _populateSlot(slot, t, i);
+    }
   }, 150);
 
   if (virtualList.raf) return;
@@ -13514,7 +14236,6 @@ function renderVirtualRows() {
       row.style.right = "0";
       row.style.height = VIRTUAL_ROW_HEIGHT + "px";
       row.style.transform = "translateY(0)";
-      row.style.willChange = "transform";
       row.style.display = "none";
       row._trackId = null;
       virtualList.slotPool.push(row);
@@ -13536,7 +14257,7 @@ function renderVirtualRows() {
       // When songs are prepended or re-sorted, existing active slots shift their index.
       // If translateY isn't updated, rows remain stuck at their old offset, creating huge uneven gaps.
       const slot = activeSlots.get(trackId);
-      const targetTransform = `translateY(${Math.round(i * VIRTUAL_ROW_HEIGHT)}px)`;
+      const targetTransform = _rowY(i);
       if (slot.style.transform !== targetTransform) {
         slot.style.transform = targetTransform;
       }
@@ -13565,14 +14286,20 @@ function renderVirtualRows() {
       slot.style.left = "0";
       slot.style.right = "0";
       slot.style.height = VIRTUAL_ROW_HEIGHT + "px";
-      slot.style.willChange = "transform";
       slot._trackId = null;
       virtualList.slotPool.push(slot);
     }
 
     _populateSlot(slot, track, i);
     slot._trackId = trackId;
-    slot.style.transform = `translateY(${Math.round(i * VIRTUAL_ROW_HEIGHT)}px)`;
+    if (_qd && _qd.live) {
+      slot.style.transition = "none";
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => (slot.style.transition = "")),
+      );
+    }
+    slot.style.transform = _rowY(i);
+    if (_qd && _qd.live && i === _qd.src) slot.classList.add("qd-src");
     slot.style.display = "";
 
     // Append to windowEl if not already a child
@@ -13626,8 +14353,7 @@ function _populateSlot(row, track, idx) {
   else delete row.dataset.queueIdx;
 
   // Drag attribute for queue rows (delegated drag handlers read dataset)
-  if (isQueue) row.draggable = true;
-  else row.draggable = false;
+  row.draggable = false; // queue reorder uses the custom pointer drag
 
   const thumbInner = isQueue
     ? `<div class="queue-num-badge">${idx + 1}</div>`
@@ -13653,7 +14379,12 @@ function _populateSlot(row, track, idx) {
   //   sees SOMETHING within ~50ms of the row scrolling into view.
   let artHtml;
   const bitmap = thumbnailAtlas.get(track.id);
-  if (bitmap) {
+  const _deferThumb = !bitmap && _scrollVelocity > VELOCITY_THRESHOLD;
+  row._thumbDeferred = _deferThumb;
+  if (_deferThumb) {
+    // Fast scroll: skip image loads / bitmap builds; filled in when idle.
+    artHtml = `<div class="art-placeholder art-${artIdx}">${isActive ? "" : "🎵"}</div>`;
+  } else if (bitmap) {
     // Canvas size matches CSS size (42×42 track-thumb) × DPR for crispness.
     // The bitmap is already THUMBNAIL_SIZE×THUMBNAIL_SIZE pixels.
     const canvasW = THUMB_DPR * 42;
@@ -13771,21 +14502,49 @@ function _populateSlot(row, track, idx) {
     row._isInitialized = true;
   }
 
-  row._nameNode.textContent = displayTitle;
-  row._artistNode.textContent = getArtistText(track);
-  row._yearNode.textContent = track.year || "";
-  row._albumNode.textContent = track.album || "Unknown Album";
-  row._durationNode.textContent = formatTime(track.duration);
-  row._thumbNode.innerHTML = `${thumbInner}${artHtml}${eqHtml}`;
-  row._menuNode.className = menuClass;
-  row._menuNode.innerHTML = menuSvg;
+  const _set = (node, v) => {
+    if (node.textContent !== v) node.textContent = v;
+  };
+  _set(row._nameNode, displayTitle);
+  _set(row._artistNode, getArtistText(track));
+  _set(row._yearNode, String(track.year || ""));
+  _set(row._albumNode, track.album || "Unknown Album");
+  _set(row._durationNode, formatTime(track.duration));
+  // Fast path: same thumb layout → keep the canvas, just redraw the bitmap.
+  let _fastDrawn = false;
+  if (
+    bitmap &&
+    !isQueue &&
+    row._thumbMode === "bitmap" &&
+    row._thumbActive === isActive &&
+    row._thumbCanvas &&
+    row._thumbCanvas.isConnected
+  ) {
+    const cv = row._thumbCanvas;
+    cv.dataset.bitmapId = track.id;
+    const cx = cv.getContext("2d");
+    cx.clearRect(0, 0, cv.width, cv.height);
+    cx.drawImage(bitmap, 0, 0, THUMB_DPR * 42, THUMB_DPR * 42);
+    _fastDrawn = true;
+  } else {
+    row._thumbNode.innerHTML = `${thumbInner}${artHtml}${eqHtml}`;
+    row._thumbMode = bitmap && !_deferThumb ? "bitmap" : "other";
+    row._thumbActive = isActive;
+    row._thumbCanvas = null;
+  }
+  if (row._menuClass !== menuClass) {
+    row._menuNode.className = menuClass;
+    row._menuNode.innerHTML = menuSvg;
+    row._menuClass = menuClass;
+  }
 
   // ── Draw bitmap to canvas if atlas entry exists ──
-  if (bitmap) {
+  if (bitmap && !_fastDrawn) {
     const canvas = row.querySelector(".track-thumb-canvas");
     if (canvas) {
       const ctx = canvas.getContext("2d");
       ctx.drawImage(bitmap, 0, 0, THUMB_DPR * 42, THUMB_DPR * 42);
+      row._thumbCanvas = canvas;
     }
   }
 
@@ -13794,9 +14553,9 @@ function _populateSlot(row, track, idx) {
 
 // ─── Inject multi-select CSS (once) ──────────────────────────────────
 (function _injectMultiSelectCSS() {
-  if (document.getElementById('nova-multiselect-css')) return;
-  const style = document.createElement('style');
-  style.id = 'nova-multiselect-css';
+  if (document.getElementById("nova-multiselect-css")) return;
+  const style = document.createElement("style");
+  style.id = "nova-multiselect-css";
   style.textContent = `
     /* ── Selected row highlight (no checkbox — pure drag-lasso selection) ── */
     .track-row.lib-selected {
@@ -13905,13 +14664,13 @@ function _libSelectionSelectAll() {
 
 // Apply/remove .lib-selected class to all visible rows in the virtual window
 function _refreshSelectionClasses() {
-  const win = document.getElementById('virtual-track-window');
+  const win = document.getElementById("virtual-track-window");
   if (!win) return;
-  win.querySelectorAll('.track-row[data-track-id]').forEach((row) => {
+  win.querySelectorAll(".track-row[data-track-id]").forEach((row) => {
     if (_libSelection.has(row.dataset.trackId)) {
-      row.classList.add('lib-selected');
+      row.classList.add("lib-selected");
     } else {
-      row.classList.remove('lib-selected');
+      row.classList.remove("lib-selected");
     }
   });
 }
@@ -13919,15 +14678,15 @@ function _refreshSelectionClasses() {
 // Show/hide the floating selection action bar
 function _updateSelectionBar() {
   const count = _libSelection.size;
-  let bar = document.getElementById('lib-selection-bar');
+  let bar = document.getElementById("lib-selection-bar");
   if (count === 0) {
     if (bar) bar.remove();
     return;
   }
   if (!bar) {
-    bar = document.createElement('div');
-    bar.id = 'lib-selection-bar';
-    bar.className = 'lib-selection-bar';
+    bar = document.createElement("div");
+    bar.id = "lib-selection-bar";
+    bar.className = "lib-selection-bar";
     bar.innerHTML = `
       <span class="lib-sel-count"></span>
       <div class="lib-sel-actions">
@@ -13944,26 +14703,27 @@ function _updateSelectionBar() {
         </button>
       </div>
     `;
-    bar.querySelector('.lib-sel-share').addEventListener('click', (e) => {
+    bar.querySelector(".lib-sel-share").addEventListener("click", (e) => {
       e.stopPropagation();
       _batchShareLanbeam([..._libSelection]);
     });
-    bar.querySelector('.lib-sel-delete').addEventListener('click', (e) => {
+    bar.querySelector(".lib-sel-delete").addEventListener("click", (e) => {
       e.stopPropagation();
       _batchDeleteTracks([..._libSelection]);
     });
-    bar.querySelector('.lib-sel-clear').addEventListener('click', (e) => {
+    bar.querySelector(".lib-sel-clear").addEventListener("click", (e) => {
       e.stopPropagation();
       _libSelectionClear();
     });
-    const panel = document.getElementById('library-panel') ||
-                  document.getElementById('content-area') ||
-                  document.getElementById('main-content') ||
-                  document.body;
+    const panel =
+      document.getElementById("library-panel") ||
+      document.getElementById("content-area") ||
+      document.getElementById("main-content") ||
+      document.body;
     panel.appendChild(bar);
   }
-  bar.querySelector('.lib-sel-count').textContent =
-    count === 1 ? '1 track selected' : `${count} tracks selected`;
+  bar.querySelector(".lib-sel-count").textContent =
+    count === 1 ? "1 track selected" : `${count} tracks selected`;
 }
 
 // ─── Batch LANBeam share: resolve exe once, then send files one by one ───
@@ -13972,35 +14732,54 @@ async function _batchShareLanbeam(trackIds) {
   const inv = (ch, ...a) => window.novaAPI.invoke(ch, ...a);
   let exe = state.settings.lanbeamPath;
   if (exe) {
-    const check = await inv('share:find-lanbeam');
+    const check = await inv("share:find-lanbeam");
     if (!check?.success || check.path !== exe) {
       exe = check?.success ? check.path : null;
-      if (exe) { state.settings.lanbeamPath = exe; await saveSetting('lanbeamPath', exe); }
+      if (exe) {
+        state.settings.lanbeamPath = exe;
+        await saveSetting("lanbeamPath", exe);
+      }
     }
   }
   if (!exe) {
-    const f = await inv('share:find-lanbeam');
-    if (f?.success) { exe = f.path; state.settings.lanbeamPath = exe; await saveSetting('lanbeamPath', exe); }
+    const f = await inv("share:find-lanbeam");
+    if (f?.success) {
+      exe = f.path;
+      state.settings.lanbeamPath = exe;
+      await saveSetting("lanbeamPath", exe);
+    }
   }
   if (!exe) {
-    _showActionToast('LANBeam', 'downloading from GitHub…');
-    const installRes = await inv('share:install-lanbeam');
+    _showActionToast("LANBeam", "downloading from GitHub…");
+    const installRes = await inv("share:install-lanbeam");
     if (installRes?.success && installRes.path) {
-      exe = installRes.path; state.settings.lanbeamPath = exe; await saveSetting('lanbeamPath', exe);
-      _showActionToast('LANBeam', 'installed successfully!');
+      exe = installRes.path;
+      state.settings.lanbeamPath = exe;
+      await saveSetting("lanbeamPath", exe);
+      _showActionToast("LANBeam", "installed successfully!");
     } else {
-      const pick = await inv('share:pick-app');
-      if (pick?.success) { exe = pick.path; state.settings.lanbeamPath = exe; await saveSetting('lanbeamPath', exe); }
+      const pick = await inv("share:pick-app");
+      if (pick?.success) {
+        exe = pick.path;
+        state.settings.lanbeamPath = exe;
+        await saveSetting("lanbeamPath", exe);
+      }
     }
   }
-  if (!exe) { _showActionToast('LANBeam', 'could not find LANBeam'); return; }
+  if (!exe) {
+    _showActionToast("LANBeam", "could not find LANBeam");
+    return;
+  }
 
   const tracks = trackIds
     .map((id) => (state.tracks || []).find((t) => t.id === id))
     .filter(Boolean)
     .filter((t) => t.filePath);
 
-  if (tracks.length === 0) { _showActionToast('LANBeam', 'no local files found'); return; }
+  if (tracks.length === 0) {
+    _showActionToast("LANBeam", "no local files found");
+    return;
+  }
 
   _libSelectionClear();
 
@@ -14008,37 +14787,41 @@ async function _batchShareLanbeam(trackIds) {
   for (const track of tracks) {
     _showActionToast(
       `Sending ${sent + 1}/${tracks.length}`,
-      track.title || track.filePath.split(/[\\/]/).pop()
+      track.title || track.filePath.split(/[\\/]/).pop(),
     );
-    const res = await inv('share:launch-app', exe, track.filePath);
+    const res = await inv("share:launch-app", exe, track.filePath);
     if (res?.success) sent++;
     await new Promise((r) => setTimeout(r, 350));
   }
-  _showActionToast('LANBeam', `${sent}/${tracks.length} files queued`);
+  _showActionToast("LANBeam", `${sent}/${tracks.length} files queued`);
 }
 
 // ─── Batch delete with a single confirmation dialog ───────────────────
 async function _batchDeleteTracks(trackIds) {
   if (!trackIds || trackIds.length === 0) return;
   const count = trackIds.length;
-  const overlay = document.createElement('div');
-  overlay.className = 'tag-editor-overlay delete-confirm-overlay';
+  const overlay = document.createElement("div");
+  overlay.className = "tag-editor-overlay delete-confirm-overlay";
   overlay.innerHTML = `
     <div class="tag-editor-card delete-confirm-card">
-      <h3 style="color:#ff5c5c;">Delete ${count} Song${count !== 1 ? 's' : ''}</h3>
+      <h3 style="color:#ff5c5c;">Delete ${count} Song${count !== 1 ? "s" : ""}</h3>
       <p style="color:var(--text-secondary);margin:12px 0 20px;line-height:1.5;">
-        Permanently delete <strong style="color:var(--text-primary);">${count} track${count !== 1 ? 's' : ''}</strong> from your library?<br>
+        Permanently delete <strong style="color:var(--text-primary);">${count} track${count !== 1 ? "s" : ""}</strong> from your library?<br>
         <span style="font-size:12px;opacity:0.7;">Files will be permanently removed from disk. This cannot be undone.</span>
       </p>
       <div class="tag-editor-actions">
         <button class="btn-cancel" id="bdel-cancel">Cancel</button>
-        <button class="btn-save" id="bdel-confirm" style="background:#ff5c5c;">Delete ${count} Track${count !== 1 ? 's' : ''}</button>
+        <button class="btn-save" id="bdel-confirm" style="background:#ff5c5c;">Delete ${count} Track${count !== 1 ? "s" : ""}</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
-  overlay.querySelector('#bdel-cancel').addEventListener('click', () => overlay.remove());
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-  overlay.querySelector('#bdel-confirm').addEventListener('click', async () => {
+  overlay
+    .querySelector("#bdel-cancel")
+    .addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+  overlay.querySelector("#bdel-confirm").addEventListener("click", async () => {
     overlay.remove();
     _libSelectionClear();
     const toDelete = trackIds
@@ -14155,7 +14938,10 @@ function _wireVirtualDelegation() {
 
   document.addEventListener("mousemove", (e) => {
     if (_dragSel.startIdx < 0) return;
-    if (!(e.buttons & 1)) { _dragSel.startIdx = -1; return; } // button released
+    if (!(e.buttons & 1)) {
+      _dragSel.startIdx = -1;
+      return;
+    } // button released
     const row = e.target.closest(".track-row[data-track-id]");
     if (!row) return;
     const windowEl = row.closest("#virtual-track-window");
@@ -14163,7 +14949,7 @@ function _wireVirtualDelegation() {
     const curIdx = parseInt(row.dataset.idx, 10);
     if (curIdx === _dragSel.startIdx && !_dragSel.active) return; // haven't moved yet
     if (!_dragSel.active && _dragSel._win) {
-      _dragSel._win.classList.add('drag-selecting');
+      _dragSel._win.classList.add("drag-selecting");
     }
     _dragSel.active = true;
     // Rebuild selection as the range from startIdx → curIdx
@@ -14181,8 +14967,10 @@ function _wireVirtualDelegation() {
   document.addEventListener("mouseup", (e) => {
     if (_dragSel.active) {
       _dragJustFinished = true;
-      setTimeout(() => { _dragJustFinished = false; }, 0);
-      if (_dragSel._win) _dragSel._win.classList.remove('drag-selecting');
+      setTimeout(() => {
+        _dragJustFinished = false;
+      }, 0);
+      if (_dragSel._win) _dragSel._win.classList.remove("drag-selecting");
     }
     _dragSel.active = false;
     _dragSel.startIdx = -1;
@@ -14224,6 +15012,7 @@ function _wireVirtualDelegation() {
         }),
       },
       track,
+      row._menuOpts || {},
     );
   });
 
@@ -14238,11 +15027,13 @@ function _wireVirtualDelegation() {
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
       // Only intercept Ctrl+A when library panel is visible
-      const libPanel = document.getElementById("library-panel") ||
-                       document.querySelector(".library-panel") ||
-                       document.getElementById("virtual-track-window");
+      const libPanel =
+        document.getElementById("library-panel") ||
+        document.querySelector(".library-panel") ||
+        document.getElementById("virtual-track-window");
       if (!libPanel) return;
-      if (!libPanel.offsetParent && libPanel.id !== "virtual-track-window") return;
+      if (!libPanel.offsetParent && libPanel.id !== "virtual-track-window")
+        return;
       const win = document.getElementById("virtual-track-window");
       if (!win) return;
       e.preventDefault();
@@ -14255,65 +15046,212 @@ function _wireVirtualDelegation() {
     }
   });
 
-  // ── Queue drag-to-reorder delegation ──
+  // ── Queue drag-to-reorder: custom pointer drag (ghost row + live gap) ──
   document.addEventListener("dragstart", (e) => {
-    const row = e.target.closest(".queue-row[data-track-id]");
-    if (!row) return;
-    const idx = parseInt(row.dataset.queueIdx, 10);
-    _queueDragSrcIdx = idx;
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", String(idx));
-    row.classList.add("queue-drag-source");
+    if (e.target.closest && e.target.closest(".queue-row")) e.preventDefault(); // no native drag
   });
-
-  document.addEventListener("dragend", (e) => {
-    const row = e.target.closest(".queue-row");
-    if (row) row.classList.remove("queue-drag-source");
-    document
-      .querySelectorAll(".queue-drag-over")
-      .forEach((r) => r.classList.remove("queue-drag-over"));
-    _queueDragSrcIdx = -1;
-    _queueDragOverIdx = -1;
-  });
-
-  document.addEventListener("dragover", (e) => {
+  document.addEventListener(
+    "click",
+    (e) => {
+      if (_qdSuppressClick) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    },
+    true,
+  );
+  document.addEventListener("pointerdown", (e) => {
+    if (
+      virtualList.mode !== "queue" ||
+      e.button !== 0 ||
+      e.pointerType === "touch"
+    )
+      return;
     const row = e.target.closest(".queue-row[data-track-id]");
-    if (!row) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const idx = parseInt(row.dataset.queueIdx, 10);
-    if (_queueDragOverIdx !== idx) {
-      document
-        .querySelectorAll(".queue-drag-over")
-        .forEach((r) => r.classList.remove("queue-drag-over"));
-      _queueDragOverIdx = idx;
-      row.classList.add("queue-drag-over");
+    if (!row || !row.closest("#virtual-track-window")) return;
+    const idx = parseInt(row.dataset.idx, 10);
+    if (isNaN(idx)) return;
+    _qd = {
+      src: idx,
+      to: idx,
+      row,
+      sx: e.clientX,
+      sy: e.clientY,
+      cy: e.clientY,
+      live: false,
+      ghost: null,
+      oy: 0,
+      raf: 0,
+    };
+    window.addEventListener("pointermove", _qdMove);
+    window.addEventListener("pointerup", _qdEnd);
+    window.addEventListener("pointercancel", _qdCancel);
+  });
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && _qd && _qd.live) _qdCancel();
+  });
+}
+
+// ─── Queue drag: custom pointer-driven reorder ──────────────────
+var _qd = null;
+let _qdSuppressClick = false;
+
+// Row Y with the live "gap" applied while dragging
+function _rowY(i) {
+  let k = i;
+  if (_qd && _qd.live) {
+    const { src, to } = _qd;
+    if (i === src) k = to;
+    else if (src < to && i > src && i <= to) k = i - 1;
+    else if (src > to && i >= to && i < src) k = i + 1;
+  }
+  return `translateY(${Math.round(k * VIRTUAL_ROW_HEIGHT)}px)`;
+}
+
+function _qdApplyShift() {
+  for (const slot of virtualList.activeSlots.values()) {
+    const i = parseInt(slot.dataset.idx, 10);
+    slot.style.transform = _rowY(i);
+    slot.classList.toggle("qd-src", !!(_qd && _qd.live && i === _qd.src));
+  }
+}
+
+function _qdBegin() {
+  const q = _qd;
+  const r = q.row.getBoundingClientRect();
+  q.oy = q.sy - r.top;
+  const g = q.row.cloneNode(true);
+  const a = q.row.querySelectorAll("canvas");
+  g.querySelectorAll("canvas").forEach((c, i) => {
+    try {
+      c.getContext("2d").drawImage(a[i], 0, 0);
+    } catch (_) {}
+  });
+  g.removeAttribute("data-track-id");
+  g.classList.remove("qd-src");
+  g.classList.add("qd-ghost");
+  g.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;margin:0;transform:none;z-index:100300;pointer-events:none;`;
+  document.body.appendChild(g);
+  requestAnimationFrame(() => g.classList.add("qd-lift"));
+  q.ghost = g;
+  q.live = true;
+  _queueDragSrcIdx = q.src;
+  document.body.classList.add("qd-dragging");
+  $("virtual-track-window")?.classList.add("qd-active");
+  _qdApplyShift();
+  const area = $("track-area");
+  const loop = () => {
+    if (!_qd || !_qd.live || _qd.ending) return;
+    const ar = area.getBoundingClientRect();
+    const edge = 56;
+    let v = 0;
+    if (_qd.cy < ar.top + edge)
+      v = -Math.min(18, Math.ceil((ar.top + edge - _qd.cy) / 4));
+    else if (_qd.cy > ar.bottom - edge)
+      v = Math.min(18, Math.ceil((_qd.cy - (ar.bottom - edge)) / 4));
+    if (v) {
+      area.scrollTop += v;
+      _qdUpdate();
     }
-  });
+    _qd.raf = requestAnimationFrame(loop);
+  };
+  q.raf = requestAnimationFrame(loop);
+}
 
-  document.addEventListener("drop", (e) => {
-    const row = e.target.closest(".queue-row[data-track-id]");
-    if (!row) return;
-    e.preventDefault();
-    const toIdx = parseInt(row.dataset.queueIdx, 10);
-    if (_queueDragSrcIdx >= 0 && _queueDragSrcIdx !== toIdx) {
-      const [moved] = state.queue.splice(_queueDragSrcIdx, 1);
-      state.queue.splice(toIdx, 0, moved);
+function _qdUpdate() {
+  const q = _qd;
+  const area = $("track-area");
+  const win = $("virtual-track-window");
+  if (!q || !q.ghost || !area || !win) return;
+  const H = VIRTUAL_ROW_HEIGHT;
+  const ar = area.getBoundingClientRect();
+  const top = Math.max(
+    ar.top - H / 2,
+    Math.min(ar.bottom - H / 2, q.cy - q.oy),
+  );
+  q.ghost.style.top = top + "px";
+  const n = virtualList.items.length;
+  const to = Math.max(
+    0,
+    Math.min(
+      n - 1,
+      Math.floor((top + H / 2 - win.getBoundingClientRect().top) / H),
+    ),
+  );
+  if (to !== q.to) {
+    q.to = to;
+    _qdApplyShift();
+  }
+}
+
+function _qdMove(e) {
+  if (!_qd || _qd.ending) return;
+  _qd.cy = e.clientY;
+  if (!_qd.live) {
+    if (Math.abs(e.clientX - _qd.sx) < 5 && Math.abs(e.clientY - _qd.sy) < 5)
+      return;
+    _qdBegin();
+  }
+  _qdUpdate();
+}
+
+function _qdTeardown() {
+  window.removeEventListener("pointermove", _qdMove);
+  window.removeEventListener("pointerup", _qdEnd);
+  window.removeEventListener("pointercancel", _qdCancel);
+  document.body.classList.remove("qd-dragging");
+  $("virtual-track-window")?.classList.remove("qd-active");
+  _queueDragSrcIdx = -1;
+}
+
+function _qdEnd() {
+  const q = _qd;
+  if (!q || q.ending) return;
+  if (!q.live) {
+    _qd = null;
+    _qdTeardown();
+    return;
+  }
+  q.ending = true;
+  cancelAnimationFrame(q.raf);
+  _qdSuppressClick = true;
+  setTimeout(() => (_qdSuppressClick = false), 0);
+  const win = $("virtual-track-window");
+  const H = VIRTUAL_ROW_HEIGHT;
+  q.ghost.style.transition =
+    "top 0.16s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.16s ease, box-shadow 0.16s ease, border-radius 0.16s ease, background-color 0.16s ease, backdrop-filter 0.16s ease";
+  q.ghost.classList.remove("qd-lift");
+  q.ghost.classList.add("qd-drop");
+  if (win)
+    q.ghost.style.top = win.getBoundingClientRect().top + q.to * H + "px";
+  setTimeout(() => {
+    q.ghost.remove();
+    const { src, to } = q;
+    const reorder = src !== to;
+    if (reorder) {
+      const [moved] = state.queue.splice(src, 1);
+      state.queue.splice(to, 0, moved);
       _persistQueue();
-      // Update queueIndex if current track was moved
-      if (state.currentTrack) {
+      if (state.currentTrack)
         state.queueIndex = state.queue.findIndex(
           (t) => t.id === state.currentTrack.id,
         );
-      }
-      renderTracks(state.queue, "queue");
     }
-    _queueDragSrcIdx = -1;
-    _queueDragOverIdx = -1;
-    document
-      .querySelectorAll(".queue-drag-over")
-      .forEach((r) => r.classList.remove("queue-drag-over"));
-  });
+    _qd = null;
+    _qdTeardown();
+    _qdApplyShift();
+    if (reorder) _refreshListInPlace(state.queue, "queue");
+  }, 170);
+}
+
+function _qdCancel() {
+  const q = _qd;
+  if (!q) return;
+  cancelAnimationFrame(q.raf);
+  if (q.ghost) q.ghost.remove();
+  _qd = null;
+  _qdTeardown();
+  _qdApplyShift();
 }
 
 // ─── Queue Drag-to-Reorder (state shared with delegation) ────────
@@ -14714,6 +15652,24 @@ function togglePlayPause(forceState) {
   }
 }
 
+// Click the no-lyrics vinyl to pause/resume (delegated: markup is re-rendered).
+document.addEventListener("click", (e) => {
+  const vinyl = e.target.closest(".lyrics-nolyrics-vinyl");
+  if (!vinyl) return;
+  if (!state.currentTrack) return;
+  const ov = vinyl.closest(".np-overlay");
+  if (ov && !ov.classList.contains("open")) return;
+  const lp = vinyl.closest(".lyrics-panel");
+  if (
+    lp &&
+    (lp.classList.contains("closed") ||
+      (lp.classList.contains("floating") &&
+        !lp.classList.contains("float-open")))
+  )
+    return;
+  togglePlayPause();
+});
+
 function _fastShuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = (Math.random() * (i + 1)) | 0;
@@ -14766,7 +15722,11 @@ async function playNext() {
   if (state.queueIndex >= state.queue.length) {
     const libTracks = _getSortedLibraryTracks();
 
-    if (state.shuffleEnabled) {
+    if (state.shuffleEnabled && state.queueSource) {
+      // Playing from a card: reshuffle that card's tracks, stay inside it
+      state.queue = _fastShuffle(state.queue.slice());
+      state.queueIndex = 0;
+    } else if (state.shuffleEnabled) {
       // Shuffle is ON: Recreate a fresh randomized queue from the library in O(N) time
       if (libTracks.length > 0) {
         const curId = state.currentTrack ? state.currentTrack.id : null;
@@ -14785,7 +15745,7 @@ async function playNext() {
       }
     } else if (state.repeatMode === "all") {
       // Repeat All is ON:
-      if (state.queue.length > 1) {
+      if (state.queue.length > 1 || state.queueSource) {
         // Multi-song queue: loop back to beginning
         state.queueIndex = 0;
       } else {
@@ -14808,6 +15768,7 @@ async function playNext() {
       // Repeat is OFF & Shuffle is OFF:
       if (
         state.queue.length === 1 &&
+        !state.queueSource &&
         state.currentTrack &&
         libTracks.length > 1
       ) {
@@ -14822,14 +15783,13 @@ async function playNext() {
           state.queueIndex = 0;
           state.queueSource = null;
         } else {
-          state.queueIndex = state.queue.length - 1;
-          audioEngine.pause();
-          return;
+          state.queueIndex = 0;
         }
+      } else if (state.queue && state.queue.length > 0) {
+        // Queue finished: loop/restart the queue from the current section rather than falling silent
+        state.queueIndex = 0;
       } else {
-        state.queueIndex = state.queue.length - 1;
-        audioEngine.pause();
-        return;
+        state.queueIndex = 0;
       }
     }
   }
@@ -16624,6 +17584,24 @@ function _buildNoLyricsHTML(isOverlay = false) {
     <div class="lyrics-empty-anim${overlayClass}">
       <div class="lyrics-nolyrics-vinyl">
         ${coverSrc ? `<img src="${coverSrc}" alt="" class="lyrics-nolyrics-cover" onerror="this.style.display='none'">` : ""}
+        <div class="lyrics-tonearm"><svg viewBox="0 0 36 90" aria-hidden="true">
+          <rect x="13" y="0" width="10" height="8" rx="1.6" fill="#2d2d2d"/>
+          <rect x="13" y="0" width="3" height="8" rx="1.2" fill="#4d4d4d"/>
+          <rect x="14.5" y="7" width="7" height="6" fill="#6f6f6f"/>
+          <circle cx="18" cy="12" r="9" fill="#1c1c1c"/>
+          <circle cx="18" cy="12" r="8" fill="none" stroke-width="1" style="stroke:color-mix(in srgb, var(--green,#1db954) 30%, #6a6a6a)"/>
+          <path d="M18 12 C18 40 19 52 12 66" fill="none" stroke="#8d8d8d" stroke-width="2.8" stroke-linecap="round"/>
+          <path d="M18.7 14 C18.7 40 19.7 52 12.7 65" fill="none" stroke="#e0e0e0" stroke-width="0.9" stroke-linecap="round" opacity="0.8"/>
+          <circle cx="18" cy="12" r="5.2" fill="#a9a9a9"/>
+          <circle cx="18" cy="12" r="5.2" fill="none" stroke="#ececec" stroke-width="0.6" opacity="0.7"/>
+          <circle cx="18" cy="12" r="2" style="fill:color-mix(in srgb, var(--green,#1db954) 55%, #3b3b3b)"/>
+          <g transform="translate(12 66) rotate(18)">
+            <rect x="-4.2" y="-1" width="8.4" height="13" rx="1.6" fill="#2a2a2a"/>
+            <rect x="-4.2" y="-1" width="2.2" height="13" rx="1" fill="#555"/>
+            <rect x="-3" y="10" width="6" height="5" rx="0.8" fill="#141414"/>
+            <rect x="-3" y="10" width="6" height="1" style="fill:var(--green,#1db954)"/>
+          </g>
+        </svg></div>
         <div class="lyrics-nolyrics-visualizer" data-accent="${accentColor}">
           <div class="nolyric-bar" style="--i:0"></div>
           <div class="nolyric-bar" style="--i:1"></div>
@@ -16957,21 +17935,21 @@ function _createFloatingNavCard() {
   // into an X when the card is open) or by clicking the NovaTune logo.
   // Having two X buttons was redundant and confusing.
   sections.forEach((s) => {
-    html += `<button class="fn-btn${s.id === activeSection ? " active" : ""}" data-section="${s.id}" data-label="${s.label}" aria-label="${s.label}">
+    html += `<button class="fn-btn${s.id === activeSection ? " active" : ""}" data-section="${s.id}" data-tooltip="${s.label}" aria-label="${s.label}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${s.sw || 2}" stroke-linecap="round" stroke-linejoin="round">${s.icon}</svg>
     </button>`;
   });
   html += `<div class="fn-divider"></div>`;
   html += `<div class="fn-search-wrap">
-    <button class="fn-btn" id="fn-search-btn" data-label="Search" aria-label="Search">
+    <button class="fn-btn" id="fn-search-btn" data-tooltip="Search" aria-label="Search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
     </button>
     <input type="text" class="fn-search-input" id="fn-search-input" placeholder="Search…" spellcheck="false">
   </div>`;
-  html += `<button class="fn-btn" id="fn-download-btn" data-section="discovery" data-label="Music Downloader" aria-label="Music Downloader">
+  html += `<button class="fn-btn" id="fn-download-btn" data-section="discovery" data-tooltip="Music Downloader" aria-label="Music Downloader">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12.0001L12 16.0001M12 16.0001L16 12.0001M12 16.0001V6.80006C12 5.40935 12 4.714 11.4495 3.93546C11.0837 3.41818 10.0306 2.77974 9.40278 2.69468C8.45789 2.56666 8.09907 2.75384 7.38143 3.1282C4.18333 4.79649 2 8.14331 2 12.0001C2 17.5229 6.47715 22.0001 12 22.0001C17.5228 22.0001 22 17.5229 22 12.0001C22 8.29865 19.989 5.06693 17 3.33788"/></svg>
   </button>`;
-  html += `<button class="fn-btn fn-help-btn" id="fn-help-btn" data-section="help" data-label="Help" aria-label="Help">
+  html += `<button class="fn-btn fn-help-btn" id="fn-help-btn" data-section="help" data-tooltip="Help" aria-label="Help">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
   </button>`;
 

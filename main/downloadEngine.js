@@ -18,6 +18,7 @@ const https = require("https");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const zlib = require("zlib");
 
 const HTTPS_AGENT = new https.Agent({
   keepAlive: true,
@@ -607,6 +608,7 @@ function searchDeezerInternal(query, limit = 15) {
             artworkUrl: art,
             artworkThumbnail: thumb,
             genre: "Music",
+            popularity: item.rank || 0,
           };
         });
         resolve(results);
@@ -753,7 +755,7 @@ const _PENALTIES = [
   ["slowed", /\b(slowed|sped up|reverb|nightcore|8d)\b/],
 ];
 
-function _score(t, qn, qWords, srcCount, idx) {
+function _score(t, qn, qWords, srcCount, idx, pop = 0) {
   const title = _norm(t.trackName),
     artist = _norm(t.artistName),
     album = _norm(t.albumName);
@@ -796,7 +798,11 @@ function _score(t, qn, qWords, srcCount, idx) {
     if (d >= 60000 && d <= 600000) s += 3;
     else if (d > 900000) s -= 8;
   }
-  return s - idx * 0.05;
+  // Popularity: Deezer rank (0..~1M) + how high the source ranked it
+  // (YTM comes first and is already view/relevance ordered).
+  s += Math.min(pop / 1000000, 1) * 12;
+  s += Math.max(0, 8 - idx * 0.4);
+  return s - Math.min(idx, 60) * 0.1;
 }
 
 function rankAndMerge(tracks, query) {
@@ -806,10 +812,16 @@ function rankAndMerge(tracks, query) {
     const info = _info(t);
     const g = groups.find((x) => _sameSong(x, info, t.durationMs || 0));
     if (!g) {
-      groups.push({ primary: t, info, sources: new Set([t.source]) });
+      groups.push({
+        primary: t,
+        info,
+        sources: new Set([t.source]),
+        pop: t.popularity || 0,
+      });
       continue;
     }
     g.sources.add(t.source);
+    g.pop = Math.max(g.pop || 0, t.popularity || 0);
     if (!g.primary.durationMs && t.durationMs)
       g.primary.durationMs = t.durationMs;
     if (!g.primary.videoId && t.videoId) g.primary.videoId = t.videoId;
@@ -819,7 +831,7 @@ function rankAndMerge(tracks, query) {
   return groups
     .map((g, i) => ({
       t: g.primary,
-      sc: _score(g.primary, qn, qWords, g.sources.size, i),
+      sc: _score(g.primary, qn, qWords, g.sources.size, i, g.pop),
     }))
     .sort((a, b) => b.sc - a.sc)
     .map((x) => x.t);
@@ -983,99 +995,441 @@ function getYtDlpPath() {
   return "yt-dlp";
 }
 
-/**
- * Downloads yt-dlp binary from GitHub release if not found locally.
- * Guarantees that any released app has a fully functioning engine even on clean machines.
- */
-function downloadYtDlpBinary(targetPath, onProgress) {
-  return new Promise((resolve, reject) => {
-    const url =
-      "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
+// ─── Resilience Layer ─────────────────────────────────────────────────────────
+class DownloadError extends Error {
+  constructor(code, message, detail) {
+    super(message);
+    this.name = "DownloadError";
+    this.code = code;
+    this.detail = detail || "";
+  }
+}
 
-    function fetchWithRedirects(currentUrl, hops = 0) {
-      if (hops > 5)
-        return reject(new Error("Too many redirects downloading yt-dlp"));
-      const parsed = new URL(currentUrl);
-      const client = parsed.protocol === "https:" ? https : http;
+const _ERR_RULES = [
+  [
+    "DEPENDENCY",
+    /Failed to launch downloader|Failed to install|failed self-check|checksum mismatch|not a valid executable|not a valid Win32|EFTYPE|ffmpeg|ffprobe|Postprocessing/i,
+    "Audio components couldn't be set up automatically. Check your internet connection and antivirus, then try again.",
+  ],
+  [
+    "DISK_FULL",
+    /ENOSPC|no space left|disk full/i,
+    "Not enough free disk space to save this track. Free some space and try again.",
+  ],
+  [
+    "PERMISSION",
+    /EACCES|EPERM|EBUSY|permission denied|access is denied/i,
+    "NovaTune can't write to the download folder (locked or blocked by antivirus). Try again.",
+  ],
+  [
+    "RATE_LIMIT",
+    /HTTP Error 429|Too Many Requests|rate.?limit/i,
+    "The source is rate-limiting requests. Wait a minute and try again.",
+  ],
+  [
+    "UNAVAILABLE",
+    /Video unavailable|Private video|members-only|not available in your country|blocked it|copyright|age.restricted|confirm your age|removed by the uploader|account associated.*terminated/i,
+    "This track isn't available for download from its source.",
+  ],
+  [
+    "BLOCKED",
+    /Sign in to confirm|not a bot|HTTP Error 40[13]/i,
+    "The source is blocking requests right now. Components were refreshed — try again shortly.",
+  ],
+  [
+    "NETWORK",
+    /ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|timed out|timeout|stalled|getaddrinfo|socket hang up|Unable to download|Connection|HTTP Error 5\d\d/i,
+    "Network problem while downloading. Check your connection and try again.",
+  ],
+];
 
-      const req = client.get(
-        currentUrl,
-        {
-          headers: { "User-Agent": "Mozilla/5.0 NovaTune Downloader" },
-        },
-        (res) => {
-          if (
-            res.statusCode >= 300 &&
-            res.statusCode < 400 &&
-            res.headers.location
-          ) {
-            const nextUrl = new URL(res.headers.location, currentUrl).href;
-            return fetchWithRedirects(nextUrl, hops + 1);
-          }
-          if (res.statusCode !== 200) {
-            return reject(
-              new Error(`Failed to download yt-dlp: HTTP ${res.statusCode}`),
-            );
-          }
+function classifyError(err) {
+  if (err instanceof DownloadError) return err;
+  if (err && err.cancelled) return err;
+  const msg = String((err && err.message) || err || "");
+  const rule = _ERR_RULES.find(([, re]) => re.test(msg));
+  return new DownloadError(
+    rule ? rule[0] : "UNKNOWN",
+    rule ? rule[2] : "Download failed. Please try again in a moment.",
+    msg,
+  );
+}
 
-          const totalBytes = parseInt(res.headers["content-length"] || "0", 10);
-          let downloaded = 0;
-          const dir = path.dirname(targetPath);
-          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+function _isOnline() {
+  return Promise.race([
+    require("dns")
+      .promises.lookup("www.youtube.com")
+      .then(() => true)
+      .catch(() => false),
+    _sleep(3000).then(() => false),
+  ]);
+}
 
-          const tmpFile = `${targetPath}.tmp`;
-          const fileStream = fs.createWriteStream(tmpFile);
-
-          res.on("data", (chunk) => {
-            downloaded += chunk.length;
-            if (totalBytes > 0 && onProgress) {
-              const pct = Math.round((downloaded / totalBytes) * 100);
-              onProgress({ percent: pct, downloaded, total: totalBytes });
-            }
-          });
-
-          res.pipe(fileStream);
-
-          fileStream.on("finish", () => {
-            fileStream.close(() => {
-              try {
-                if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
-                fs.renameSync(tmpFile, targetPath);
-                resolve(targetPath);
-              } catch (err) {
-                reject(err);
-              }
-            });
-          });
-
-          fileStream.on("error", (err) => {
-            try {
-              if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
-            } catch (_) {}
-            reject(err);
-          });
-        },
+async function _finalizeError(err) {
+  if (err && err.cancelled) return err;
+  let e = classifyError(err);
+  if (e.code === "UNKNOWN" || e.code === "DEPENDENCY") {
+    if (!(await _isOnline()))
+      e = new DownloadError(
+        "NETWORK",
+        "No internet connection. Check your network and try again.",
+        e.detail,
       );
+  }
+  console.warn(`[DownloadEngine] ${e.code}: ${e.detail || e.message}`);
+  return e;
+}
 
-      req.on("error", reject);
-      req.setTimeout(60000, () => {
-        req.destroy();
-        reject(new Error("yt-dlp download timed out"));
-      });
+async function _retry(fn, { tries = 3, baseMs = 800, ctx, shouldRetry } = {}) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    if (ctx && ctx.cancelled)
+      throw Object.assign(new Error("Download cancelled"), { cancelled: true });
+    try {
+      return await fn(i);
+    } catch (e) {
+      last = e;
+      if (e.cancelled || (shouldRetry && !shouldRetry(e))) throw e;
+      if (i < tries - 1) await _sleep(baseMs * 2 ** i);
     }
+  }
+  throw last;
+}
 
-    fetchWithRedirects(url);
+function _killTree(proc) {
+  try {
+    if (process.platform === "win32" && proc.pid)
+      spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+    else proc.kill("SIGKILL");
+  } catch (_) {
+    try {
+      proc.kill("SIGKILL");
+    } catch (__) {}
+  }
+}
+
+function _assertDisk(dir) {
+  try {
+    const s = fs.statfsSync(dir);
+    if (s.bavail * s.bsize < 100 * 1024 * 1024) {
+      const e = new Error("ENOSPC: no space left on device");
+      e.code = "ENOSPC";
+      throw e;
+    }
+  } catch (e) {
+    if (e.code === "ENOSPC") throw e;
+  }
+}
+
+function _ensureWritableDir(dir) {
+  const cands = [dir];
+  try {
+    const { app } = require("electron");
+    if (app) cands.push(path.join(app.getPath("userData"), "Downloads"));
+  } catch (_) {}
+  cands.push(path.join(require("os").tmpdir(), "NovaTune Downloads"));
+  let lastErr;
+  for (const d of cands) {
+    try {
+      fs.mkdirSync(d, { recursive: true });
+      const probe = path.join(d, `.nt_probe_${process.pid}`);
+      fs.writeFileSync(probe, "x");
+      fs.unlinkSync(probe);
+      _assertDisk(d);
+      return d;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error("EACCES: no writable download folder");
+}
+
+// Generic hardened downloader: redirects, idle-timeout, truncation check, atomic rename
+function _fetchToFile(
+  url,
+  dest,
+  { gunzip = false, onProgress, idleMs = 30000, hops = 0 } = {},
+) {
+  return new Promise((resolve, reject) => {
+    if (hops > 7) return reject(new Error("Too many redirects"));
+    const tmp = `${dest}.${process.pid}.tmp`;
+    const cleanup = () => {
+      try {
+        fs.unlinkSync(tmp);
+      } catch (_) {}
+    };
+    const req = https.get(
+      url,
+      { headers: { "User-Agent": "NovaTune Downloader" } },
+      (res) => {
+        if (
+          res.statusCode >= 300 &&
+          res.statusCode < 400 &&
+          res.headers.location
+        ) {
+          res.resume();
+          return resolve(
+            _fetchToFile(new URL(res.headers.location, url).href, dest, {
+              gunzip,
+              onProgress,
+              idleMs,
+              hops: hops + 1,
+            }),
+          );
+        }
+        if (res.statusCode !== 200) {
+          res.resume();
+          return reject(new Error(`HTTP ${res.statusCode}`));
+        }
+        try {
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+        } catch (e) {
+          res.resume();
+          return reject(e);
+        }
+        const total = parseInt(res.headers["content-length"] || "0", 10);
+        let got = 0;
+        res.on("data", (c) => {
+          got += c.length;
+          if (total && onProgress)
+            onProgress(Math.min(100, Math.round((got / total) * 100)));
+        });
+        const chain = [
+          res,
+          ...(gunzip ? [zlib.createGunzip()] : []),
+          fs.createWriteStream(tmp),
+        ];
+        require("stream").pipeline(...chain, (err) => {
+          if (!err && !gunzip && total && got < total)
+            err = new Error("truncated download");
+          if (err) {
+            cleanup();
+            return reject(err);
+          }
+          try {
+            try {
+              fs.unlinkSync(dest);
+            } catch (_) {}
+            fs.renameSync(tmp, dest);
+            resolve(dest);
+          } catch (e) {
+            cleanup();
+            reject(e);
+          }
+        });
+      },
+    );
+    req.on("error", (e) => {
+      cleanup();
+      reject(e);
+    });
+    req.setTimeout(idleMs, () => req.destroy(new Error("timeout")));
   });
 }
 
+function _isValidExe(file, minSize = 1000000) {
+  try {
+    if (fs.statSync(file).size < minSize) return false;
+    const fd = fs.openSync(file, "r");
+    const b = Buffer.alloc(2);
+    fs.readSync(fd, b, 0, 2, 0);
+    fs.closeSync(fd);
+    return b[0] === 0x4d && b[1] === 0x5a;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Returns output string on success, "timeout" if merely slow (AV first-scan), null on failure
+function _runOk(bin, args, timeout = 30000) {
+  return new Promise((res) => {
+    try {
+      require("child_process").execFile(
+        bin,
+        args,
+        { windowsHide: true, timeout },
+        (err, out) => {
+          if (err) return res(err.killed ? "timeout" : null);
+          res(String(out || "").trim() || "ok");
+        },
+      );
+    } catch (_) {
+      res(null);
+    }
+  });
+}
+
+function _sha256(file) {
+  return new Promise((resolve, reject) => {
+    const h = require("crypto").createHash("sha256");
+    fs.createReadStream(file)
+      .on("data", (d) => h.update(d))
+      .on("end", () => resolve(h.digest("hex")))
+      .on("error", reject);
+  });
+}
+
+function _wingetLink(exe) {
+  const p = path.join(
+    process.env.LOCALAPPDATA || "",
+    "Microsoft",
+    "WinGet",
+    "Links",
+    exe,
+  );
+  return process.platform === "win32" && fs.existsSync(p) ? p : null;
+}
+
+// Last-resort: let Windows Package Manager install the dependency
+function _wingetInstall(id, exe) {
+  return new Promise((resolve) => {
+    if (process.platform !== "win32") return resolve(null);
+    const existing = _wingetLink(exe);
+    if (existing) return resolve(existing);
+    let p;
+    try {
+      p = spawn(
+        "winget",
+        [
+          "install",
+          "--id",
+          id,
+          "-e",
+          "--silent",
+          "--accept-source-agreements",
+          "--accept-package-agreements",
+        ],
+        { windowsHide: true, stdio: "ignore" },
+      );
+    } catch (_) {
+      return resolve(null);
+    }
+    const t = setTimeout(() => {
+      try {
+        p.kill();
+      } catch (_) {}
+    }, 300000);
+    const done = () => {
+      clearTimeout(t);
+      resolve(_wingetLink(exe));
+    };
+    p.on("close", done);
+    p.on("error", done);
+  });
+}
+
+// ─── yt-dlp: locate, verify, self-heal, install ──────────────────────────────
+const _YTDLP_URLS = [
+  "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
+  "https://ghproxy.net/https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
+  "https://gh-proxy.com/https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
+];
+
+async function _officialYtDlpSha() {
+  const tmp = path.join(require("os").tmpdir(), `nt_sums_${process.pid}.txt`);
+  try {
+    await _fetchToFile(
+      "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS",
+      tmp,
+      { idleMs: 8000 },
+    );
+    const m = fs
+      .readFileSync(tmp, "utf8")
+      .match(/^([a-f0-9]{64})\s+\*?yt-dlp\.exe\s*$/im);
+    return m ? m[1].toLowerCase() : null;
+  } catch (_) {
+    return null;
+  } finally {
+    try {
+      fs.unlinkSync(tmp);
+    } catch (_) {}
+  }
+}
+
+let _ytInstallP = null;
+let _ytFailAt = 0;
+let _ytFailErr = null;
+let _ytOk = null;
+let _ytForce = false;
+
+function installYtDlp(onProgress) {
+  if (_ytInstallP) return _ytInstallP;
+  if (_ytFailErr && Date.now() - _ytFailAt < 60000)
+    return Promise.reject(_ytFailErr);
+  _ytInstallP = (async () => {
+    const target = path.join(_managedDir(), "yt-dlp.exe");
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const sha = await _officialYtDlpSha();
+    let lastErr = null;
+    for (const url of _YTDLP_URLS) {
+      try {
+        await _retry(
+          () =>
+            _fetchToFile(url, target, {
+              onProgress: (p) =>
+                onProgress &&
+                onProgress({
+                  status: "installing",
+                  percent: Math.round(p * 0.9),
+                  message: `Setting up downloader components… ${p}%`,
+                }),
+            }),
+          { tries: 2 },
+        );
+        if (!_isValidExe(target))
+          throw new Error("downloaded yt-dlp is not a valid executable");
+        if (sha && (await _sha256(target)) !== sha)
+          throw new Error("yt-dlp checksum mismatch");
+        if (!(await _runOk(target, ["--version"], 45000)))
+          throw new Error("yt-dlp failed self-check (blocked by antivirus?)");
+        return target;
+      } catch (e) {
+        lastErr = e;
+        console.warn(
+          `[DownloadEngine] yt-dlp source failed (${url}):`,
+          e.message,
+        );
+        try {
+          fs.unlinkSync(target);
+        } catch (_) {}
+      }
+    }
+    const w = await _wingetInstall("yt-dlp.yt-dlp", "yt-dlp.exe");
+    if (w && (await _runOk(w, ["--version"], 45000))) return w;
+    throw new Error(
+      `Failed to install yt-dlp: ${lastErr ? lastErr.message : "no source reachable"}`,
+    );
+  })()
+    .catch((e) => {
+      _ytFailAt = Date.now();
+      _ytFailErr = e;
+      throw e;
+    })
+    .finally(() => {
+      _ytInstallP = null;
+    });
+  return _ytInstallP;
+}
+
 /**
- * Ensures yt-dlp.exe exists and is executable.
- * If completely missing from resources and local bin, downloads it to userData/bin/yt-dlp.exe.
+ * Returns a verified, runnable yt-dlp path. Seeds a writable managed copy,
+ * purges corrupt/quarantined binaries, falls back to PATH, then downloads
+ * (checksum-verified, multi-mirror) and finally winget.
  */
 async function ensureYtDlpAvailable(onProgress) {
-  // Keep a writable, self-updating copy in userData (bundled copy may be read-only)
+  if (_ytForce) {
+    _ytForce = false;
+    _ytOk = null;
+    return (_ytOk = await installYtDlp(onProgress));
+  }
+  if (_ytOk && (_ytOk === "yt-dlp" || fs.existsSync(_ytOk))) return _ytOk;
+  _ytOk = null;
+
+  const managed = path.join(_managedDir(), "yt-dlp.exe");
   try {
-    const managed = path.join(_managedDir(), "yt-dlp.exe");
     if (!fs.existsSync(managed)) {
       const src = getYtDlpPath();
       if (src !== "yt-dlp" && fs.existsSync(src)) {
@@ -1084,56 +1438,38 @@ async function ensureYtDlpAvailable(onProgress) {
       }
     }
   } catch (_) {}
-  const currentPath = getYtDlpPath();
-  if (currentPath !== "yt-dlp" && fs.existsSync(currentPath)) {
-    return currentPath;
-  }
 
-  // If "yt-dlp" is on system PATH, verify it works
-  if (currentPath === "yt-dlp") {
+  const cand = getYtDlpPath();
+  if (cand !== "yt-dlp" && fs.existsSync(cand)) {
+    if (_isValidExe(cand) && (await _runOk(cand, ["--version"], 45000)))
+      return (_ytOk = cand);
     try {
-      const { execSync } = require("child_process");
-      execSync("yt-dlp --version", { stdio: "ignore", windowsHide: true });
-      return "yt-dlp";
+      fs.unlinkSync(managed);
     } catch (_) {}
   }
+  if (await _runOk("yt-dlp", ["--version"], 10000)) return (_ytOk = "yt-dlp");
+  const wl = _wingetLink("yt-dlp.exe");
+  if (wl && (await _runOk(wl, ["--version"], 45000))) return (_ytOk = wl);
 
-  // Not found anywhere! Automatically download to userData/bin/yt-dlp.exe
-  let targetPath = null;
-  try {
-    const { app } = require("electron");
-    if (app) {
-      targetPath = path.join(app.getPath("userData"), "bin", "yt-dlp.exe");
-    }
-  } catch (_) {}
-
-  if (!targetPath) {
-    targetPath = path.join(__dirname, "../bin/yt-dlp.exe");
-  }
-
-  if (onProgress) {
+  if (onProgress)
     onProgress({
       status: "installing",
       percent: 0,
       message: "Setting up downloader components (one-time)…",
     });
-  }
+  return (_ytOk = await installYtDlp(onProgress));
+}
 
-  console.log(
-    "[DownloadEngine] yt-dlp binary missing! Auto-installing to:",
-    targetPath,
-  );
-  await downloadYtDlpBinary(targetPath, (prog) => {
-    if (onProgress) {
-      onProgress({
-        status: "installing",
-        percent: Math.round(prog.percent * 0.9),
-        message: `Setting up downloader components… ${prog.percent}%`,
-      });
-    }
-  });
-
-  return targetPath;
+async function ensureDependencies(onProgress) {
+  const [ytdlp, ffmpeg] = await Promise.all([
+    ensureYtDlpAvailable(onProgress).catch(() => null),
+    ensureFfmpeg(onProgress).catch(() => null),
+  ]);
+  let deno = null;
+  try {
+    deno = (await _ver("deno")) ? "system" : await ensureDeno();
+  } catch (_) {}
+  return { ok: !!ytdlp, ytdlp, ffmpeg, deno };
 }
 
 function _ver(bin) {
@@ -1228,6 +1564,151 @@ async function ensureDeno() {
   return fs.existsSync(exe) ? exe : null;
 }
 
+function getFfmpegPath() {
+  const managed = path.join(_managedDir(), "ffmpeg.exe");
+  if (fs.existsSync(managed)) return managed;
+
+  if (process.resourcesPath) {
+    const resourcesBin = path.join(process.resourcesPath, "bin", "ffmpeg.exe");
+    if (fs.existsSync(resourcesBin)) return resourcesBin;
+  }
+
+  const devBin = path.join(__dirname, "../bin/ffmpeg.exe");
+  if (fs.existsSync(devBin)) return devBin;
+
+  try {
+    const { app } = require("electron");
+    if (app) {
+      const userBin = path.join(app.getPath("userData"), "bin", "ffmpeg.exe");
+      if (fs.existsSync(userBin)) return userBin;
+    }
+  } catch (_) {}
+
+  return "ffmpeg";
+}
+
+const _FFMPEG_SOURCES = [
+  {
+    url: "https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-win32-x64.gz",
+    gz: true,
+  },
+  {
+    url: "https://ghproxy.net/https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-win32-x64.gz",
+    gz: true,
+  },
+  {
+    url: "https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip",
+    zip: true,
+  },
+];
+
+async function _unzipPick(zip, wanted, destDir) {
+  const tmp = path.join(destDir, "_unzip");
+  try {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.mkdirSync(tmp, { recursive: true });
+    await new Promise((r) => {
+      const p = spawn("tar", ["-xf", zip, "-C", tmp], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+      p.on("close", r);
+      p.on("error", r);
+    });
+    const walk = (d) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const f = path.join(d, e.name);
+        if (e.isDirectory()) walk(f);
+        else if (wanted.includes(e.name.toLowerCase()))
+          fs.copyFileSync(f, path.join(destDir, e.name.toLowerCase()));
+      }
+    };
+    walk(tmp);
+  } finally {
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.unlinkSync(zip);
+    } catch (_) {}
+  }
+}
+
+let _ffmpegP = null;
+let _ffOk = null;
+let _ffFailAt = 0;
+async function ensureFfmpeg(onProgress) {
+  if (_ffOk && (_ffOk === "ffmpeg" || fs.existsSync(_ffOk))) return _ffOk;
+  _ffOk = null;
+
+  const managed = path.join(_managedDir(), "ffmpeg.exe");
+  const cur = getFfmpegPath();
+  if (cur !== "ffmpeg" && fs.existsSync(cur)) {
+    if (_isValidExe(cur, 5000000) && (await _runOk(cur, ["-version"], 45000)))
+      return (_ffOk = cur);
+    try {
+      fs.unlinkSync(managed);
+    } catch (_) {}
+  }
+  if (await _runOk("ffmpeg", ["-version"], 10000)) return (_ffOk = "ffmpeg");
+  const wl = _wingetLink("ffmpeg.exe");
+  if (wl && (await _runOk(wl, ["-version"], 45000))) return (_ffOk = wl);
+
+  if (_ffmpegP) return _ffmpegP;
+  if (_ffFailAt && Date.now() - _ffFailAt < 300000) return null;
+
+  _ffmpegP = (async () => {
+    const dir = _managedDir();
+    fs.mkdirSync(dir, { recursive: true });
+    if (onProgress)
+      onProgress({
+        status: "installing",
+        percent: 5,
+        message: "Setting up audio conversion engine (one-time)…",
+      });
+    for (const src of _FFMPEG_SOURCES) {
+      try {
+        if (src.zip) {
+          const z = path.join(dir, "ffmpeg.zip");
+          await _retry(() => _fetchToFile(src.url, z, { idleMs: 45000 }), {
+            tries: 2,
+          });
+          await _unzipPick(z, ["ffmpeg.exe", "ffprobe.exe"], dir);
+        } else {
+          await _retry(
+            () =>
+              _fetchToFile(src.url, managed, { gunzip: true, idleMs: 45000 }),
+            { tries: 2 },
+          );
+        }
+        if (
+          _isValidExe(managed, 5000000) &&
+          (await _runOk(managed, ["-version"], 45000))
+        )
+          return (_ffOk = managed);
+      } catch (e) {
+        console.warn(
+          `[DownloadEngine] ffmpeg source failed (${src.url}):`,
+          e.message,
+        );
+      }
+      try {
+        fs.unlinkSync(managed);
+      } catch (_) {}
+    }
+    const w = await _wingetInstall("Gyan.FFmpeg", "ffmpeg.exe");
+    if (w && (await _runOk(w, ["-version"], 45000))) return (_ffOk = w);
+    _ffFailAt = Date.now();
+    return null;
+  })()
+    .catch(() => {
+      _ffFailAt = Date.now();
+      return null;
+    })
+    .finally(() => {
+      _ffmpegP = null;
+    });
+  return _ffmpegP;
+}
+
 let _jsRtP = null;
 function _jsRuntimeArgs() {
   if (_jsRtP) return _jsRtP;
@@ -1293,6 +1774,7 @@ function prewarmDownloader() {
   p.finally(() => {
     if (_denoP === p) _denoP = null;
   });
+  ensureFfmpeg().catch(() => {});
   updateYtDlp()
     .then(() => ensureYtDlpAvailable())
     .then((bin) => {
@@ -1302,7 +1784,9 @@ function prewarmDownloader() {
       });
       w.on("error", () => {});
     })
-    .catch(() => {});
+    .catch(() => {
+      _warmed = false;
+    });
 }
 
 async function _downloadWithYtDlpOnce(
@@ -1312,8 +1796,10 @@ async function _downloadWithYtDlpOnce(
   trackId,
   ctx,
   fmt = "m4a",
+  allowNoConversion = false,
 ) {
   const ytDlpBinary = await ensureYtDlpAvailable(onProgress);
+  let ffmpegBinary = await ensureFfmpeg(onProgress).catch(() => null);
   // _updP (yt-dlp self-update) intentionally not awaited — don't block user downloads
   if (_denoP) {
     if (onProgress)
@@ -1325,14 +1811,15 @@ async function _downloadWithYtDlpOnce(
     await Promise.race([_denoP, _sleep(6000)]);
   }
   const rtArgs = await _jsRuntimeArgs();
+  const ffmpegArgs =
+    ffmpegBinary && ffmpegBinary !== "ffmpeg"
+      ? ["--ffmpeg-location", ffmpegBinary]
+      : [];
 
   return new Promise((resolve, reject) => {
-    const args = [
-      urlOrQuery,
-      ...rtArgs,
-      "--extractor-args",
-      "youtube:player_skip=configs",
-      ...(fmt === "m4a"
+    const audioFormatArgs = allowNoConversion
+      ? ["-f", "140/bestaudio[ext=m4a]/bestaudio/best"]
+      : fmt === "m4a"
         ? [
             "-f",
             "140/bestaudio[ext=m4a]/bestaudio",
@@ -1352,8 +1839,22 @@ async function _downloadWithYtDlpOnce(
             "320K",
             "--postprocessor-args",
             "ExtractAudio:-threads 0 -compression_level 7",
-          ]),
+          ];
+
+    const args = [
+      urlOrQuery,
+      ...rtArgs,
+      ...ffmpegArgs,
+      "--extractor-args",
+      "youtube:player_skip=configs",
+      ...audioFormatArgs,
       "--no-warnings",
+      "--socket-timeout",
+      "20",
+      "--retries",
+      "5",
+      "--fragment-retries",
+      "5",
       "-o",
       `${destBase}.%(ext)s`,
       "--no-playlist",
@@ -1379,10 +1880,20 @@ async function _downloadWithYtDlpOnce(
         ctx.destBase = destBase;
       }
     } catch (err) {
+      err.depFailure = "ytdlp";
       return reject(err);
     }
+    let _lastAct = Date.now();
+    let _stalled = false;
+    const _wd = setInterval(() => {
+      if (Date.now() - _lastAct > 90000) {
+        _stalled = true;
+        _killTree(proc);
+      }
+    }, 10000);
 
     proc.stdout.on("data", (data) => {
+      _lastAct = Date.now();
       const lines = data.toString().split("\n");
       for (const line of lines) {
         const text = line.trim();
@@ -1455,10 +1966,14 @@ async function _downloadWithYtDlpOnce(
     });
 
     proc.stderr.on("data", (data) => {
+      _lastAct = Date.now();
       errorOutput += data.toString();
     });
 
     proc.on("close", (code) => {
+      clearInterval(_wd);
+      if (_stalled && !(ctx && ctx.cancelled))
+        return reject(new Error("Download stalled: timed out"));
       if (ctx && ctx.cancelled) {
         setTimeout(() => _cleanupPartials(destBase), 600);
         const e = new Error("Download cancelled");
@@ -1471,13 +1986,19 @@ async function _downloadWithYtDlpOnce(
         if (finalFile && fs.existsSync(finalFile)) return resolve(finalFile);
         const dir = path.dirname(destBase);
         const baseName = path.basename(destBase);
-        const files = fs.readdirSync(dir);
-        const matched = files.find(
-          (f) =>
-            f.startsWith(baseName) &&
-            (f.endsWith(".mp3") || f.endsWith(".m4a")),
-        );
-        if (matched) return resolve(path.join(dir, matched));
+        try {
+          const files = fs.readdirSync(dir);
+          const matched = files.find(
+            (f) =>
+              f.startsWith(baseName) &&
+              (f.endsWith(".mp3") ||
+                f.endsWith(".m4a") ||
+                f.endsWith(".opus") ||
+                f.endsWith(".webm") ||
+                f.endsWith(".aac")),
+          );
+          if (matched) return resolve(path.join(dir, matched));
+        } catch (_) {}
         resolve(expectedMp3);
       } else {
         const cleanErr =
@@ -1487,7 +2008,10 @@ async function _downloadWithYtDlpOnce(
     });
 
     proc.on("error", (err) => {
-      reject(new Error(`Failed to launch downloader: ${err.message}`));
+      clearInterval(_wd);
+      const e = new Error(`Failed to launch downloader: ${err.message}`);
+      e.depFailure = "ytdlp";
+      reject(e);
     });
   });
 }
@@ -1500,40 +2024,173 @@ async function downloadWithYtDlp(
   ctx,
   fmt = "m4a",
 ) {
-  try {
-    return await _downloadWithYtDlpOnce(
-      urlOrQuery,
-      destBase,
-      onProgress,
-      trackId,
-      ctx,
-      fmt,
-    );
-  } catch (err) {
-    if (err.cancelled || (ctx && (ctx.cancelled || ctx._retried))) throw err;
-    if (
-      !/HTTP Error 40[13]|Sign in|nsig|Unable to extract|Requested format is not available|player response|signature/i.test(
-        err.message,
-      )
-    )
-      throw err;
-    if (ctx) ctx._retried = true;
-    if (onProgress)
-      onProgress({
-        status: "installing",
-        percent: 5,
-        message: "Updating downloader…",
-      });
-    await updateYtDlp(true);
-    return _downloadWithYtDlpOnce(
-      urlOrQuery,
-      destBase,
-      onProgress,
-      trackId,
-      ctx,
-      fmt,
-    );
+  const used = new Set();
+  let noConv = false;
+  let net = 0;
+  let lastErr = null;
+  const say = (message, percent = 10, status = "installing") =>
+    onProgress && onProgress({ status, percent, message });
+
+  for (let i = 0; i < 8; i++) {
+    try {
+      return await _downloadWithYtDlpOnce(
+        urlOrQuery,
+        destBase,
+        onProgress,
+        trackId,
+        ctx,
+        fmt,
+        noConv,
+      );
+    } catch (err) {
+      lastErr = err;
+      if (err.cancelled || (ctx && ctx.cancelled)) throw err;
+      const msg = String(err.message || "");
+
+      // yt-dlp itself broken / blocked / corrupt → force a clean reinstall
+      if (
+        (err.depFailure === "ytdlp" || /Failed to install yt-dlp/.test(msg)) &&
+        !used.has("ytdlp")
+      ) {
+        used.add("ytdlp");
+        say("Repairing downloader components…");
+        _ytForce = true;
+        continue;
+      }
+
+      // ffmpeg missing/broken → heal, else fall back to raw stream capture
+      if (
+        !noConv &&
+        /ffmpeg|ffprobe|Postprocessing|Conversion failed/i.test(msg)
+      ) {
+        if (!used.has("ffmpeg")) {
+          used.add("ffmpeg");
+          say("Configuring audio converter…", 15);
+          _ffOk = null;
+          _ffFailAt = 0;
+          const f = await ensureFfmpeg(onProgress).catch(() => null);
+          if (f) continue;
+        }
+        noConv = true;
+        continue;
+      }
+
+      // Extractor drift (nsig/sign-in/etc.) → update yt-dlp + JS runtime
+      if (
+        !used.has("update") &&
+        /HTTP Error 40[13]|Sign in|nsig|Unable to extract|Requested format is not available|player response|signature|cipher|challenge/i.test(
+          msg,
+        )
+      ) {
+        used.add("update");
+        say("Updating downloader components…", 5);
+        await updateYtDlp(true);
+        await ensureDeno().catch(() => null);
+        _jsRtP = null;
+        continue;
+      }
+
+      // Transient network trouble → short backoff retry
+      if (
+        net < 2 &&
+        /timed out|timeout|stalled|ECONNRESET|ETIMEDOUT|Unable to download|HTTP Error 5\d\d|Temporary failure|Connection/i.test(
+          msg,
+        )
+      ) {
+        net++;
+        say("Connection hiccup, retrying…", 8, "resolving");
+        await _sleep(1500 * net);
+        continue;
+      }
+      break;
+    }
   }
+  throw lastErr;
+}
+
+// ─── Keyless alternate source (Piped) when yt-dlp is unusable ─────────────────
+const _PIPED_FALLBACK = [
+  "https://pipedapi.kavin.rocks",
+  "https://pipedapi.adminforge.de",
+  "https://api.piped.private.coffee",
+];
+
+async function _pipedInstances() {
+  try {
+    const list = await fetchJson("https://piped-instances.kavin.rocks/", 4000);
+    const urls = (Array.isArray(list) ? list : [])
+      .map((i) => i && i.api_url)
+      .filter((u) => /^https:\/\//.test(u || ""));
+    return [...new Set([...urls.slice(0, 6), ..._PIPED_FALLBACK])];
+  } catch (_) {
+    return _PIPED_FALLBACK;
+  }
+}
+
+async function _pipedResolve(videoId) {
+  for (const base of await _pipedInstances()) {
+    const j = await fetchJson(`${base}/streams/${videoId}`, 6000).catch(
+      () => null,
+    );
+    const a = (j?.audioStreams || [])
+      .filter(
+        (s) =>
+          s.url &&
+          /audio\/mp4/.test(s.mimeType || "") &&
+          Number(s.contentLength) > 0,
+      )
+      .sort((x, y) => (y.bitrate || 0) - (x.bitrate || 0))[0];
+    if (a)
+      return {
+        url: a.url,
+        size: Number(a.contentLength),
+        durSec: Number(j.duration) || 0,
+        ua: UA_DESKTOP,
+      };
+  }
+  return null;
+}
+
+async function _pipedFallback(videoId, destBase, fmt, onProgress, ctx) {
+  onProgress({
+    status: "resolving",
+    percent: 12,
+    message: "Trying alternate source…",
+  });
+  const r = await _pipedResolve(videoId);
+  if (!r) throw new Error("alternate source unavailable");
+  const out = `${destBase}.m4a`;
+  try {
+    await _rangeGet(r.url, 0, Math.min(32767, r.size - 1), 0, 4000, r.ua);
+    await _fastDownload(r.url, r.size, out, onProgress, ctx, r.ua);
+    if (!_validateAudio(out, r.durSec)) throw new Error("invalid audio");
+  } catch (e) {
+    try {
+      fs.unlinkSync(out);
+    } catch (_) {}
+    throw e;
+  }
+  if (fmt === "mp3") {
+    const ff = await ensureFfmpeg().catch(() => null);
+    if (ff) {
+      const mp3 = `${destBase}.mp3`;
+      const ok = await _runOk(
+        ff,
+        ["-y", "-i", out, "-vn", "-b:a", "320k", mp3],
+        180000,
+      );
+      if (ok && fs.existsSync(mp3)) {
+        try {
+          fs.unlinkSync(out);
+        } catch (_) {}
+        return mp3;
+      }
+      try {
+        fs.unlinkSync(mp3);
+      } catch (_) {}
+    }
+  }
+  return out;
 }
 
 // ─── Fast path: direct InnerTube stream + parallel ranged download (no yt-dlp) ─
@@ -1846,10 +2503,25 @@ function _artCandidates(url) {
   return [...new Set(out)];
 }
 
+async function _embeddableArt(b) {
+  // Real, decodable artwork only; 16:9 video frames are squared; WebP etc. converted to JPEG
+  try {
+    const CA = require("./coverArt");
+    const r = await CA.normalizeArtBuffer(b);
+    if (!r) return null;
+    if (r.mime === "image/jpeg" || r.mime === "image/png") return r.buf;
+    return await require("sharp")(r.buf).jpeg({ quality: 92 }).toBuffer();
+  } catch (_) {
+    return null;
+  }
+}
+
 async function fetchBestArtwork(url) {
   for (const u of _artCandidates(url)) {
     const b = await fetchArtworkBuffer(u, 8000);
-    if (b) return b;
+    if (!b) continue;
+    const ok = await _embeddableArt(b);
+    if (ok) return ok;
   }
   return null;
 }
@@ -2033,7 +2705,9 @@ async function downloadAndTagTrack(
   await _acquireSlot(trackId);
   if (ctx.cancelled) {
     _releaseSlot();
-    throw new Error("Download cancelled while queued");
+    throw Object.assign(new Error("Download cancelled while queued"), {
+      cancelled: true,
+    });
   }
   try {
     return await _downloadAndTagTrackInner(
@@ -2051,6 +2725,22 @@ async function downloadAndTagTrack(
 }
 
 async function _downloadAndTagTrackInner(
+  trackInfo,
+  targetFolder,
+  onProgress,
+  trackId,
+  ctx,
+  fmt = "m4a",
+) {
+  try {
+    const dir = _ensureWritableDir(targetFolder);
+    return await _downloadCore(trackInfo, dir, onProgress, trackId, ctx, fmt);
+  } catch (err) {
+    throw await _finalizeError(err);
+  }
+}
+
+async function _downloadCore(
   trackInfo,
   targetFolder,
   onProgress,
@@ -2126,7 +2816,7 @@ async function _downloadAndTagTrackInner(
         message: "Downloading audio via yt-dlp…",
       });
       const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-            const downloadedPath = await downloadWithYtDlp(
+      const downloadedPath = await downloadWithYtDlp(
         targetUrl,
         destBase,
         onProgress,
@@ -2134,7 +2824,7 @@ async function _downloadAndTagTrackInner(
         ctx,
         fmt,
       );
-            injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
+      injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
       onProgress({
         status: "done",
         percent: 100,
@@ -2155,9 +2845,16 @@ async function _downloadAndTagTrackInner(
   let effectiveVideoId = videoId;
   if (!effectiveVideoId) {
     try {
-      const q = [trackInfo.artistName, trackInfo.trackName].filter(Boolean).join(" ").trim();
+      const q = [trackInfo.artistName, trackInfo.trackName]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
       if (q) {
-        onProgress({ status: "resolving", percent: 8, message: "Finding best stream match…" });
+        onProgress({
+          status: "resolving",
+          percent: 8,
+          message: "Finding best stream match…",
+        });
         const found = await searchYouTubeMusic(q, 5).catch(() => []);
         if (found && found.length > 0) {
           const matched = rankAndMerge(found, q);
@@ -2169,7 +2866,11 @@ async function _downloadAndTagTrackInner(
     } catch (_) {}
   }
 
-  if (effectiveVideoId && effectiveVideoId.length >= 5) {
+  if (
+    effectiveVideoId &&
+    effectiveVideoId.length >= 5 &&
+    effectiveVideoId !== videoId
+  ) {
     try {
       const targetUrl = `https://www.youtube.com/watch?v=${effectiveVideoId}`;
       const downloadedPath = await downloadWithYtDlp(
@@ -2193,6 +2894,30 @@ async function _downloadAndTagTrackInner(
     }
   }
 
+  // Strategy 1.8: keyless alternate source (no yt-dlp/ffmpeg needed)
+  if (effectiveVideoId && effectiveVideoId.length >= 5) {
+    try {
+      const alt = await _pipedFallback(
+        effectiveVideoId,
+        destBase,
+        fmt,
+        onProgress,
+        ctx,
+      );
+      injectTrackInfoTags(alt, trackInfo, await artPromise);
+      onProgress({
+        status: "done",
+        percent: 100,
+        message: "Done!",
+        filePath: alt,
+      });
+      return alt;
+    } catch (altErr) {
+      if (altErr.cancelled || ctx.cancelled) throw altErr;
+      console.warn("[DownloadEngine] alternate source failed:", altErr.message);
+    }
+  }
+
   // Strategy 2: Accurate search query with yt-dlp
   const searchQuery = `ytsearch1:${trackInfo.artistName} - ${trackInfo.trackName} audio`;
   onProgress({
@@ -2200,7 +2925,7 @@ async function _downloadAndTagTrackInner(
     percent: 10,
     message: "Searching and downloading via yt-dlp…",
   });
-    const downloadedPath = await downloadWithYtDlp(
+  const downloadedPath = await downloadWithYtDlp(
     searchQuery,
     destBase,
     onProgress,
@@ -2208,7 +2933,7 @@ async function _downloadAndTagTrackInner(
     ctx,
     fmt,
   );
-    injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
+  injectTrackInfoTags(downloadedPath, trackInfo, await artPromise);
   onProgress({
     status: "done",
     percent: 100,
@@ -2277,6 +3002,11 @@ module.exports = {
   getYtDlpPath,
   ensureYtDlpAvailable,
   prewarmDownloader,
+  searchYouTubeMusic,
+  ensureDependencies,
+  ensureFfmpeg,
+  classifyError,
+  DownloadError,
   prefetchStream,
   cancelDownload,
 };

@@ -71,20 +71,22 @@
   height: 100%;
   color: var(--green, #1ed760) !important;
   opacity: 0;
-  will-change: opacity;
-  animation: splash-icon-cycle 12s linear infinite;
+  visibility: hidden;
+  transition:
+    opacity 0.3s ease,
+    visibility 0s linear 0.3s;
 }
-.splash-cycle-icon:nth-of-type(1) {
-  animation-delay: 0s;
+/* Pre-JS fallback: only the first icon is shown. */
+.splash-icon-wrap:not(.is-cycling) .splash-cycle-icon:first-of-type {
+  opacity: 1;
+  visibility: visible;
 }
-.splash-cycle-icon:nth-of-type(2) {
-  animation-delay: -3s;
-}
-.splash-cycle-icon:nth-of-type(3) {
-  animation-delay: -6s;
-}
-.splash-cycle-icon:nth-of-type(4) {
-  animation-delay: -9s;
+.splash-cycle-icon.is-active {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 0.3s ease,
+    visibility 0s;
 }
 .splash-icon-glow {
   position: absolute;
@@ -1524,7 +1526,11 @@ input[type="range"] {
 }
 
 [data-theme="light"] .le-badge-synced {
-  background: color-mix(in srgb, var(--green, #1ed760) 15%, transparent) !important;
+  background: color-mix(
+    in srgb,
+    var(--green, #1ed760) 15%,
+    transparent
+  ) !important;
   color: var(--green, #1ed760) !important;
 }
 
@@ -1539,7 +1545,11 @@ input[type="range"] {
 }
 
 [data-theme="light"] .le-badge-dur-match {
-  background: color-mix(in srgb, var(--green, #1ed760) 15%, transparent) !important;
+  background: color-mix(
+    in srgb,
+    var(--green, #1ed760) 15%,
+    transparent
+  ) !important;
   color: var(--green, #1ed760) !important;
 }
 
@@ -1941,67 +1951,6 @@ textarea {
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--green, #1ed760) 12%, #ffffff);
 }
 
-.sidebar-help-btn[data-tooltip]:hover::before,
-.sidebar-help-btn[data-tooltip]:hover::after {
-  z-index: 100000;
-}
-.sidebar-help-btn[data-tooltip]::before {
-  bottom: auto;
-  top: calc(100% + 10px);
-  transform: translateX(-50%) translateY(-4px);
-}
-
-.sidebar-help-btn[data-tooltip]::after {
-  bottom: auto;
-  top: calc(100% + 4px);
-  border-top-color: transparent;
-  border-bottom-color: #282828;
-}
-
-.sidebar-help-btn[data-tooltip]:hover::before,
-.sidebar-help-btn[data-tooltip]:hover::after {
-  transform: translateX(-50%) translateY(0);
-}
-
-/* Tooltip-below overrides for float-nav-trigger and lyrics-toggle-btn
-   (same pattern as sidebar-help-btn — tooltip appears below the element) */
-#float-nav-trigger[data-tooltip]:hover::before,
-#float-nav-trigger[data-tooltip]:hover::after,
-#lyrics-toggle-btn[data-tooltip]:hover::before,
-#lyrics-toggle-btn[data-tooltip]:hover::after,
-.playlist-import-fab[data-tooltip]:hover::before,
-.playlist-import-fab[data-tooltip]:hover::after {
-  z-index: 100000;
-}
-#float-nav-trigger[data-tooltip]::before,
-#lyrics-toggle-btn[data-tooltip]::before,
-.playlist-import-fab[data-tooltip]::before {
-  bottom: auto;
-  top: calc(100% + 10px);
-  transform: translateX(-50%) translateY(-4px);
-}
-#float-nav-trigger[data-tooltip]::after,
-#lyrics-toggle-btn[data-tooltip]::after,
-.playlist-import-fab[data-tooltip]::after {
-  bottom: auto;
-  top: calc(100% + 4px);
-  border-top-color: transparent;
-  border-bottom-color: #282828;
-}
-#float-nav-trigger[data-tooltip]:hover::before,
-#float-nav-trigger[data-tooltip]:hover::after,
-#lyrics-toggle-btn[data-tooltip]:hover::before,
-#lyrics-toggle-btn[data-tooltip]:hover::after {
-  transform: translateX(-50%) translateY(0);
-}
-/* Lyrics pill extra offset to avoid overlapping sort group */
-#lyrics-toggle-btn[data-tooltip]::before {
-  top: calc(100% + 14px);
-}
-#lyrics-toggle-btn[data-tooltip]::after {
-  top: calc(100% + 8px);
-}
-
 .sidebar-help-btn svg {
   width: 16px;
   height: 16px;
@@ -2387,54 +2336,11 @@ textarea {
 }
 
 /* ── CUSTOM TOOLTIP STYLES ── */
-/* Tooltips that point upward from below center of element.
-   Add data-tooltip="Your text" to any element to activate. */
-[data-tooltip] {
-  position: relative;
-}
-
+/* Managed exclusively via JS portal (.sidebar-tooltip-portal) for consistent bounds & timer. */
 [data-tooltip]::before,
 [data-tooltip]::after {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity 0.18s ease,
-    transform 0.18s ease;
-  z-index: 9000;
-}
-
-[data-tooltip]::before {
-  content: attr(data-tooltip);
-  bottom: calc(100% + 10px);
-  left: 50%;
-  transform: translateX(-50%) translateY(4px);
-  background: #282828;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 500;
-  padding: 5px 10px;
-  border-radius: 6px;
-  white-space: nowrap;
-  letter-spacing: 0.2px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
-  border: 1px solid #3a3a3a;
-}
-
-/* Arrow pointing downward (from below the tooltip, above the element) */
-[data-tooltip]::after {
-  content: "";
-  bottom: calc(100% + 4px);
-  left: 50%;
-  transform: translateX(-50%) translateY(4px);
-  border: 5px solid transparent;
-  border-top-color: #282828;
-}
-
-[data-tooltip]:hover::before,
-[data-tooltip]:hover::after {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
+  display: none !important;
+  content: none !important;
 }
 
 /* ── SCAN PROGRESS ── */
@@ -2575,11 +2481,8 @@ textarea {
   cursor: default;
   transition: background 0.06s;
   contain: content;
-  /* PERFORMANCE: Promote to GPU layer for zero-cost translateY repositioning.
-     Without this, each scroll frame triggers a full repaint of the row.
-     With this, translateY changes are handled by the compositor thread,
-     not the main thread — zero jank even at 120fps. */
-  will-change: transform;
+  /* No will-change: it would promote every recycled row to its own
+     compositor layer (100+ layers) and make scrolling stutter. */
   /* position:absolute + transform:translateY set by JS — compositing-only repositioning */
 }
 
@@ -3073,12 +2976,22 @@ body:not(.is-playing) .nolyric-bar {
 
 /* ── Task 2: No-lyrics cover art + visualizer ── */
 .lyrics-nolyrics-vinyl {
+  pointer-events: none;
+  cursor: default;
+  --v: 100px;
   position: relative;
-  width: 100px;
-  height: 100px;
+  width: var(--v);
+  height: var(--v);
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.np-overlay.open .lyrics-nolyrics-vinyl,
+.lyrics-panel:not(.closed):not(.floating) .lyrics-nolyrics-vinyl,
+.lyrics-panel.floating.float-open .lyrics-nolyrics-vinyl {
+  pointer-events: auto;
+  cursor: pointer;
 }
 
 /* Center spindle hole — sits on top of the spinning cover */
@@ -3140,10 +3053,35 @@ body:not(.is-playing) .lyrics-nolyrics-visualizer {
   opacity: 0.7;
 }
 
+/* Tonearm — rests beside the disc when paused, swings onto it when playing */
+.lyrics-tonearm {
+  position: absolute;
+  top: calc(var(--v) * -0.08);
+  right: calc(var(--v) * -0.2);
+  width: calc(var(--v) * 0.36);
+  height: calc(var(--v) * 0.9);
+  transform-origin: 50% 13.33%;
+  transform: rotate(-10deg);
+  transition: transform 1.1s cubic-bezier(0.3, 0.1, 0.2, 1);
+  z-index: 4;
+  pointer-events: none;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.5));
+}
+
+.lyrics-tonearm svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+body.is-playing .lyrics-tonearm {
+  transform: rotate(14deg);
+}
+
 /* Overlay variant — larger vinyl for the full-screen view */
 .ov-lyrics-empty .lyrics-nolyrics-vinyl {
-  width: 180px;
-  height: 180px;
+  --v: 180px;
 }
 
 .ov-lyrics-empty .lyrics-nolyrics-vinyl::after {
@@ -6123,12 +6061,10 @@ body.is-playing .ov-play svg,
   }
 
   .lyrics-panel.floating .lyrics-header {
-    cursor: grab;
+    position: relative;
+    cursor: default;
     user-select: none;
-  }
-
-  .lyrics-panel.floating .lyrics-header:active {
-    cursor: grabbing;
+    touch-action: none;
   }
 
   .lyrics-panel.floating.float-open {
@@ -6512,28 +6448,7 @@ body.is-playing .ov-play svg,
 
 /* Tooltip on hover */
 .floating-nav-card .fn-btn::after {
-  content: attr(data-label);
-  position: absolute;
-  right: calc(100% + 10px);
-  top: 50%;
-  transform: translateY(-50%);
-  background: rgba(34, 34, 34, 0.826);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 1.5px solid rgba(96, 96, 96, 0.248);
-  color: var(--text-primary);
-  font-size: 11px;
-  font-weight: 500;
-  padding: 7px 14px;
-  border-radius: 6px;
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.1s;
-}
-
-.floating-nav-card .fn-btn:hover::after {
-  opacity: 1;
+  display: none !important;
 }
 
 /* Search input that expands from magnifier */
@@ -7580,7 +7495,7 @@ body.is-playing .ov-play svg,
 
 /* ── Queue drag handle ── */
 .queue-drag-handle {
-  cursor: grab;
+  cursor: default;
   opacity: 0.4;
   transition: opacity 0.15s;
 }
@@ -7590,7 +7505,7 @@ body.is-playing .ov-play svg,
 }
 
 .queue-drag-handle:active {
-  cursor: grabbing;
+  cursor: default;
 }
 
 .queue-drag-source {
@@ -7948,22 +7863,21 @@ body.is-playing .ov-play svg,
   color: var(--green);
 }
 
-/* Tooltips for elements inside the (scrollable, overflow-clipped) sidebar
-   can't use the normal [data-tooltip]::before/::after pseudo-elements —
-   any ancestor with overflow:auto/hidden clips ALL descendants, including
-   position:absolute/fixed ones, so a centered tooltip on an edge button
-   just gets cut off. We suppress the pseudo-element tooltip inside the
-   sidebar and render those tooltips as real DOM nodes appended to
-   <body> instead (see initSidebarTooltipPortal in renderer.js), which
-   are free to overflow the sidebar's bounds. */
-.sidebar [data-tooltip]::before,
-.sidebar [data-tooltip]::after {
-  display: none;
+/* Global tooltip: All tooltips use the JS portal (_initSidebarTooltipPortal)
+   which handles overflow, edge collision, and the 3s auto-dismiss timer.
+   Completely suppress CSS pseudo-element tooltips across the entire UI. */
+[data-tooltip]::before,
+[data-tooltip]::after,
+[data-tooltip]:hover::before,
+[data-tooltip]:hover::after {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 .sidebar-tooltip-portal {
   position: fixed;
-  z-index: 20000;
+  z-index: 2147483647;
   background: #282828;
   color: #fff;
   font-size: 11px;
@@ -9061,7 +8975,6 @@ body.expanded-sidebar .sidebar-search {
   transition: border-color 0.15s ease;
 }
 
-
 .cqb-name-input:focus {
   border-bottom-color: var(--green);
 }
@@ -9332,7 +9245,10 @@ body.expanded-sidebar .sidebar-search {
   color: var(--text-secondary);
   cursor: pointer;
   box-sizing: border-box;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
 }
 .nav-lyrics-group #playlist-import-btn:hover {
   background: var(--surface-hover);
@@ -9391,7 +9307,8 @@ body.expanded-sidebar .sidebar-search {
   display: flex;
   gap: 16px;
   padding: 7px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--border, #333) 50%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--border, #333) 50%, transparent);
   font-size: 13px;
 }
 .track-props-key {
@@ -9490,7 +9407,10 @@ body.expanded-sidebar .sidebar-search {
   color: var(--text-primary);
   cursor: pointer;
   text-align: left;
-  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    transform 0.1s;
 }
 .track-share-item svg {
   width: 20px;
@@ -9500,7 +9420,11 @@ body.expanded-sidebar .sidebar-search {
 }
 .track-share-item:hover {
   border-color: var(--green, #1db954);
-  background: color-mix(in srgb, var(--green, #1db954) 10%, var(--surface, #1a1a1a));
+  background: color-mix(
+    in srgb,
+    var(--green, #1db954) 10%,
+    var(--surface, #1a1a1a)
+  );
 }
 .track-share-item:active {
   transform: scale(0.97);
@@ -9542,4 +9466,183 @@ body.expanded-sidebar .sidebar-search {
 }
 .seek-hover-tip.show {
   opacity: 1;
+}
+
+/* ── Native-app feel ───────────────────────────────────────────── */
+html,
+body {
+  overscroll-behavior: none;
+  cursor: default;
+}
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+img,
+svg,
+canvas {
+  -webkit-user-drag: none;
+}
+a,
+button,
+[role="button"],
+.track-row,
+.playlist-song-row {
+  cursor: pointer;
+}
+button:focus:not(:focus-visible),
+[tabindex]:focus:not(:focus-visible) {
+  outline: none;
+}
+/* Text stays selectable only where it's content the user types or reads */
+input,
+textarea,
+[contenteditable="true"],
+.lyrics-body,
+.lyrics-editor,
+.selectable {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+/* Every scroll region is contained — no bounce / scroll chaining */
+* {
+  overscroll-behavior: contain;
+}
+
+/* While scrolling: no hover/hit-testing on rows (avoids per-frame style recalcs) */
+.track-area.is-scrolling .virtual-track-window {
+  pointer-events: none;
+}
+/* ── Text context menu (cut / copy / paste) ── */
+.text-ctx-menu {
+  position: fixed;
+  z-index: 100200;
+  min-width: 150px;
+  padding: 4px;
+  border-radius: 10px;
+  background: rgba(18, 18, 18, 0.72);
+  backdrop-filter: blur(24px) saturate(1.6);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+}
+.text-ctx-menu button {
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  cursor: pointer;
+}
+.text-ctx-menu button:hover {
+  background: rgba(128, 128, 128, 0.336);
+}
+.text-ctx-menu button span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+[data-theme="light"] .text-ctx-menu {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Rows that appear live (queue / library sync) */
+.track-row.row-enter {
+  animation: rowEnter 0.35s ease-out;
+}
+@keyframes rowEnter {
+  from {
+    opacity: 0;
+    background-color: rgba(255, 255, 255, 0.08);
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ── Lyrics card: custom drag grip + lift ── */
+.lyrics-grip {
+  display: none;
+  position: absolute;
+  top: 3px;
+  left: calc(50% - 44px);
+  width: 18px;
+  height: 3px;
+  margin-left: -9px;
+  border-radius: 3px;
+  background: transparent;
+  transition:
+    width 0.18s ease,
+    margin-left 0.18s ease,
+    background 0.18s ease;
+  pointer-events: none;
+}
+.lyrics-panel.floating .lyrics-grip {
+  display: block;
+}
+.lyrics-panel.floating .lyrics-header:hover .lyrics-grip {
+  background: rgba(255, 255, 255, 0.22);
+}
+.lyrics-panel.floating.float-open.dragging {
+  transform: scale(1.025);
+  border-color: var(--accent-color, #e879f9);
+  box-shadow:
+    0 28px 72px rgba(0, 0, 0, 0.75),
+    0 0 0 1px var(--accent-color, #e879f9),
+    0 0 28px rgba(232, 121, 249, 0.18);
+}
+.lyrics-panel.dragging .lyrics-grip {
+  width: 26px;
+  margin-left: -13px;
+  background: var(--accent-color, #e879f9);
+}
+body.lyrics-dragging,
+body.lyrics-dragging * {
+  cursor: default !important;
+  user-select: none !important;
+}
+
+/* ── Queue custom drag ── */
+.qd-active .track-row {
+  transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.track-row.qd-src {
+  opacity: 0.35;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+.qd-ghost {
+  border-radius: 10px;
+  background: rgba(30, 30, 30, 0.92) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease;
+}
+.qd-ghost.qd-lift {
+  transform: scale(1.02) !important;
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.6),
+    0 0 0 1px var(--accent-color, #e879f9);
+}
+.qd-ghost.qd-drop {
+  border-radius: 0;
+  background: transparent !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+body.qd-dragging,
+body.qd-dragging * {
+  cursor: default !important;
+  user-select: none !important;
 }

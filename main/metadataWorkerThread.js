@@ -12,6 +12,7 @@
 
 const path = require("path");
 const fs = require("fs");
+const CoverArt = require("./coverArt");
 
 // ─── FLAC Binary Duration Reader (same as metadataReader.js) ────
 function _readFlacDurationBinary(filePath) {
@@ -113,86 +114,7 @@ function _saveEmbeddedCover(filePath, picture) {
 }
 
 function _findOfflineCover(filePath) {
-  try {
-    const dir = path.dirname(filePath);
-    const audioName = path
-      .basename(filePath, path.extname(filePath))
-      .toLowerCase();
-    const extList = [
-      ".jpg",
-      ".jpeg",
-      ".png",
-      ".webp",
-      ".bmp",
-      ".gif",
-      ".tiff",
-      ".tif",
-    ];
-    const commonNames = new Set([
-      "cover",
-      "folder",
-      "album",
-      "front",
-      "artwork",
-      "art",
-      "thumb",
-      "thumbnail",
-      "back",
-      "insert",
-      "booklet",
-      "jacket",
-      "label",
-      "sticker",
-    ]);
-
-    if (!fs.existsSync(dir)) return null;
-    const files = fs.readdirSync(dir);
-
-    // .novaart sidecar
-    for (const file of files) {
-      const lower = file.toLowerCase();
-      if (lower.includes(".novaart") && extList.includes(path.extname(lower))) {
-        return path.join(dir, file);
-      }
-    }
-    // Exact name match
-    for (const file of files) {
-      const fileExt = path.extname(file).toLowerCase();
-      if (extList.includes(fileExt)) {
-        if (
-          path.basename(file, path.extname(file)).toLowerCase() === audioName
-        ) {
-          return path.join(dir, file);
-        }
-      }
-    }
-    // Common names
-    for (const file of files) {
-      const fileExt = path.extname(file).toLowerCase();
-      if (extList.includes(fileExt)) {
-        const nameNoExt = path.basename(file, path.extname(file)).toLowerCase();
-        if (commonNames.has(nameNoExt)) {
-          return path.join(dir, file);
-        }
-      }
-    }
-    // Album art files
-    let fallbackArt = null;
-    for (const file of files) {
-      const fileExt = path.extname(file).toLowerCase();
-      if (extList.includes(fileExt)) {
-        const nameNoExt = path.basename(file, path.extname(file)).toLowerCase();
-        if (nameNoExt.startsWith("albumart")) {
-          const fullPath = path.join(dir, file);
-          if (nameNoExt.includes("large")) return fullPath;
-          fallbackArt = fallbackArt || fullPath;
-        }
-      }
-    }
-    return fallbackArt;
-  } catch (_) {
-    return null;
-  }
+  return CoverArt.findLocalCoverSync(filePath);
 }
 
 // ─── Main metadata reader (same logic as MetadataReader but for worker) ──
@@ -264,7 +186,7 @@ async function readMetadata(filePath, knownArtists) {
       }
 
       // Extract cover art
-      if (result.common.picture && result.common.picture.length > 0) {
+      if (CoverArt.usablePictures(result)) {
         const picture = result.common.picture[0];
         const buf = picture.data;
         if (buf.length < 200 * 1024) {
@@ -288,14 +210,24 @@ async function readMetadata(filePath, knownArtists) {
       {
         const fileName = path.basename(filePath);
         const hasUnderscores = /_/.test(fileName || "");
-        const hasYtSuffix = /__(?:[A-Za-z0-9_-]{8,})_\d{2,4}$/.test(fileName || "");
+        const hasYtSuffix = /__(?:[A-Za-z0-9_-]{8,})_\d{2,4}$/.test(
+          fileName || "",
+        );
         const nameNoExt = path.basename(filePath, path.extname(filePath));
         const hasEmptyTitle =
-          !metadata.title || metadata.title === fileName ||
+          !metadata.title ||
+          metadata.title === fileName ||
           metadata.title === nameNoExt;
-        if ((hasUnderscores || hasYtSuffix) && hasEmptyTitle && typeof _workerFallbackMetadata === "function") {
+        if (
+          (hasUnderscores || hasYtSuffix) &&
+          hasEmptyTitle &&
+          typeof _workerFallbackMetadata === "function"
+        ) {
           try {
-            const fallback = _workerFallbackMetadata(filePath, knownArtists || new Map());
+            const fallback = _workerFallbackMetadata(
+              filePath,
+              knownArtists || new Map(),
+            );
             if (fallback && fallback.title) {
               metadata.title = fallback.title;
               metadata.artist = fallback.artist;
@@ -451,7 +383,6 @@ async function readQuickInfo(filePath) {
   }
 }
 
-
 // ─── v1.1.5: Filename-based fallback for the worker thread ────────
 // Mirrors MetadataReader._fallbackMetadata in metadataReader.js.
 // Runs INSIDE the worker so we don't round-trip to main on failure.
@@ -460,11 +391,16 @@ function _workerFallbackMetadata(filePath, knownArtists) {
 
   // 1. Strip YouTube-rip suffix: __<id>_<itag>
   let cleanedName = nameWithoutExt;
-  const ytSuffixMatch = nameWithoutExt.match(/__(?:[A-Za-z0-9_-]{8,})_(\d{2,4})$/);
+  const ytSuffixMatch = nameWithoutExt.match(
+    /__(?:[A-Za-z0-9_-]{8,})_(\d{2,4})$/,
+  );
   let ytItag = 0;
   if (ytSuffixMatch) {
     ytItag = parseInt(ytSuffixMatch[1], 10) || 0;
-    cleanedName = nameWithoutExt.slice(0, nameWithoutExt.length - ytSuffixMatch[0].length);
+    cleanedName = nameWithoutExt.slice(
+      0,
+      nameWithoutExt.length - ytSuffixMatch[0].length,
+    );
     cleanedName = cleanedName.replace(/_+$/, "").replace(/^_+/, "");
   }
 
@@ -476,7 +412,10 @@ function _workerFallbackMetadata(filePath, knownArtists) {
     artist = cleanedName.substring(0, dashIndex).trim();
     title = cleanedName.substring(dashIndex + 3).trim();
   } else if (/[_]/.test(cleanedName)) {
-    const tokens = cleanedName.split(/[_]+/).map((t) => t.trim()).filter(Boolean);
+    const tokens = cleanedName
+      .split(/[_]+/)
+      .map((t) => t.trim())
+      .filter(Boolean);
     let matchedArtist = null;
     let artistTokenCount = 0;
     if (knownArtists && knownArtists.size > 0 && tokens.length >= 2) {
@@ -532,8 +471,14 @@ function _workerFallbackMetadata(filePath, knownArtists) {
     let assumedKbps = 128;
     if (ytItag > 0) {
       const itagBitrate = {
-        140: 128, 139: 48, 171: 128, 249: 50, 250: 70, 251: 160,
-        18: 96, 22: 192,
+        140: 128,
+        139: 48,
+        171: 128,
+        249: 50,
+        250: 70,
+        251: 160,
+        18: 96,
+        22: 192,
       };
       if (itagBitrate[ytItag]) assumedKbps = itagBitrate[ytItag];
     } else if (extLower === ".m4a") assumedKbps = 256;

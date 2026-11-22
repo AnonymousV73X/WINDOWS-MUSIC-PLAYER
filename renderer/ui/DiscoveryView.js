@@ -142,7 +142,8 @@ class DiscoveryView {
       this.novaAPI.on("discovery:search-update", (d) => {
         if (!d || d.searchId !== this._searchSeq || !Array.isArray(d.results))
           return;
-        if (this._searchBusyFn) this._searchBusyFn(false);
+        // Hold back partial waves; show everything once, fully ranked.
+        if (!this._searchDone) return;
         this.tracks = this._stableMerge(this.tracks, d.results);
         this._renderResults(this.tracks);
       });
@@ -270,7 +271,7 @@ class DiscoveryView {
             />
             <button 
               id="discovery-search-btn" 
-              title="Search" 
+              data-tooltip="Search" 
               style="position: absolute; right: 6px; top: 5px; width: 36px; height: 36px; background: var(--green); border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #000; transition: transform 0.15s, opacity 0.15s;"
               onmouseenter="this.style.opacity='0.85'; this.style.transform='scale(1.05)'"
               onmouseleave="this.style.opacity='1'; this.style.transform='scale(1)'"
@@ -337,6 +338,7 @@ class DiscoveryView {
     this._searchBusyFn = setBusy;
     const searchId = (this._searchSeq = (this._searchSeq || 0) + 1);
     this.tracks = [];
+    this._searchDone = false;
 
     try {
       const res = await this.novaAPI.invoke(
@@ -345,8 +347,14 @@ class DiscoveryView {
         searchId,
       );
       if (searchId !== this._searchSeq) return;
+      this._searchDone = true;
       setBusy(false);
-      if (res && res.success && Array.isArray(res.results) && res.results.length > 0) {
+      if (
+        res &&
+        res.success &&
+        Array.isArray(res.results) &&
+        res.results.length > 0
+      ) {
         this.tracks = this._stableMerge(this.tracks, res.results);
         this._renderResults(this.tracks);
         return;
@@ -360,9 +368,19 @@ class DiscoveryView {
         this._renderEmpty("No results found. Try another query.");
       }
     } catch (err) {
+      this._searchDone = true;
       setBusy(false);
       this._renderEmpty("Error searching tracks: " + err.message);
     }
+  }
+
+  _scroller() {
+    return document.getElementById("track-area");
+  }
+
+  _atTop() {
+    const sc = this._scroller();
+    return !sc || sc.scrollTop < 8;
   }
 
   // Keep rows already on screen in place; refresh their data, append new ones.
@@ -409,6 +427,8 @@ class DiscoveryView {
       return;
     }
 
+    const sc = this._scroller();
+    const prevTop = sc ? sc.scrollTop : 0;
     list.innerHTML = tracks
       .map((track) => {
         const durationMin = track.durationMs
@@ -455,6 +475,7 @@ class DiscoveryView {
 
     // Attach listeners
     this._attachResultEvents();
+    if (sc && prevTop) sc.scrollTop = prevTop;
   }
 
   _getDownloadButtonHtml(trackId, state) {
@@ -637,9 +658,19 @@ class DiscoveryView {
       } catch (_) {}
     }
     this._cancelledIds?.delete(track.id);
-    const activeCount = Array.from(this.downloadStates.values()).filter(st => st && (st.status === "downloading" || st.status === "resolving" || st.status === "tagging" || st.status === "verifying")).length;
+    const activeCount = Array.from(this.downloadStates.values()).filter(
+      (st) =>
+        st &&
+        (st.status === "downloading" ||
+          st.status === "resolving" ||
+          st.status === "tagging" ||
+          st.status === "verifying"),
+    ).length;
     const initialStatus = activeCount >= 2 ? "queued" : "resolving";
-    const initialState = { status: initialStatus, percent: initialStatus === "queued" ? 2 : 5 };
+    const initialState = {
+      status: initialStatus,
+      percent: initialStatus === "queued" ? 2 : 5,
+    };
     this.downloadStates.set(track.id, initialState);
     this._updateTrackDownloadUI(track.id, initialState);
 
